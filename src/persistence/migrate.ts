@@ -1,3 +1,4 @@
+// pattern: Imperative Shell
 import { loadConfig } from "../config/config.ts";
 import { createPostgresProvider } from "./postgres.ts";
 
@@ -19,4 +20,7 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error("Migration failed:", error);
+  process.exit(1);
+});

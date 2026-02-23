@@ -3,7 +3,7 @@ export type QueryFunction = <T extends Record<string, unknown>>(
   params?: ReadonlyArray<unknown>,
 ) => Promise<Array<T>>;
 
-export type PersistenceProvider = {
+export interface PersistenceProvider {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   runMigrations(): Promise<void>;
@@ -11,4 +11,4 @@ export type PersistenceProvider = {
   withTransaction<T>(
     fn: (query: QueryFunction) => Promise<T>,
   ): Promise<T>;
-};
+}

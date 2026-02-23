@@ -1,3 +1,4 @@
+// pattern: Imperative Shell
 import { Pool } from "pg";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
@@ -20,7 +21,7 @@ export function createPostgresProvider(
 
   async function runMigrations(): Promise<void> {
     const migrationsDir = resolve(
-      (import.meta as unknown as { dir: string }).dir,
+      import.meta.dir,
       "migrations",
     );
     const files = readdirSync(migrationsDir)

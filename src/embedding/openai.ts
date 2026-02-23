@@ -11,7 +11,7 @@ export function createOpenAIEmbeddingAdapter(
 
   if (!apiKey) {
     throw new Error(
-      "OpenAI embedding adapter requires api_key in config or OPENAI_API_KEY environment variable"
+      "openai embedding adapter requires api_key in config or OPENAI_API_KEY environment variable"
     );
   }
 

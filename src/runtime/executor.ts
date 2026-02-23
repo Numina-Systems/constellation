@@ -56,6 +56,10 @@ export function createDenoExecutor(
       const currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf('/'));
       const runtimePath = resolve(currentDir, 'deno/runtime.ts');
 
+      // The runtime bridge is read host-side here and concatenated into the temp script file
+      // below. Deno never needs read access to src/ for the user's code to execute.
+      // All tool stubs are generated and injected server-side.
+
       let runtimeCode: string;
       try {
         runtimeCode = readFileSync(runtimePath, 'utf-8');

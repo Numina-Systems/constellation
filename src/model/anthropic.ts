@@ -127,7 +127,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
 
   if (!apiKey) {
     throw new Error(
-      "Anthropic adapter requires api_key in config or ANTHROPIC_API_KEY environment variable"
+      "anthropic adapter requires api_key in config or ANTHROPIC_API_KEY environment variable"
     );
   }
 

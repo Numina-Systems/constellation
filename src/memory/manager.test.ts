@@ -2,6 +2,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import type { EmbeddingProvider } from '../embedding/types.ts';
+import { createMockEmbeddingProvider } from '../integration/test-helpers.ts';
 import { createPostgresMemoryStore } from './postgres-store.ts';
 import { createMemoryManager } from './manager.ts';
 import { createPostgresProvider } from '../persistence/postgres.ts';
@@ -30,22 +31,7 @@ describe('MemoryManager', () => {
     await persistence.runMigrations();
     await cleanupTables();
 
-    mockEmbedding = {
-      embed: async (text: string): Promise<Array<number>> => {
-        // Deterministic embedding based on text hash
-        const hash = Array.from(text).reduce((acc, char) => {
-          return acc * 31 + char.charCodeAt(0);
-        }, 0);
-        const seed = Math.abs(hash) % 1000;
-        return Array.from({ length: 768 }, (_, i) =>
-          Math.sin(seed + i) * 0.5 + 0.5,
-        );
-      },
-      embedBatch: async (texts: ReadonlyArray<string>): Promise<Array<Array<number>>> => {
-        return Promise.all(texts.map((text) => mockEmbedding.embed(text)));
-      },
-      dimensions: 768,
-    };
+    mockEmbedding = createMockEmbeddingProvider();
 
     store = createPostgresMemoryStore(persistence);
   });

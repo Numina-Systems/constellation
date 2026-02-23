@@ -13,7 +13,7 @@ import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
 const COMPRESSION_KEEP_RECENT = 5; // Always keep the most recent N messages
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 4096; // Default token limit per request
 
 /**
  * Create an agent instance.
@@ -26,6 +26,8 @@ export function createAgent(
 ): Agent {
   const id = conversationId || generateId();
   const modelMaxTokens = deps.config.model_max_tokens ?? 200000;
+  const modelName = deps.config.model_name ?? DEFAULT_MODEL_NAME;
+  const maxTokens = deps.config.max_tokens ?? DEFAULT_MAX_TOKENS;
 
   async function processMessage(userMessage: string): Promise<string> {
     // Step 1: Persist user message
@@ -59,8 +61,8 @@ export function createAgent(
         messages,
         system: systemPrompt,
         tools: deps.registry.toModelTools(),
-        model: DEFAULT_MODEL_NAME,
-        max_tokens: DEFAULT_MAX_TOKENS,
+        model: modelName,
+        max_tokens: maxTokens,
       };
 
       const response = await deps.model.complete(modelRequest);
@@ -255,7 +257,7 @@ export function createAgent(
       ],
       system: 'You are a conversation summarization assistant. Create a concise summary that preserves key information and context.',
       tools: [] as ReadonlyArray<never>,
-      model: DEFAULT_MODEL_NAME,
+      model: modelName,
       max_tokens: 1024,
     };
 

@@ -8,6 +8,8 @@ CREATE TABLE memory_blocks (
     tier TEXT NOT NULL CHECK (tier IN ('core', 'working', 'archival')),
     label TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
+    -- Embedding vector without explicit dimension specification to allow hot-swapping embedding models.
+    -- pgvector will infer dimension from the first vector written, enabling model flexibility.
     embedding vector,
     permission TEXT NOT NULL CHECK (permission IN ('readonly', 'familiar', 'append', 'readwrite')),
     pinned BOOLEAN NOT NULL DEFAULT FALSE,

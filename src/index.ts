@@ -26,6 +26,7 @@ import type { Agent } from '@/agent/types';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
+import type { PendingMutation } from '@/memory/types';
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -40,7 +41,7 @@ type InteractionLoopDeps = {
  */
 export async function processPendingMutations(
   memory: MemoryManager,
-  onMutationPrompt: (mutation: any) => Promise<string>,
+  onMutationPrompt: (mutation: PendingMutation) => Promise<string>,
 ): Promise<void> {
   const mutations = await memory.getPendingMutations();
 

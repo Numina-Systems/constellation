@@ -102,10 +102,8 @@ function promptForLine(rl: readline.Interface, prompt: string): Promise<string> 
  */
 export function createInteractionLoop(deps: InteractionLoopDeps): (input: string) => Promise<void> {
   return async (userInput: string) => {
-    // Process the user message first
-    process.stdout.write(`\n> ${userInput}\n`);
     const response = await deps.agent.processMessage(userInput);
-    process.stdout.write(`${response}\n\n`);
+    process.stdout.write(`\n${response}\n\n`);
 
     // After processing, check for any pending mutations that were created
     const pendingMutations = await deps.memory.getPendingMutations();
@@ -298,20 +296,40 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);
 
-  // REPL loop
-  console.log('Type your message (press Ctrl+C to exit):\n');
+  // REPL loop with multiline support
+  // Accumulates lines in a buffer; submits on empty line (double-enter).
+  console.log('Type your message (blank line to send, Ctrl+C to exit):\n');
+
+  const inputBuffer: Array<string> = [];
+  let processing = false;
 
   rl.setPrompt('> ');
   rl.on('line', async (line: string) => {
-    const trimmed = line.trim();
-    if (trimmed) {
-      try {
-        await interactionHandler(trimmed);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`error: ${errorMsg}`);
+    if (processing) return; // ignore input while processing
+
+    if (line.trim() === '' && inputBuffer.length > 0) {
+      // Empty line after content — submit the buffer
+      const message = inputBuffer.join('\n').trim();
+      inputBuffer.length = 0;
+
+      if (message) {
+        processing = true;
+        try {
+          await interactionHandler(message);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`error: ${errorMsg}`);
+        }
+        processing = false;
       }
+      rl.setPrompt('> ');
+    } else if (line.trim() !== '') {
+      // Non-empty line — accumulate
+      inputBuffer.push(line);
+      rl.setPrompt('... ');
     }
+    // Empty line with empty buffer — just re-prompt
+
     rl.prompt();
   });
 

@@ -1,0 +1,29 @@
+# Config
+
+Last verified: 2026-02-23
+
+## Purpose
+Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.
+
+## Contracts
+- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas, config type aliases
+- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets.
+- **Expects**: `config.toml` exists at project root (or path provided). TOML structure matches `AppConfigSchema`.
+
+## Dependencies
+- **Uses**: `@iarna/toml`, `zod`, `node:fs`
+- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`
+- **Boundary**: Config is read-only after load. No module should mutate config at runtime.
+
+## Key Decisions
+- TOML over JSON/YAML: Human-readable, comment-friendly for local dev config
+- Zod for validation: Runtime type safety at the system boundary
+- Environment overrides for secrets: Config file stays in repo, secrets stay in env
+
+## Invariants
+- `AppConfig` always passes Zod validation
+- Environment variables take precedence over TOML values for `api_key`, `database.url`
+
+## Key Files
+- `schema.ts` -- Zod schemas and inferred types (Functional Core)
+- `config.ts` -- TOML loading, env merging, re-exports types (Imperative Shell)

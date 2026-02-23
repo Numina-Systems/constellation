@@ -126,7 +126,7 @@ export function createInteractionLoop(deps: InteractionLoopDeps): (input: string
  * If the database is empty (no core blocks exist), load persona from persona.md
  * and create three core memory blocks: system, persona, and familiar.
  */
-async function seedCoreMemory(
+export async function seedCoreMemory(
   store: MemoryStore,
   embedding: EmbeddingProvider,
   personaPath: string,
@@ -152,7 +152,13 @@ async function seedCoreMemory(
   // Generate embeddings for each block
   const generateEmbedding = async (text: string): Promise<Array<number> | null> => {
     try {
-      return await embedding.embed(text);
+      const result = await embedding.embed(text);
+      // Validate that the embedding is an array of numbers
+      if (!Array.isArray(result)) {
+        console.warn('embedding provider returned non-array, storing block with null embedding');
+        return null;
+      }
+      return result;
     } catch (error) {
       console.warn('embedding provider failed, storing block with null embedding');
       return null;

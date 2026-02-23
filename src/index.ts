@@ -22,6 +22,8 @@ import { createAgent } from '@/agent/agent';
 import type { MemoryManager } from '@/memory/manager';
 import type { Agent } from '@/agent/types';
 import type { PersistenceProvider } from '@/persistence/types';
+import type { MemoryStore } from '@/memory/store';
+import type { EmbeddingProvider } from '@/embedding/types';
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -120,6 +122,100 @@ export function createInteractionLoop(deps: InteractionLoopDeps): (input: string
 }
 
 /**
+ * Seed core memory blocks on first run.
+ * If the database is empty (no core blocks exist), load persona from persona.md
+ * and create three core memory blocks: system, persona, and familiar.
+ */
+async function seedCoreMemory(
+  store: MemoryStore,
+  embedding: EmbeddingProvider,
+  personaPath: string,
+): Promise<void> {
+  // Check if core blocks already exist
+  const existingBlocks = await store.getBlocksByTier('spirit', 'core');
+
+  if (existingBlocks.length > 0) {
+    // Not a first run, skip seeding
+    return;
+  }
+
+  // Read persona from file
+  const { readFileSync } = await import('fs');
+  let personaContent: string;
+  try {
+    personaContent = readFileSync(personaPath, 'utf-8');
+  } catch (error) {
+    console.warn('could not read persona.md, skipping seeding:', error);
+    return;
+  }
+
+  // Generate embeddings for each block
+  const generateEmbedding = async (text: string): Promise<Array<number> | null> => {
+    try {
+      return await embedding.embed(text);
+    } catch (error) {
+      console.warn('embedding provider failed, storing block with null embedding');
+      return null;
+    }
+  };
+
+  // System instructions block
+  const systemContent = `You are a machine spirit with three-tier memory:
+- Core memory: always present in your context (this block, your persona, your familiar)
+- Working memory: active context you can manage (swap in/out as needed)
+- Archival memory: long-term storage, searchable via memory_read
+
+You have four tools:
+- memory_read(query): search memory by meaning
+- memory_write(label, content): store or update memory
+- memory_list(tier?): see available memory blocks
+- execute_code(code): run TypeScript in a sandboxed environment
+
+Use execute_code for anything beyond basic memory operations — API calls, file operations, complex tasks. You write the code, it runs in a Deno sandbox with network and file access.`;
+
+  const systemEmbedding = await generateEmbedding(systemContent);
+  await store.createBlock({
+    id: crypto.randomUUID(),
+    owner: 'spirit',
+    tier: 'core',
+    label: 'core:system',
+    content: systemContent,
+    embedding: systemEmbedding,
+    permission: 'readonly',
+    pinned: true,
+  });
+
+  // Persona block from persona.md
+  const personaEmbedding = await generateEmbedding(personaContent);
+  await store.createBlock({
+    id: crypto.randomUUID(),
+    owner: 'spirit',
+    tier: 'core',
+    label: 'core:persona',
+    content: personaContent,
+    embedding: personaEmbedding,
+    permission: 'familiar',
+    pinned: true,
+  });
+
+  // Familiar placeholder block
+  const familiarContent = 'My familiar has not yet introduced themselves.';
+  const familiarEmbedding = await generateEmbedding(familiarContent);
+  await store.createBlock({
+    id: crypto.randomUUID(),
+    owner: 'spirit',
+    tier: 'core',
+    label: 'core:familiar',
+    content: familiarContent,
+    embedding: familiarEmbedding,
+    permission: 'familiar',
+    pinned: true,
+  });
+
+  console.log('Core memory seeded for first run');
+}
+
+/**
  * Main entry point: wires all components and starts the REPL.
  */
 async function main(): Promise<void> {
@@ -139,8 +235,11 @@ async function main(): Promise<void> {
   await persistence.runMigrations();
   console.log('migrations completed\n');
 
-  // Create domain modules
+  // Seed core memory on first run
   const memoryStore = createPostgresMemoryStore(persistence);
+  await seedCoreMemory(memoryStore, embedding, 'persona.md');
+
+  // Create domain modules
   const memory = createMemoryManager(memoryStore, embedding, 'spirit');
 
   const registry = createToolRegistry();

@@ -20,10 +20,10 @@ export type OutgoingMessage = {
   readonly metadata: Record<string, unknown>;
 };
 
-export type DataSource = {
+export interface DataSource {
   readonly name: string;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   onMessage(handler: (message: IncomingMessage) => void): void;
   send?(message: OutgoingMessage): Promise<void>;
-};
+}

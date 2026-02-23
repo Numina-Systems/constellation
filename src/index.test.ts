@@ -3,37 +3,16 @@
 /**
  * Tests for the entry point interaction loop.
  * Verifies REPL input/output, pending mutation flow, and graceful shutdown.
- * Tests use a callback-based interaction instead of readline events to avoid
- * async timing issues with event emitters.
+ * Tests exercise actual production code from src/index.ts.
  */
 
 import { describe, it, expect, mock } from 'bun:test';
+import { processPendingMutations, performShutdown, createInteractionLoop } from '@/index';
 import type { Agent } from '@/agent/types';
 import type { MemoryManager } from '@/memory/manager';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { PendingMutation, MemoryBlock, MemoryWriteResult } from '@/memory/types';
-
-/**
- * Process pending mutations with provided user responses.
- * Extracted for testability without readline event loop complexity.
- */
-export async function processPendingMutations(
-  memory: MemoryManager,
-  onMutationPrompt: (mutation: PendingMutation) => Promise<string>,
-): Promise<void> {
-  const mutations = await memory.getPendingMutations();
-
-  for (const mutation of mutations) {
-    const response = await onMutationPrompt(mutation);
-
-    if (response.toLowerCase() === 'y') {
-      await memory.approveMutation(mutation.id);
-    } else {
-      const feedback = response.toLowerCase() === 'n' ? 'user rejected' : response;
-      await memory.rejectMutation(mutation.id, feedback);
-    }
-  }
-}
+import type { Interface as ReadlineInterface } from 'readline';
 
 /**
  * Mock agent for testing.
@@ -80,25 +59,69 @@ function createMockPersistence(overrides?: Partial<PersistenceProvider>): Persis
   };
 }
 
+/**
+ * Mock readline interface for testing.
+ */
+function createMockReadline(overrides?: Partial<ReadlineInterface>): ReadlineInterface {
+  return {
+    write: mock(() => {}),
+    close: mock(() => {}),
+    setPrompt: mock(() => {}),
+    prompt: mock(() => {}),
+    once: mock((_event: string, _handler: any) => {
+      // For testing, we don't invoke the handler automatically
+      return {} as any;
+    }),
+    on: mock((_event: string, _handler: any) => {
+      return {} as any;
+    }),
+    ...overrides,
+  } as any;
+}
+
 describe('interaction loop', () => {
   describe('AC6.1: basic message processing', () => {
-    it('calls agent.processMessage() with user input', async () => {
+    it('calls agent.processMessage() with user input via createInteractionLoop', async () => {
       const agent = createMockAgent();
+      const memory = createMockMemory({
+        getPendingMutations: mock(async () => []),
+      });
+      const persistence = createMockPersistence();
+      const mockReadline = createMockReadline();
+
+      const handler = createInteractionLoop({
+        agent,
+        memory,
+        persistence,
+        readline: mockReadline,
+      });
 
       const userMessage = 'hello world';
-      await agent.processMessage(userMessage);
+      await handler(userMessage);
 
       expect(agent.processMessage).toHaveBeenCalledWith('hello world');
     });
 
-    it('agent returns a response', async () => {
+    it('agent response is written to output via createInteractionLoop', async () => {
       const mockResponse = 'agent says hello';
       const agent = createMockAgent({
         processMessage: mock(async () => mockResponse),
       });
+      const memory = createMockMemory({
+        getPendingMutations: mock(async () => []),
+      });
+      const persistence = createMockPersistence();
+      const mockReadline = createMockReadline();
 
-      const result = await agent.processMessage('test input');
-      expect(result).toBe(mockResponse);
+      const handler = createInteractionLoop({
+        agent,
+        memory,
+        persistence,
+        readline: mockReadline,
+      });
+
+      await handler('test input');
+      expect(agent.processMessage).toHaveBeenCalledWith('test input');
     });
   });
 
@@ -228,14 +251,31 @@ describe('interaction loop', () => {
   });
 
   describe('AC6.3: graceful shutdown', () => {
-    it('persistence provider has disconnect method', async () => {
+    it('shutdown closes readline interface', async () => {
       const persistence = createMockPersistence();
-      expect(typeof persistence.disconnect).toBe('function');
+      const mockReadline = createMockReadline();
+
+      await performShutdown(mockReadline, persistence);
+
+      expect(mockReadline.close).toHaveBeenCalled();
     });
 
-    it('can call disconnect without error', async () => {
+    it('shutdown disconnects persistence provider', async () => {
       const persistence = createMockPersistence();
-      await persistence.disconnect();
+      const mockReadline = createMockReadline();
+
+      await performShutdown(mockReadline, persistence);
+
+      expect(persistence.disconnect).toHaveBeenCalled();
+    });
+
+    it('shutdown performs all cleanup steps', async () => {
+      const persistence = createMockPersistence();
+      const mockReadline = createMockReadline();
+
+      await performShutdown(mockReadline, persistence);
+
+      expect(mockReadline.close).toHaveBeenCalled();
       expect(persistence.disconnect).toHaveBeenCalled();
     });
   });

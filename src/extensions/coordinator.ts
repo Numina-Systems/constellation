@@ -26,8 +26,8 @@ export type AgentResponse = {
   readonly metadata: Record<string, unknown>;
 };
 
-export type Coordinator = {
+export interface Coordinator {
   readonly pattern: CoordinationPattern;
   route(message: IncomingMessage, agents: ReadonlyArray<AgentRef>): Promise<AgentRef>;
   onAgentResponse?(agent: AgentRef, response: AgentResponse): Promise<void>;
-};
+}

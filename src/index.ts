@@ -5,6 +5,8 @@
  * Composition root that wires all adapters and starts the interactive REPL.
  */
 
+const DEFAULT_MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
+
 import * as readline from 'readline';
 import { loadConfig } from '@/config/config';
 import { createPostgresProvider } from '@/persistence/postgres';
@@ -29,6 +31,55 @@ type InteractionLoopDeps = {
 };
 
 /**
+ * Process pending mutations with provided user responses.
+ * Extracted for testability without readline event loop complexity.
+ */
+export async function processPendingMutations(
+  memory: MemoryManager,
+  onMutationPrompt: (mutation: any) => Promise<string>,
+): Promise<void> {
+  const mutations = await memory.getPendingMutations();
+
+  for (const mutation of mutations) {
+    const response = await onMutationPrompt(mutation);
+
+    if (response.toLowerCase() === 'y') {
+      await memory.approveMutation(mutation.id);
+    } else {
+      const feedback = response.toLowerCase() === 'n' ? 'user rejected' : response;
+      await memory.rejectMutation(mutation.id, feedback);
+    }
+  }
+}
+
+/**
+ * Core shutdown logic without process.exit - for testability.
+ * Extracted so tests can verify the actual shutdown behavior.
+ */
+export async function performShutdown(
+  rl: readline.Interface,
+  persistence: PersistenceProvider,
+): Promise<void> {
+  console.log('\nShutting down...');
+  rl.close();
+  await persistence.disconnect();
+}
+
+/**
+ * Create a graceful shutdown handler that closes readline and disconnects persistence.
+ * Extracted for testability.
+ */
+export function createShutdownHandler(
+  rl: readline.Interface,
+  persistence: PersistenceProvider,
+): () => Promise<void> {
+  return async (): Promise<void> => {
+    await performShutdown(rl, persistence);
+    process.exit(0);
+  };
+}
+
+/**
  * Create an interaction loop that can be tested with mock dependencies.
  * Extracts REPL logic for testability.
  */
@@ -38,7 +89,7 @@ export function createInteractionLoop(deps: InteractionLoopDeps): (input: string
     const pendingMutations = await deps.memory.getPendingMutations();
 
     for (const mutation of pendingMutations) {
-      deps.readline.write(
+      process.stdout.write(
         `\n[Pending mutation] Block: "${mutation.block_id}"\n` +
         `Proposed change: "${mutation.proposed_content}"\n` +
         `Reason: "${mutation.reason ?? 'unspecified'}"\n` +
@@ -62,9 +113,9 @@ export function createInteractionLoop(deps: InteractionLoopDeps): (input: string
     }
 
     // Process the user message
-    deps.readline.write(`\n> ${userInput}\n`);
+    process.stdout.write(`\n> ${userInput}\n`);
     const response = await deps.agent.processMessage(userInput);
-    deps.readline.write(`${response}\n\n`);
+    process.stdout.write(`${response}\n\n`);
   };
 }
 
@@ -109,7 +160,7 @@ async function main(): Promise<void> {
     config: {
       max_tool_rounds: config.agent.max_tool_rounds,
       context_budget: config.agent.context_budget,
-      model_max_tokens: 200000,
+      model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
     },
   });
 
@@ -127,12 +178,7 @@ async function main(): Promise<void> {
   });
 
   // Set up graceful shutdown
-  const shutdownHandler = async (): Promise<void> => {
-    console.log('\nShutting down...');
-    rl.close();
-    await persistence.disconnect();
-    process.exit(0);
-  };
+  const shutdownHandler = createShutdownHandler(rl, persistence);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);
@@ -140,6 +186,7 @@ async function main(): Promise<void> {
   // REPL loop
   console.log('Type your message (press Ctrl+C to exit):\n');
 
+  rl.setPrompt('> ');
   rl.on('line', async (line: string) => {
     const trimmed = line.trim();
     if (trimmed) {
@@ -147,13 +194,13 @@ async function main(): Promise<void> {
         await interactionHandler(trimmed);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${errorMsg}`);
+        console.error(`error: ${errorMsg}`);
       }
     }
-    rl.write('> ');
+    rl.prompt();
   });
 
-  rl.write('> ');
+  rl.prompt();
 }
 
 // Run main entry point only when file is executed directly

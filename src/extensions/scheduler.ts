@@ -14,8 +14,8 @@ export type ScheduledTask = {
   readonly payload: Record<string, unknown>;
 };
 
-export type Scheduler = {
+export interface Scheduler {
   schedule(task: ScheduledTask): Promise<void>;
   cancel(taskId: string): Promise<void>;
   onDue(handler: (task: ScheduledTask) => void): void;
-};
+}

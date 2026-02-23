@@ -9,8 +9,8 @@ import type { ToolDefinition, ToolResult } from '../tool/types.ts';
  * Tools discovered via ToolProvider are registered with the ToolRegistry and become available
  * to the agent alongside built-in tools.
  */
-export type ToolProvider = {
+export interface ToolProvider {
   readonly name: string;
   discover(): Promise<Array<ToolDefinition>>;
   execute(tool: string, params: Record<string, unknown>): Promise<ToolResult>;
-};
+}

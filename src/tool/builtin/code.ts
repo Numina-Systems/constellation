@@ -1,4 +1,4 @@
-// pattern: Imperative Shell
+// pattern: Functional Core
 
 /**
  * execute_code tool definition for sandboxed TypeScript code execution.

@@ -39,21 +39,10 @@ export function createToolRegistry(): ToolRegistry {
     }
   }
 
+  // Identity function to format parameter types for stub generation
+  // Kept as separate function for future extensibility (e.g., custom type mappings)
   function formatParameterType(type: ToolParameterType): string {
-    switch (type) {
-      case 'string':
-        return 'string';
-      case 'number':
-        return 'number';
-      case 'boolean':
-        return 'boolean';
-      case 'object':
-        return 'object';
-      case 'array':
-        return 'array';
-      default:
-        return 'unknown';
-    }
+    return type;
   }
 
   function generateParameterSignature(params: ReadonlyArray<ToolParameter>): string {
@@ -117,6 +106,20 @@ export function createToolRegistry(): ToolRegistry {
               success: false,
               output: '',
               error: `invalid type for parameter ${param.name}: expected ${param.type}, got ${typeof value}`,
+            };
+          }
+        }
+      }
+
+      // Validate enum values
+      for (const param of tool.definition.parameters) {
+        if (param.name in params && param.enum_values && param.enum_values.length > 0) {
+          const value = params[param.name];
+          if (!param.enum_values.includes(String(value))) {
+            return {
+              success: false,
+              output: '',
+              error: `invalid value for parameter ${param.name}: expected one of [${param.enum_values.join(', ')}], got ${value}`,
             };
           }
         }

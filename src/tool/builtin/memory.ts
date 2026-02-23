@@ -5,7 +5,7 @@
  * These tools delegate to the MemoryManager port interface.
  */
 
-import type { MemoryManager } from '../../memory/index.ts';
+import type { MemoryManager, MemoryTier } from '../../memory/index.ts';
 import type { Tool } from '../types.ts';
 
 export function createMemoryTools(manager: MemoryManager): Array<Tool> {
@@ -26,7 +26,6 @@ export function createMemoryTools(manager: MemoryManager): Array<Tool> {
           type: 'number',
           description: 'Maximum number of results to return',
           required: false,
-          enum_values: undefined,
         },
         {
           name: 'tier',
@@ -42,7 +41,8 @@ export function createMemoryTools(manager: MemoryManager): Array<Tool> {
       const limit = (params['limit'] as number | undefined) ?? 5;
       const tier = params['tier'] as string | undefined;
 
-      const results = await manager.read(query, limit, tier as any);
+      // Safe cast: dispatch validates enum_values before this handler is called
+      const results = await manager.read(query, limit, tier as MemoryTier | undefined);
 
       const formatted = results.map((result) => ({
         id: result.block.id,
@@ -98,7 +98,8 @@ export function createMemoryTools(manager: MemoryManager): Array<Tool> {
       const tier = params['tier'] as string | undefined;
       const reason = params['reason'] as string | undefined;
 
-      const result = await manager.write(label, content, tier as any, reason);
+      // Safe cast: dispatch validates enum_values before this handler is called
+      const result = await manager.write(label, content, tier as MemoryTier | undefined, reason);
 
       if ('error' in result && result.error) {
         return {
@@ -160,7 +161,8 @@ export function createMemoryTools(manager: MemoryManager): Array<Tool> {
     handler: async (params) => {
       const tier = params['tier'] as string | undefined;
 
-      const blocks = await manager.list(tier as any);
+      // Safe cast: dispatch validates enum_values before this handler is called
+      const blocks = await manager.list(tier as MemoryTier | undefined);
 
       const formatted = blocks.map((block) => ({
         id: block.id,

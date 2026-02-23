@@ -210,6 +210,95 @@ describe('ToolRegistry', () => {
 
       expect(result.success).toBe(true);
     });
+
+    it('should return error for invalid enum value', async () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [
+            {
+              name: 'tier',
+              type: 'string',
+              description: 'Memory tier',
+              required: true,
+              enum_values: ['core', 'working', 'archival'],
+            },
+          ],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+
+      const result = await registry.dispatch('test_tool', { tier: 'invalid' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('invalid value');
+      expect(result.error).toContain('tier');
+    });
+
+    it('should accept valid enum value', async () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [
+            {
+              name: 'tier',
+              type: 'string',
+              description: 'Memory tier',
+              required: true,
+              enum_values: ['core', 'working', 'archival'],
+            },
+          ],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+
+      const result = await registry.dispatch('test_tool', { tier: 'core' });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should allow omitting optional enum parameter', async () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [
+            {
+              name: 'required_param',
+              type: 'string',
+              description: 'Required',
+              required: true,
+            },
+            {
+              name: 'tier',
+              type: 'string',
+              description: 'Memory tier',
+              required: false,
+              enum_values: ['core', 'working', 'archival'],
+            },
+          ],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+
+      const result = await registry.dispatch('test_tool', { required_param: 'hello' });
+
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('stub generation', () => {

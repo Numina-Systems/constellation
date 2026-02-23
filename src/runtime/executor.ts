@@ -70,7 +70,22 @@ export function createDenoExecutor(
       }
 
       // Build combined script: runtime + stubs + user code
-      const combinedScript = `${runtimeCode}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${code}`;
+      // User code is wrapped in an async IIFE that exits the process on completion.
+      // This is necessary because the IPC listener (for await on stdin) keeps the
+      // Deno event loop alive indefinitely. Without explicit exit, the subprocess
+      // never terminates and the host timeout fires.
+      const wrappedUserCode = `
+(async () => {
+  try {
+${code.split('\n').map(line => '    ' + line).join('\n')}
+  } catch (__err__) {
+    output("Error: " + String(__err__));
+  } finally {
+    Deno.exit(0);
+  }
+})();
+`;
+      const combinedScript = `${runtimeCode}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
 
       // Create temporary file in working directory
       const tempFileName = `exec_${randomUUID()}.ts`;

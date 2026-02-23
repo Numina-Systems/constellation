@@ -64,7 +64,7 @@ async function echo_tool(params: { message?: string }): Promise<unknown> {
 // Test workspace directory
 const testWorkdir = resolve(process.cwd(), 'workspace', 'test');
 
-describe.skip('DenoExecutor Integration Tests', () => {
+describe('DenoExecutor Integration Tests', () => {
   let executor: ReturnType<typeof createDenoExecutor>;
   let config: RuntimeConfig & AgentConfig;
 

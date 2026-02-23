@@ -21,9 +21,11 @@ import type {
   CodeRuntime,
   ExecutionResult,
   IpcMessage,
-  IpcToolCall,
 } from '@/runtime/types';
 import type { ToolRegistry } from '@/tool/types';
+
+// Reusable text encoder for IPC messages
+const encoder = new TextEncoder();
 
 /**
  * Create a CodeRuntime that executes code in Deno subprocesses.
@@ -118,10 +120,11 @@ export function createDenoExecutor(
         let accumulatedOutput = '';
         let toolCallCount = 0;
         let timedOut = false;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         // Set timeout
         const timeoutPromise = new Promise<void>((resolve) => {
-          setTimeout(() => {
+          timeoutId = setTimeout(() => {
             timedOut = true;
             proc.kill();
             resolve();
@@ -153,28 +156,27 @@ export function createDenoExecutor(
               }
 
               // Dispatch tool and send result back
-              const toolCall = message as IpcToolCall;
+              // TypeScript narrows message to IpcToolCall based on the type guard above
               const toolResult = await registry.dispatch(
-                toolCall.name,
-                toolCall.params,
+                message.name,
+                message.params,
               );
 
               const responseMsg =
                 toolResult.success || !toolResult.error
                   ? {
                       type: '__tool_result__' as const,
-                      call_id: toolCall.call_id,
+                      call_id: message.call_id,
                       result: toolResult,
                     }
                   : {
                       type: '__tool_error__' as const,
-                      call_id: toolCall.call_id,
+                      call_id: message.call_id,
                       error: toolResult.error || 'unknown error',
                     };
 
               const stdin = proc.stdin;
               if (stdin) {
-                const encoder = new TextEncoder();
                 stdin.write(
                   encoder.encode(JSON.stringify(responseMsg) + '\n'),
                 );
@@ -185,6 +187,7 @@ export function createDenoExecutor(
           // Read stdout and process IPC messages
           const decoder = new TextDecoder();
           let buffer = '';
+          // Tracks errors from either JSON parsing or IPC message handling
           let processingError: Error | undefined;
 
           const readStdout = async (): Promise<void> => {
@@ -209,12 +212,21 @@ export function createDenoExecutor(
                     if (!line.trim()) continue;
 
                     try {
-                      const message = JSON.parse(line) as IpcMessage;
+                      const parsed = JSON.parse(line);
+                      // Validate that message has a valid type property
+                      if (
+                        !parsed ||
+                        typeof parsed !== 'object' ||
+                        typeof parsed.type !== 'string'
+                      ) {
+                        continue;
+                      }
+                      const message = parsed as IpcMessage;
                       await handleIpcMessage(message);
-                    } catch (parseError) {
+                    } catch (lineError) {
                       // Ignore JSON parse errors but continue
-                      if (!processingError && parseError instanceof Error) {
-                        processingError = parseError;
+                      if (!processingError && lineError instanceof Error) {
+                        processingError = lineError;
                       }
                     }
                   }
@@ -227,29 +239,45 @@ export function createDenoExecutor(
             }
           };
 
-          // Close stdin to signal to Deno that no more input is coming
-          try {
-            const stdin = proc.stdin;
-            if (stdin) {
-              stdin.end();
-            }
-          } catch {
-            // stdin might not be available
-          }
-
-          // Wait for either stdout to close or timeout
+          // Read stdout and process IPC messages, but enforce timeout by killing process
           await Promise.race([
             readStdout(),
             timeoutPromise,
           ]).catch(() => {
-            // Ignore errors, we've already set the state
+            // Ignore errors from either promise
           });
 
-          // Kill process if still running
+          // If timeout fired, the process should be killed and stdout will close
+          // Close stdin to signal EOF to Deno (for clean IPC listener exit)
+          if (!timedOut) {
+            try {
+              const stdin = proc.stdin;
+              if (stdin) {
+                stdin.end();
+              }
+            } catch {
+              // stdin might not be available
+            }
+          }
+
+          // Wait a bit for process to exit naturally, then kill if needed
+          try {
+            const killTimeout = new Promise<void>((resolve) => {
+              setTimeout(resolve, 100);
+            });
+            await Promise.race([
+              proc.exited,
+              killTimeout,
+            ]);
+          } catch {
+            // Ignore errors
+          }
+
+          // Force kill if still running
           try {
             proc.kill();
           } catch {
-            // Process already exited
+            // Already exited
           }
 
           // Determine exit status
@@ -276,6 +304,7 @@ export function createDenoExecutor(
           return {
             success: true,
             output: accumulatedOutput.trim(),
+            error: null,
             tool_calls_made: toolCallCount,
             duration_ms: Date.now() - startTime,
           };
@@ -298,6 +327,11 @@ export function createDenoExecutor(
             duration_ms: Date.now() - startTime,
           };
         } finally {
+          // Clear timeout to prevent resource leak
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
+
           try {
             proc.kill();
           } catch {

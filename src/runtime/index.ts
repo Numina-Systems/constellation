@@ -1,3 +1,5 @@
+// pattern: Functional Core
+
 export type {
   CodeRuntime,
   ExecutionResult,

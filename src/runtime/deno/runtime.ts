@@ -1,6 +1,6 @@
 /// <reference lib="deno.ns" />
 /// <reference lib="deno.window" />
-// pattern: Functional Core - Runtime Bridge
+// pattern: Imperative Shell
 
 /**
  * Deno-side IPC bridge runtime for code execution.
@@ -14,6 +14,9 @@
  */
 
 import { TextLineStream } from "jsr:@std/streams";
+
+// Reusable text encoder instance for IPC messages
+const encoder = new TextEncoder();
 
 // IPC Message Types (mirrors types.ts from host)
 type IpcToolCall = {
@@ -74,10 +77,12 @@ function generateCallId(): string {
 // Helper to write IPC messages to stdout
 function writeMessage(message: IpcMessage): void {
   const json = JSON.stringify(message);
-  Deno.stdout.writeSync(new TextEncoder().encode(json + "\n"));
+  Deno.stdout.writeSync(encoder.encode(json + "\n"));
 }
 
 // Global output and debug functions (available to user code)
+// Note: Deno's globalThis type is narrowly typed. We cast through unknown to Record<string, unknown>
+// to allow dynamic property assignment for user code globals, which is necessary for concatenated user code.
 (globalThis as unknown as Record<string, unknown>)["output"] = function (
   data: string
 ): void {
@@ -98,6 +103,7 @@ function writeMessage(message: IpcMessage): void {
 
 // Bridge function: allows user code to call host-side tools
 // This is available as __callTool__ in the global scope
+// See note above about globalThis casting.
 (globalThis as unknown as Record<string, unknown>)["__callTool__"] = async function (
   name: string,
   params: Record<string, unknown> = {}
@@ -105,7 +111,7 @@ function writeMessage(message: IpcMessage): void {
   const callId = generateCallId();
 
   // Create a promise for this tool call
-  const resultPromise = new Promise((resolve, reject) => {
+  const resultPromise = new Promise<unknown>((resolve, reject) => {
     pendingCalls.set(callId, { resolve, reject });
   });
 
@@ -127,15 +133,14 @@ function writeMessage(message: IpcMessage): void {
 };
 
 // Capture console.log to send as __output__ messages
-const originalLog = console.log;
+// Note: Do NOT call the original console.log - stdout is reserved for IPC communication.
+// User code should use output() instead. For debugging, stderr is available.
 console.log = function (...args: unknown[]): void {
   const message = args.map((arg) => String(arg)).join(" ");
   writeMessage({
     type: "__output__",
     data: message,
   });
-  // Call original to avoid suppressing output for now during development
-  originalLog(...args);
 };
 
 // Set up stdin reader to receive IPC messages from host

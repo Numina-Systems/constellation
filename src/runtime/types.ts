@@ -14,7 +14,7 @@ import type { ToolResult } from '../tool/types.ts';
 export type ExecutionResult = {
   success: boolean;
   output: string;
-  error?: string;
+  error: string | null;
   tool_calls_made: number;
   duration_ms: number;
 };

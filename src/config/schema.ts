@@ -32,6 +32,8 @@ const DatabaseConfigSchema = z.object({
 const RuntimeConfigSchema = z.object({
   working_dir: z.string().default("./workspace"),
   allowed_hosts: z.array(z.string()).default([]),
+  allowed_read_paths: z.array(z.string()).default([]),
+  allowed_run: z.array(z.string()).default([]),
 });
 
 const AppConfigSchema = z.object({

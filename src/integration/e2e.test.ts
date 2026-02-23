@@ -192,6 +192,8 @@ describe('End-to-End Integration Tests', () => {
           context_budget: 100000,
           max_tool_calls_per_exec: 25,
           allowed_hosts: [],
+          allowed_read_paths: [],
+          allowed_run: [],
         },
         registry,
       );
@@ -244,6 +246,8 @@ describe('End-to-End Integration Tests', () => {
           context_budget: 100000,
           max_tool_calls_per_exec: 25,
           allowed_hosts: [],
+          allowed_read_paths: [],
+          allowed_run: [],
         },
         registry,
       );
@@ -425,6 +429,8 @@ describe('End-to-End Integration Tests', () => {
           context_budget: 100000,
           max_tool_calls_per_exec: 25,
           allowed_hosts: [],
+          allowed_read_paths: [],
+          allowed_run: [],
         },
         registry,
       );
@@ -538,6 +544,8 @@ output(JSON.stringify(blocks).substring(0, 100));`,
           context_budget: 100000,
           max_tool_calls_per_exec: 25,
           allowed_hosts: [],
+          allowed_read_paths: [],
+          allowed_run: [],
         },
         registry,
       );

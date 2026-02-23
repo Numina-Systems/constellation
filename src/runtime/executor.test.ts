@@ -78,6 +78,8 @@ describe('DenoExecutor Integration Tests', () => {
     config = {
       working_dir: testWorkdir,
       allowed_hosts: ['example.com', 'localhost:8000'],
+      allowed_read_paths: [],
+      allowed_run: [],
       max_code_size: 51200,
       max_output_size: 1048576,
       code_timeout: 3000, // 3 seconds for code execution
@@ -392,6 +394,81 @@ try {
 
     expect(result.success).toBe(true);
     expect(result.output).toContain('caught');
+  });
+
+  it('allows reading from allowed_read_paths', async () => {
+    const readPathConfig = {
+      ...config,
+      allowed_read_paths: [resolve(process.cwd(), 'src')],
+      allowed_run: [] as string[],
+    };
+    const readExecutor = createDenoExecutor(readPathConfig, createMockRegistry());
+
+    const code = `
+try {
+  const entries: string[] = [];
+  for await (const entry of Deno.readDir("${resolve(process.cwd(), 'src').replace(/\\/g, '\\\\')}")) {
+    entries.push(entry.name);
+  }
+  output("found: " + entries.length);
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+    const result = await readExecutor.execute(code, '');
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('found:');
+    expect(result.output).not.toMatch(/permission|denied/i);
+  });
+
+  it('allows spawning executables listed in allowed_run', async () => {
+    const runConfig = {
+      ...config,
+      allowed_read_paths: [] as string[],
+      allowed_run: ['echo'],
+    };
+    const runExecutor = createDenoExecutor(runConfig, createMockRegistry());
+
+    const code = `
+try {
+  const command = new Deno.Command("echo", { args: ["sandbox-test"] });
+  const { stdout } = await command.output();
+  output("ran: " + new TextDecoder().decode(stdout).trim());
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+    const result = await runExecutor.execute(code, '');
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('ran: sandbox-test');
+  });
+
+  it('denies unlisted executables when allowed_run is set', async () => {
+    const runConfig = {
+      ...config,
+      allowed_read_paths: [] as string[],
+      allowed_run: ['echo'],
+    };
+    const runExecutor = createDenoExecutor(runConfig, createMockRegistry());
+
+    const code = `
+try {
+  const command = new Deno.Command("ls", { args: [] });
+  const { stdout } = await command.output();
+  output("unexpected: " + new TextDecoder().decode(stdout));
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+    const result = await runExecutor.execute(code, '');
+
+    expect(result.success).toBe(true);
+    expect(result.output.toLowerCase()).toMatch(/permission|denied|not allowed|notcapable/);
   });
 
   it('AC3.1: handles empty code', async () => {

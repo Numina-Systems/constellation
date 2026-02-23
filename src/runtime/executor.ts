@@ -118,12 +118,19 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
           permissionFlags.push('--deny-net');
         }
 
-        // Filesystem permissions
-        permissionFlags.push(`--allow-read=${config.working_dir}`);
+        // Filesystem permissions: working_dir always readable + any extra read-only paths
+        // Resolve allowed_read_paths from project root, not subprocess cwd
+        const resolvedReadPaths = config.allowed_read_paths.map(p => resolve(p));
+        const readPaths = [config.working_dir, ...resolvedReadPaths];
+        permissionFlags.push(`--allow-read=${readPaths.join(',')}`);
         permissionFlags.push(`--allow-write=${config.working_dir}`);
 
-        // Deny dangerous permissions
-        permissionFlags.push('--deny-run');
+        // Subprocess permissions: allowlist if configured, deny otherwise
+        if (config.allowed_run.length > 0) {
+          permissionFlags.push(`--allow-run=${config.allowed_run.join(',')}`);
+        } else {
+          permissionFlags.push('--deny-run');
+        }
         permissionFlags.push('--deny-env');
         permissionFlags.push('--deny-ffi');
 

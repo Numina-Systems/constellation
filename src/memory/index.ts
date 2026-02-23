@@ -1,4 +1,4 @@
-// Barrel export for memory module
+// pattern: Functional Core
 
 export type {
   MemoryTier,

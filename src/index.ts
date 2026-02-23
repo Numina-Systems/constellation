@@ -270,6 +270,7 @@ async function main(): Promise<void> {
       max_tool_rounds: config.agent.max_tool_rounds,
       context_budget: config.agent.context_budget,
       model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+      model_name: config.model.name,
     },
   });
 

@@ -12,9 +12,9 @@ name = "claude-sonnet-4-5-20250514"
 
 [embedding]
 provider = "ollama"
-model = "nomic-embed-text"
-endpoint = "http://192.168.1.100:11434"
-dimensions = 768
+model = "qwen3-embedding"
+endpoint = "http://192.168.1.6:11434"
+dimensions = 1024
 
 # Local development defaults only. For production, use environment variables:
 # DATABASE_URL, ANTHROPIC_API_KEY, OPENAI_COMPAT_API_KEY, EMBEDDING_API_KEY

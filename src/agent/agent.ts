@@ -229,7 +229,9 @@ export function createAgent(
       conversation_id: String(row['conversation_id']),
       role: String(row['role']) as 'user' | 'assistant' | 'system' | 'tool',
       content: String(row['content']),
-      tool_calls: row['tool_calls'] ? JSON.parse(String(row['tool_calls'])) : undefined,
+      tool_calls: row['tool_calls']
+        ? (typeof row['tool_calls'] === 'string' ? JSON.parse(row['tool_calls']) : row['tool_calls'])
+        : undefined,
       tool_call_id: row['tool_call_id'] ? String(row['tool_call_id']) : undefined,
       created_at: new Date(String(row['created_at'])),
     }));

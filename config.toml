@@ -1,0 +1,24 @@
+[agent]
+max_tool_rounds = 20
+max_code_size = 51200
+max_output_size = 1048576
+code_timeout = 60000
+max_tool_calls_per_exec = 25
+context_budget = 0.8
+
+[model]
+provider = "anthropic"
+name = "claude-sonnet-4-5-20250514"
+
+[embedding]
+provider = "ollama"
+model = "nomic-embed-text"
+endpoint = "http://192.168.1.100:11434"
+dimensions = 768
+
+[database]
+url = "postgresql://constellation:constellation@localhost:5432/constellation"
+
+[runtime]
+working_dir = "./workspace"
+allowed_hosts = ["api.anthropic.com", "api.moonshot.ai"]

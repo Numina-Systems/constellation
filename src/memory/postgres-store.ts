@@ -65,13 +65,22 @@ type SearchResult = {
 };
 
 function parseMemoryBlock(row: MemoryBlockRow): MemoryBlock {
+  let embedding: Array<number> | null = null;
+  if (row.embedding) {
+    if (typeof row.embedding === 'string') {
+      embedding = JSON.parse(row.embedding);
+    } else {
+      embedding = row.embedding;
+    }
+  }
+
   return {
     id: row.id,
     owner: row.owner,
     tier: row.tier,
     label: row.label,
     content: row.content,
-    embedding: row.embedding,
+    embedding,
     permission: row.permission as 'readonly' | 'familiar' | 'append' | 'readwrite',
     pinned: row.pinned,
     created_at: new Date(row.created_at),
@@ -140,7 +149,7 @@ export function createPostgresMemoryStore(
     block: Omit<MemoryBlock, 'created_at' | 'updated_at'>,
   ): Promise<MemoryBlock> {
     const id = block.id || randomUUID();
-    const embeddingSql = block.embedding ? toSql(block.embedding) : null;
+    const embeddingSql = block.embedding ? `'${toSql(block.embedding)}'::vector` : 'NULL';
 
     const rows = await persistence.query<MemoryBlockRow>(
       `INSERT INTO memory_blocks
@@ -160,7 +169,7 @@ export function createPostgresMemoryStore(
     content: string,
     embedding: Array<number> | null,
   ): Promise<MemoryBlock> {
-    const embeddingSql = embedding ? toSql(embedding) : null;
+    const embeddingSql = embedding ? `'${toSql(embedding)}'::vector` : 'NULL';
 
     const rows = await persistence.query<MemoryBlockRow>(
       `UPDATE memory_blocks
@@ -185,7 +194,7 @@ export function createPostgresMemoryStore(
     limit: number,
     tier?: MemoryTier,
   ): Promise<Array<MemorySearchResult>> {
-    const embeddingSql = toSql(embedding);
+    const embeddingSql = `'${toSql(embedding)}'::vector`;
     const tierFilter = tier ? 'AND tier = $3' : '';
     const params = tier ? [owner, limit, tier] : [owner, limit];
 

@@ -141,7 +141,8 @@ describe('Familiar Mutation Approval Flow', () => {
         [mutationId],
       );
       expect(mutations.length).toBe(1);
-      const mutation = mutations[0];
+      // Non-null assertion safe: length check above guarantees element exists
+      const mutation = mutations[0]!;
       expect(mutation.status).toBe('approved');
 
       // Verify update event was logged
@@ -150,7 +151,8 @@ describe('Familiar Mutation Approval Flow', () => {
         [blockId, 'update'],
       );
       expect(events.length).toBeGreaterThan(0);
-      const updateEvent = events[0];
+      // Non-null assertion safe: length check above guarantees element exists
+      const updateEvent = events[0]!;
       expect(updateEvent.old_content).toBe(originalContent);
       expect(updateEvent.new_content).toBe('Updated persona');
     });
@@ -214,7 +216,8 @@ describe('Familiar Mutation Approval Flow', () => {
         [mutationId],
       );
       expect(mutations.length).toBe(1);
-      const mutation = mutations[0];
+      // Non-null assertion safe: length check above guarantees element exists
+      const mutation = mutations[0]!;
       expect(mutation.status).toBe('rejected');
 
       // Verify NO update event was logged (only creation event should exist)

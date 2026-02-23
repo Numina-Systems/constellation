@@ -11,6 +11,7 @@ import type { EmbeddingProvider } from '../embedding/types';
 import { createPostgresProvider } from '../persistence/postgres';
 import { createPostgresMemoryStore } from '../memory/postgres-store';
 import { createMemoryManager } from '../memory/manager';
+import { createMockEmbeddingProvider } from './test-helpers';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
 const DB_CONNECTION_STRING =
@@ -35,21 +36,7 @@ describe('Familiar Mutation Approval Flow', () => {
     await persistence.runMigrations();
     await cleanupTables();
 
-    mockEmbedding = {
-      embed: async (text: string): Promise<Array<number>> => {
-        const hash = Array.from(text).reduce((acc, char) => {
-          return acc * 31 + char.charCodeAt(0);
-        }, 0);
-        const seed = Math.abs(hash) % 1000;
-        return Array.from({ length: 768 }, (_, i) =>
-          Math.sin(seed + i) * 0.5 + 0.5,
-        );
-      },
-      embedBatch: async (texts: ReadonlyArray<string>): Promise<Array<Array<number>>> => {
-        return Promise.all(texts.map((text) => mockEmbedding.embed(text)));
-      },
-      dimensions: 768,
-    };
+    mockEmbedding = createMockEmbeddingProvider();
   });
 
   afterEach(async () => {
@@ -149,21 +136,21 @@ describe('Familiar Mutation Approval Flow', () => {
       expect(block?.content).toBe('Updated persona');
 
       // Verify mutation status changed (query directly since it's no longer pending)
-      const mutations = await persistence.query(
+      const mutations = await persistence.query<{ status: string }>(
         'SELECT * FROM pending_mutations WHERE id = $1',
         [mutationId],
       );
       expect(mutations.length).toBe(1);
-      const mutation = mutations[0] as any;
+      const mutation = mutations[0];
       expect(mutation.status).toBe('approved');
 
       // Verify update event was logged
-      const events = await persistence.query(
+      const events = await persistence.query<{ old_content: string; new_content: string; event_type: string }>(
         'SELECT * FROM memory_events WHERE block_id = $1 AND event_type = $2',
         [blockId, 'update'],
       );
       expect(events.length).toBeGreaterThan(0);
-      const updateEvent = events[0] as any;
+      const updateEvent = events[0];
       expect(updateEvent.old_content).toBe(originalContent);
       expect(updateEvent.new_content).toBe('Updated persona');
     });
@@ -203,7 +190,7 @@ describe('Familiar Mutation Approval Flow', () => {
       const mutationId = writeResult.mutation.id;
 
       // Get initial event count (should only have creation event)
-      const initialEvents = await persistence.query(
+      const initialEvents = await persistence.query<{ event_type: string }>(
         'SELECT * FROM memory_events WHERE block_id = $1',
         [blockId],
       );
@@ -222,23 +209,22 @@ describe('Familiar Mutation Approval Flow', () => {
       expect(block?.content).toBe(originalContent);
 
       // Verify mutation status is rejected (query directly since it's no longer pending)
-      const mutations = await persistence.query(
+      const mutations = await persistence.query<{ status: string }>(
         'SELECT * FROM pending_mutations WHERE id = $1',
         [mutationId],
       );
       expect(mutations.length).toBe(1);
-      const mutation = mutations[0] as any;
+      const mutation = mutations[0];
       expect(mutation.status).toBe('rejected');
 
       // Verify NO update event was logged (only creation event should exist)
-      const allEvents = await persistence.query(
+      const allEvents = await persistence.query<{ event_type: string }>(
         'SELECT * FROM memory_events WHERE block_id = $1',
         [blockId],
       );
       expect(allEvents.length).toBe(initialEventCount);
       for (const event of allEvents) {
-        const eventRow = event as any;
-        expect(eventRow.event_type).not.toBe('update');
+        expect(event.event_type).not.toBe('update');
       }
     });
   });

@@ -8,6 +8,8 @@
 const DEFAULT_MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
 
 import * as readline from 'readline';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { loadConfig } from '@/config/config';
 import { createPostgresProvider } from '@/persistence/postgres';
 import { createModelProvider } from '@/model/factory';
@@ -139,11 +141,12 @@ export async function seedCoreMemory(
     return;
   }
 
-  // Read persona from file
-  const { readFileSync } = await import('fs');
+  // Read persona from file, resolving relative to project root (parent of src/)
   let personaContent: string;
   try {
-    personaContent = readFileSync(personaPath, 'utf-8');
+    const projectRoot = join(import.meta.dir, '..');
+    const resolvedPath = join(projectRoot, personaPath);
+    personaContent = readFileSync(resolvedPath, 'utf-8');
   } catch (error) {
     console.warn('could not read persona.md, skipping seeding:', error);
     return;

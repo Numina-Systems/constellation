@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
-import type { ModelProvider, ModelResponse, StreamEvent } from '../model/types';
+import type { ModelProvider, ModelResponse, StreamEvent, ContentBlock, ModelRequest } from '../model/types';
 import type { EmbeddingProvider } from '../embedding/types';
 import { createPostgresProvider } from '../persistence/postgres';
 import { createPostgresMemoryStore } from '../memory/postgres-store';
@@ -18,6 +18,7 @@ import { createExecuteCodeTool } from '../tool/builtin/code';
 import { createDenoExecutor } from '../runtime/executor';
 import { createAgent } from '../agent/agent';
 import { seedCoreMemory } from '../index';
+import { createMockEmbeddingProvider } from './test-helpers';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
 const DB_CONNECTION_STRING =
@@ -53,8 +54,8 @@ function createMockModelProvider(
   const toolCalls = config.toolCalls ?? [];
 
   return {
-    async complete(_request: any): Promise<ModelResponse> {
-      const content: any[] = [];
+    async complete(_request: ModelRequest): Promise<ModelResponse> {
+      const content: Array<ContentBlock> = [];
 
       if (textContent) {
         content.push({
@@ -104,24 +105,7 @@ describe('End-to-End Integration Tests', () => {
     await persistence.runMigrations();
     await cleanupTables();
 
-    // Create deterministic embedding provider
-    mockEmbedding = {
-      embed: async (text: string): Promise<Array<number>> => {
-        const hash = Array.from(text).reduce((acc, char) => {
-          return acc * 31 + char.charCodeAt(0);
-        }, 0);
-        const seed = Math.abs(hash) % 1000;
-        const result = Array.from({ length: 768 }, (_, i) => {
-          const val = Math.sin(seed + i) * 0.5 + 0.5;
-          return Number.isFinite(val) ? val : 0.5;
-        });
-        return result;
-      },
-      embedBatch: async (texts: ReadonlyArray<string>): Promise<Array<Array<number>>> => {
-        return Promise.all(texts.map((text) => mockEmbedding.embed(text)));
-      },
-      dimensions: 768,
-    };
+    mockEmbedding = createMockEmbeddingProvider();
   });
 
   afterEach(async () => {
@@ -369,8 +353,8 @@ describe('End-to-End Integration Tests', () => {
       let callCount = 0;
 
       // Use a custom model provider that returns tool_use on first call, then end_turn
-      const mockModel: any = {
-        async complete() {
+      const mockModel: ModelProvider = {
+        async complete(request) {
           callCount++;
           if (callCount === 1) {
             return {
@@ -387,7 +371,7 @@ describe('End-to-End Integration Tests', () => {
                     code: 'output("Hello from Deno!");',
                   },
                 },
-              ],
+              ] as Array<ContentBlock>,
               stop_reason: 'tool_use',
               usage: {
                 input_tokens: 100,
@@ -395,14 +379,25 @@ describe('End-to-End Integration Tests', () => {
               },
             };
           }
-          // After tool execution, return end_turn with the output
+          // After tool execution, extract tool result from messages
+          let toolResultText = '';
+          for (const msg of request.messages) {
+            if (msg.role === 'user' && Array.isArray(msg.content)) {
+              for (const block of msg.content) {
+                if (block.type === 'tool_result') {
+                  toolResultText = typeof block.content === 'string' ? block.content : '';
+                  break;
+                }
+              }
+            }
+          }
           return {
             content: [
               {
                 type: 'text',
-                text: 'The code executed successfully.',
+                text: `The code executed successfully. Output: ${toolResultText}`,
               },
-            ],
+            ] as Array<ContentBlock>,
             stop_reason: 'end_turn',
             usage: {
               input_tokens: 100,
@@ -451,7 +446,7 @@ describe('End-to-End Integration Tests', () => {
       );
 
       const response = await agent.processMessage('Run some code');
-      expect(response).toContain('successfully');
+      expect(response).toContain('Hello from Deno!');
     });
   });
 
@@ -470,8 +465,8 @@ describe('End-to-End Integration Tests', () => {
       let callCount = 0;
 
       // Use a custom model provider that returns tool_use on first call, then end_turn
-      const mockModel: any = {
-        async complete() {
+      const mockModel: ModelProvider = {
+        async complete(request) {
           callCount++;
           if (callCount === 1) {
             return {
@@ -489,7 +484,7 @@ describe('End-to-End Integration Tests', () => {
 output(JSON.stringify(blocks).substring(0, 100));`,
                   },
                 },
-              ],
+              ] as Array<ContentBlock>,
               stop_reason: 'tool_use',
               usage: {
                 input_tokens: 100,
@@ -497,14 +492,25 @@ output(JSON.stringify(blocks).substring(0, 100));`,
               },
             };
           }
-          // After tool execution, return end_turn
+          // After tool execution, extract tool result from messages
+          let toolResultText = '';
+          for (const msg of request.messages) {
+            if (msg.role === 'user' && Array.isArray(msg.content)) {
+              for (const block of msg.content) {
+                if (block.type === 'tool_result') {
+                  toolResultText = typeof block.content === 'string' ? block.content : '';
+                  break;
+                }
+              }
+            }
+          }
           return {
             content: [
               {
                 type: 'text',
-                text: 'The tool bridge works.',
+                text: `The tool bridge works. Tool result: ${toolResultText}`,
               },
-            ],
+            ] as Array<ContentBlock>,
             stop_reason: 'end_turn',
             usage: {
               input_tokens: 100,
@@ -553,7 +559,7 @@ output(JSON.stringify(blocks).substring(0, 100));`,
       );
 
       const response = await agent.processMessage('Call memory_list from code');
-      expect(response).toContain('works');
+      expect(response).toContain('Tool result:');
     });
   });
 });

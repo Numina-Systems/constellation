@@ -1,0 +1,308 @@
+// pattern: Imperative Shell
+
+/**
+ * Core agent loop implementation.
+ * Orchestrates message processing, conversation history management,
+ * tool dispatch, and context compression.
+ */
+
+// UUID generation is built-in to Bun via crypto
+import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
+import type { Agent, AgentDependencies, ConversationMessage } from './types.ts';
+import type { TextBlock, ToolUseBlock } from '../model/types.ts';
+
+const MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
+const COMPRESSION_KEEP_RECENT = 5; // Always keep the most recent N messages
+
+/**
+ * Create an agent instance.
+ * If conversationId is not provided, generates a new ULID/UUID.
+ * If provided, loads existing conversation history from Postgres.
+ */
+export function createAgent(
+  deps: AgentDependencies,
+  conversationId?: string,
+): Agent {
+  const id = conversationId || generateId();
+
+  async function processMessage(userMessage: string): Promise<string> {
+    // Step 1: Persist user message
+    await persistMessage({
+      conversation_id: id,
+      role: 'user',
+      content: userMessage,
+    });
+
+    // Step 2: Load conversation history
+    let history = await loadConversationHistory(id);
+
+    // Step 3: Check context budget and compress if needed
+    if (shouldCompress(history, deps.config.context_budget, MODEL_MAX_TOKENS)) {
+      history = await compressConversationHistory(history, id);
+    }
+
+    // Step 4 & 5: Build context and call model
+    let roundCount = 0;
+    const maxRounds = deps.config.max_tool_rounds;
+
+    while (roundCount < maxRounds) {
+      roundCount++;
+
+      // Build fresh context for each round
+      const systemPrompt = await buildSystemPrompt(deps.memory);
+      const messages = await buildMessages(history, deps.memory);
+
+      // Call the model with current context
+      const modelRequest = {
+        messages,
+        system: systemPrompt,
+        tools: deps.registry.toModelTools(),
+        model: 'claude-3-sonnet-20250219',
+        max_tokens: 4096,
+      };
+
+      const response = await deps.model.complete(modelRequest);
+
+      // Step 6: Handle response based on stop_reason
+      if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {
+        // Extract text content and return
+        const textContent = response.content.find((block) => block.type === 'text') as TextBlock | undefined;
+        const text = textContent?.text || '';
+
+        // Persist assistant message
+        await persistMessage({
+          conversation_id: id,
+          role: 'assistant',
+          content: text,
+        });
+
+        return text;
+      }
+
+      if (response.stop_reason === 'tool_use') {
+        // Extract tool use blocks
+        const toolUseBlocks = response.content.filter((block) => block.type === 'tool_use') as Array<ToolUseBlock>;
+
+        // Persist the assistant message with tool calls
+        const assistantText = response.content
+          .filter((block) => block.type === 'text')
+          .map((block) => (block as TextBlock).text)
+          .join('');
+
+        const assistantMessageId = await persistMessage({
+          conversation_id: id,
+          role: 'assistant',
+          content: assistantText || '[Tool calls]',
+          tool_calls: toolUseBlocks,
+        });
+
+        // Dispatch each tool use and collect results
+        for (const toolUse of toolUseBlocks) {
+          let toolResult: string;
+
+          try {
+            if (toolUse.name === 'execute_code') {
+              // Special case: code execution
+              const code = String(toolUse.input['code']);
+              const stubs = deps.registry.generateStubs();
+              const result = await deps.runtime.execute(code, stubs);
+
+              toolResult = result.success ? result.output : `Error: ${result.error}`;
+            } else {
+              // Regular tool dispatch
+              const result = await deps.registry.dispatch(toolUse.name, toolUse.input);
+              toolResult = result.output;
+            }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            toolResult = `Error executing tool ${toolUse.name}: ${errorMsg}`;
+          }
+
+          // Persist tool result
+          await persistMessage({
+            conversation_id: id,
+            role: 'tool',
+            content: toolResult,
+            tool_call_id: toolUse.id,
+          });
+
+          // Add tool result to history for next iteration
+          history.push({
+            id: `tool-result-${toolUse.id}`,
+            conversation_id: id,
+            role: 'tool',
+            content: toolResult,
+            tool_call_id: toolUse.id,
+            created_at: new Date(),
+          });
+        }
+
+        // Add assistant message to history for next iteration
+        history.push({
+          id: assistantMessageId,
+          conversation_id: id,
+          role: 'assistant',
+          content: assistantText || '[Tool calls]',
+          tool_calls: toolUseBlocks,
+          created_at: new Date(),
+        });
+
+        // Continue loop for next round
+        continue;
+      }
+
+      // Unknown stop reason - return empty string
+      return '';
+    }
+
+    // Max rounds exceeded
+    const warningMessage = `[Warning: max tool rounds (${maxRounds}) reached. Stopping tool execution.]`;
+
+    await persistMessage({
+      conversation_id: id,
+      role: 'assistant',
+      content: warningMessage,
+    });
+
+    return warningMessage;
+  }
+
+  async function getConversationHistory(): Promise<Array<ConversationMessage>> {
+    return loadConversationHistory(id);
+  }
+
+  return {
+    processMessage,
+    getConversationHistory,
+    conversationId: id,
+  };
+
+  /**
+   * Persist a message to the database.
+   * Returns the message ID.
+   */
+  async function persistMessage(msg: {
+    conversation_id: string;
+    role: 'user' | 'assistant' | 'system' | 'tool';
+    content: string;
+    tool_calls?: Array<ToolUseBlock>;
+    tool_call_id?: string;
+  }): Promise<string> {
+    const result = await deps.persistence.query(
+      `INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())
+       RETURNING id`,
+      [msg.conversation_id, msg.role, msg.content, msg.tool_calls ? JSON.stringify(msg.tool_calls) : null, msg.tool_call_id || null],
+    );
+
+    const row = result[0];
+    if (!row) {
+      return '';
+    }
+    return String(row['id']);
+  }
+
+  /**
+   * Load all messages for this conversation from the database.
+   */
+  async function loadConversationHistory(convId: string): Promise<Array<ConversationMessage>> {
+    const rows = await deps.persistence.query(
+      `SELECT id, conversation_id, role, content, tool_calls, tool_call_id, created_at
+       FROM messages
+       WHERE conversation_id = $1
+       ORDER BY created_at ASC`,
+      [convId],
+    );
+
+    return rows.map((row) => ({
+      id: String(row['id']),
+      conversation_id: String(row['conversation_id']),
+      role: String(row['role']) as 'user' | 'assistant' | 'system' | 'tool',
+      content: String(row['content']),
+      tool_calls: row['tool_calls'] ? JSON.parse(String(row['tool_calls'])) : undefined,
+      tool_call_id: row['tool_call_id'] ? String(row['tool_call_id']) : undefined,
+      created_at: new Date(String(row['created_at'])),
+    }));
+  }
+
+  /**
+   * Compress conversation history by summarizing old messages.
+   * Keeps the most recent N messages and replaces older ones with a summary.
+   */
+  async function compressConversationHistory(
+    history: Array<ConversationMessage>,
+    convId: string,
+  ): Promise<Array<ConversationMessage>> {
+    if (history.length <= COMPRESSION_KEEP_RECENT) {
+      return history;
+    }
+
+    // Split into old and recent messages
+    const toCompress = history.slice(0, history.length - COMPRESSION_KEEP_RECENT);
+    const toKeep = history.slice(history.length - COMPRESSION_KEEP_RECENT);
+
+    // Build a summarization request
+    const messageText = toCompress.map((msg) => `${msg.role}: ${msg.content}`).join('\n');
+
+    const summaryRequest = {
+      messages: [
+        {
+          role: 'user' as const,
+          content: `Please summarize the following conversation messages concisely, preserving important context and decisions:\n\n${messageText}`,
+        },
+      ],
+      system: 'You are a conversation summarization assistant. Create a concise summary that preserves key information and context.',
+      tools: [] as any[],
+      model: 'claude-3-sonnet-20250219',
+      max_tokens: 1024,
+    };
+
+    const summaryResponse = await deps.model.complete(summaryRequest);
+    const summaryText = summaryResponse.content
+      .filter((block) => block.type === 'text')
+      .map((block) => (block as TextBlock).text)
+      .join('');
+
+    // Replace old messages with summary
+    const oldIds = toCompress.map((msg) => msg.id);
+
+    // Delete old messages and insert summary
+    await deps.persistence.query(
+      `DELETE FROM messages WHERE id = ANY($1)`,
+      [oldIds],
+    );
+
+    const summaryId = await persistMessage({
+      conversation_id: convId,
+      role: 'system',
+      content: `[Context Summary]\n${summaryText}`,
+    });
+
+    // Return compressed history
+    const summaryMessage: ConversationMessage = {
+      id: summaryId,
+      conversation_id: convId,
+      role: 'system',
+      content: `[Context Summary]\n${summaryText}`,
+      created_at: new Date(),
+    };
+
+    // Archive to memory
+    await deps.memory.write(
+      'archived-conversation-summary',
+      `[Context Summary from ${toCompress[0]?.created_at?.toISOString() || 'unknown'} to ${toCompress[toCompress.length - 1]?.created_at?.toISOString() || 'unknown'}]\n${summaryText}`,
+      'archival',
+      'automatic compression of conversation history',
+    );
+
+    return [summaryMessage, ...toKeep];
+  }
+}
+
+/**
+ * Generate a new conversation ID.
+ * Uses crypto.randomUUID() which is built-in to Bun.
+ */
+function generateId(): string {
+  return crypto.randomUUID();
+}

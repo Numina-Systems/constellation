@@ -1,3 +1,5 @@
+// pattern: Functional Core
+
 export type QueryFunction = <T extends Record<string, unknown>>(
   sql: string,
   params?: ReadonlyArray<unknown>,

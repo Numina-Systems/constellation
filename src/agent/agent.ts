@@ -11,8 +11,9 @@ import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
 import type { Agent, AgentDependencies, ConversationMessage } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
-const MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
 const COMPRESSION_KEEP_RECENT = 5; // Always keep the most recent N messages
+const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
+const DEFAULT_MAX_TOKENS = 4096;
 
 /**
  * Create an agent instance.
@@ -24,6 +25,7 @@ export function createAgent(
   conversationId?: string,
 ): Agent {
   const id = conversationId || generateId();
+  const modelMaxTokens = deps.config.model_max_tokens ?? 200000;
 
   async function processMessage(userMessage: string): Promise<string> {
     // Step 1: Persist user message
@@ -37,7 +39,7 @@ export function createAgent(
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
-    if (shouldCompress(history, deps.config.context_budget, MODEL_MAX_TOKENS)) {
+    if (shouldCompress(history, deps.config.context_budget, modelMaxTokens)) {
       history = await compressConversationHistory(history, id);
     }
 
@@ -57,8 +59,8 @@ export function createAgent(
         messages,
         system: systemPrompt,
         tools: deps.registry.toModelTools(),
-        model: 'claude-3-sonnet-20250219',
-        max_tokens: 4096,
+        model: DEFAULT_MODEL_NAME,
+        max_tokens: DEFAULT_MAX_TOKENS,
       };
 
       const response = await deps.model.complete(modelRequest);
@@ -230,16 +232,16 @@ export function createAgent(
    * Keeps the most recent N messages and replaces older ones with a summary.
    */
   async function compressConversationHistory(
-    history: Array<ConversationMessage>,
+    history: ReadonlyArray<ConversationMessage>,
     convId: string,
   ): Promise<Array<ConversationMessage>> {
     if (history.length <= COMPRESSION_KEEP_RECENT) {
-      return history;
+      return Array.from(history);
     }
 
     // Split into old and recent messages
     const toCompress = history.slice(0, history.length - COMPRESSION_KEEP_RECENT);
-    const toKeep = history.slice(history.length - COMPRESSION_KEEP_RECENT);
+    const toKeep = Array.from(history.slice(history.length - COMPRESSION_KEEP_RECENT));
 
     // Build a summarization request
     const messageText = toCompress.map((msg) => `${msg.role}: ${msg.content}`).join('\n');
@@ -252,8 +254,8 @@ export function createAgent(
         },
       ],
       system: 'You are a conversation summarization assistant. Create a concise summary that preserves key information and context.',
-      tools: [] as any[],
-      model: 'claude-3-sonnet-20250219',
+      tools: [] as ReadonlyArray<never>,
+      model: DEFAULT_MODEL_NAME,
       max_tokens: 1024,
     };
 

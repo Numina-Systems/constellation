@@ -15,6 +15,7 @@ import type { PersistenceProvider } from '../persistence/types.ts';
 export type AgentConfig = {
   max_tool_rounds: number;
   context_budget: number;
+  model_max_tokens?: number; // Model's context window size (default: 200000 for Claude 3 Sonnet)
 };
 
 export type ConversationMessage = {

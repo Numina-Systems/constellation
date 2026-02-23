@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 /**
  * Context building utilities for the agent loop.
@@ -21,9 +21,11 @@ export async function buildSystemPrompt(memory: MemoryManager): Promise<string> 
 /**
  * Convert persisted conversation messages to model-ready Message format.
  * Prepends working memory blocks as context.
+ * Includes tool results as user-role messages with ToolResultBlock content,
+ * and system summaries as user-role messages.
  */
 export async function buildMessages(
-  history: Array<ConversationMessage>,
+  history: ReadonlyArray<ConversationMessage>,
   memory: MemoryManager,
 ): Promise<Array<Message>> {
   const messages: Array<Message> = [];
@@ -40,11 +42,28 @@ export async function buildMessages(
 
   // Convert persisted messages to model format
   for (const msg of history) {
-    // Filter out tool messages and system messages from history
-    // Only user and assistant messages go to the model
     if (msg.role === 'user' || msg.role === 'assistant') {
       messages.push({
         role: msg.role,
+        content: msg.content,
+      });
+    } else if (msg.role === 'tool') {
+      // Convert tool result messages to user-role messages with ToolResultBlock
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result' as const,
+            tool_use_id: msg.tool_call_id || '',
+            content: msg.content,
+            is_error: msg.content.toLowerCase().includes('error'),
+          },
+        ],
+      });
+    } else if (msg.role === 'system') {
+      // Include system summaries as user-role context messages
+      messages.push({
+        role: 'user',
         content: msg.content,
       });
     }
@@ -66,7 +85,7 @@ export function estimateTokens(text: string): number {
  * Returns true if estimated tokens exceed budget * modelMaxTokens.
  */
 export function shouldCompress(
-  history: Array<ConversationMessage>,
+  history: ReadonlyArray<ConversationMessage>,
   budget: number,
   modelMaxTokens: number,
 ): boolean {

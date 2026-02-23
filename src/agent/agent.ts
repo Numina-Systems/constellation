@@ -101,6 +101,7 @@ export function createAgent(
         });
 
         // Dispatch each tool use and collect results
+        const toolResults: Array<ConversationMessage> = [];
         for (const toolUse of toolUseBlocks) {
           let toolResult: string;
 
@@ -130,18 +131,18 @@ export function createAgent(
             tool_call_id: toolUse.id,
           });
 
-          // Add tool result to history for next iteration
-          history.push({
+          // Collect tool result for history (added after assistant message below)
+          toolResults.push({
             id: `tool-result-${toolUse.id}`,
             conversation_id: id,
-            role: 'tool',
+            role: 'tool' as const,
             content: toolResult,
             tool_call_id: toolUse.id,
             created_at: new Date(),
           });
         }
 
-        // Add assistant message to history for next iteration
+        // Add assistant message FIRST (must precede tool results for API ordering)
         history.push({
           id: assistantMessageId,
           conversation_id: id,
@@ -150,6 +151,11 @@ export function createAgent(
           tool_calls: toolUseBlocks,
           created_at: new Date(),
         });
+
+        // Then add tool results
+        for (const result of toolResults) {
+          history.push(result);
+        }
 
         // Continue loop for next round
         continue;

@@ -6,7 +6,7 @@
  * system prompt generation from memory, and context budget estimation.
  */
 
-import type { Message } from '../model/types.ts';
+import type { Message, ContentBlock, ToolUseBlock } from '../model/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ConversationMessage } from './types.ts';
 
@@ -42,11 +42,36 @@ export async function buildMessages(
 
   // Convert persisted messages to model format
   for (const msg of history) {
-    if (msg.role === 'user' || msg.role === 'assistant') {
+    if (msg.role === 'user') {
       messages.push({
-        role: msg.role,
+        role: 'user',
         content: msg.content,
       });
+    } else if (msg.role === 'assistant') {
+      // Reconstruct assistant messages with tool_use blocks when present
+      if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+        const contentBlocks: Array<ContentBlock> = [];
+        if (msg.content && msg.content !== '[Tool calls]') {
+          contentBlocks.push({ type: 'text', text: msg.content });
+        }
+        for (const tc of msg.tool_calls as Array<ToolUseBlock>) {
+          contentBlocks.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.name,
+            input: tc.input,
+          });
+        }
+        messages.push({
+          role: 'assistant',
+          content: contentBlocks,
+        });
+      } else {
+        messages.push({
+          role: 'assistant',
+          content: msg.content,
+        });
+      }
     } else if (msg.role === 'tool') {
       // Convert tool result messages to user-role messages with ToolResultBlock
       messages.push({

@@ -85,42 +85,47 @@ export function createShutdownHandler(
 }
 
 /**
+ * Prompt for a single line of input from readline.
+ * Used by the interaction loop for mutation approval prompts.
+ */
+function promptForLine(rl: readline.Interface, prompt: string): Promise<string> {
+  return new Promise<string>((resolve) => {
+    rl.question(prompt, (answer: string) => {
+      resolve(answer.trim());
+    });
+  });
+}
+
+/**
  * Create an interaction loop that can be tested with mock dependencies.
  * Extracts REPL logic for testability.
  */
 export function createInteractionLoop(deps: InteractionLoopDeps): (input: string) => Promise<void> {
   return async (userInput: string) => {
-    // Check for pending mutations before processing message
+    // Process the user message first
+    process.stdout.write(`\n> ${userInput}\n`);
+    const response = await deps.agent.processMessage(userInput);
+    process.stdout.write(`${response}\n\n`);
+
+    // After processing, check for any pending mutations that were created
     const pendingMutations = await deps.memory.getPendingMutations();
 
     for (const mutation of pendingMutations) {
-      process.stdout.write(
+      const answer = await promptForLine(
+        deps.readline,
         `\n[Pending mutation] Block: "${mutation.block_id}"\n` +
         `Proposed change: "${mutation.proposed_content}"\n` +
         `Reason: "${mutation.reason ?? 'unspecified'}"\n` +
         `Approve? (y/n/feedback): `,
       );
 
-      // In a real loop, we'd wait for user input here.
-      // For testing, this function returns a handler that processes one line at a time.
-      // The test environment will call this handler with the user's response.
-      await new Promise<void>((resolve) => {
-        deps.readline.once('line', async (response: string) => {
-          if (response.toLowerCase() === 'y') {
-            await deps.memory.approveMutation(mutation.id);
-          } else {
-            const feedback = response.toLowerCase() === 'n' ? 'user rejected' : response;
-            await deps.memory.rejectMutation(mutation.id, feedback);
-          }
-          resolve();
-        });
-      });
+      if (answer.toLowerCase() === 'y') {
+        await deps.memory.approveMutation(mutation.id);
+      } else {
+        const feedback = answer.toLowerCase() === 'n' ? 'user rejected' : answer;
+        await deps.memory.rejectMutation(mutation.id, feedback);
+      }
     }
-
-    // Process the user message
-    process.stdout.write(`\n> ${userInput}\n`);
-    const response = await deps.agent.processMessage(userInput);
-    process.stdout.write(`${response}\n\n`);
   };
 }
 

@@ -13,9 +13,7 @@ import type {
   UsageStats,
 } from "./types.js";
 import { ModelError } from "./types.js";
-
-const MAX_RETRIES = 3;
-const INITIAL_BACKOFF_MS = 1000;
+import { callWithRetry } from "./retry.js";
 
 function isRetryableError(error: unknown): boolean {
   if (error instanceof Anthropic.RateLimitError) {
@@ -28,18 +26,18 @@ function isRetryableError(error: unknown): boolean {
 }
 
 function normalizeToolDefinitions(
-  tools: ToolDefinition[]
-): Anthropic.Messages.Tool[] {
+  tools: ReadonlyArray<ToolDefinition>
+): Array<Anthropic.Messages.Tool> {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.input_schema as Record<string, unknown>,
-  })) as Anthropic.Messages.Tool[];
+  })) as Array<Anthropic.Messages.Tool>;
 }
 
 function normalizeContentBlocks(
-  blocks: Anthropic.ContentBlock[]
-): ContentBlock[] {
+  blocks: Array<Anthropic.ContentBlock>
+): Array<ContentBlock> {
   return blocks.map((block): ContentBlock => {
     if (block.type === "text") {
       return {
@@ -52,7 +50,7 @@ function normalizeContentBlocks(
         type: "tool_use",
         id: block.id,
         name: block.name,
-        input: block.input as Record<string, unknown>,
+        input: block.input as Record<string, unknown>, // Anthropic SDK types input as unknown; we've validated via discriminator
       };
     }
     throw new Error(`Unexpected block type: ${block.type}`);
@@ -63,9 +61,24 @@ function normalizeUsage(usage: { input_tokens: number; output_tokens: number; ca
   return {
     input_tokens: usage.input_tokens,
     output_tokens: usage.output_tokens,
-    cache_creation_input_tokens: usage.cache_creation_input_tokens ?? undefined,
-    cache_read_input_tokens: usage.cache_read_input_tokens ?? undefined,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens ?? null,
+    cache_read_input_tokens: usage.cache_read_input_tokens ?? null,
   };
+}
+
+function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" {
+  switch (reason) {
+    case "end_turn":
+      return "end_turn";
+    case "tool_use":
+      return "tool_use";
+    case "max_tokens":
+      return "max_tokens";
+    case "stop_sequence":
+      return "stop_sequence";
+    default:
+      return "end_turn";
+  }
 }
 
 function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
@@ -76,12 +89,12 @@ function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
     } as Anthropic.Messages.MessageParam;
   }
 
-  const content: Anthropic.Messages.ContentBlockParam[] = msg.content.map((block) => {
+  const content: Array<Anthropic.Messages.ContentBlockParam> = msg.content.map((block) => {
     if (block.type === "text") {
       return {
         type: "text",
         text: block.text,
-      } as Anthropic.Messages.TextBlockParam;
+      } as Anthropic.Messages.TextBlockParam; // SDK requires explicit type cast for discriminated union
     }
     if (block.type === "tool_use") {
       return {
@@ -89,18 +102,17 @@ function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
         id: block.id,
         name: block.name,
         input: block.input,
-      } as Anthropic.Messages.ToolUseBlockParam;
+      } as Anthropic.Messages.ToolUseBlockParam; // SDK requires explicit type cast for discriminated union
     }
     if (block.type === "tool_result") {
-      const contentValue = typeof block.content === "string" ? block.content : block.content;
       return {
         type: "tool_result",
         tool_use_id: block.tool_use_id,
-        content: contentValue,
+        content: block.content,
         is_error: block.is_error,
-      } as Anthropic.Messages.ToolResultBlockParam;
+      } as Anthropic.Messages.ToolResultBlockParam; // SDK requires explicit type cast for discriminated union
     }
-    throw new Error(`Unexpected content block type: ${(block as any).type}`);
+    throw new Error(`Unexpected content block type: ${(block as unknown as Record<string, unknown>)["type"]}`);
   });
 
   return {
@@ -109,34 +121,6 @@ function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
   } as Anthropic.Messages.MessageParam;
 }
 
-async function callWithRetry<T>(
-  fn: () => Promise<T>,
-  onError?: (error: unknown, attempt: number) => void
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      if (onError) {
-        onError(error, attempt);
-      }
-
-      if (!isRetryableError(error)) {
-        throw error;
-      }
-
-      if (attempt < MAX_RETRIES - 1) {
-        const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-      }
-    }
-  }
-
-  throw lastError;
-}
 
 export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
   const apiKey = config.api_key || process.env["ANTHROPIC_API_KEY"];
@@ -161,37 +145,37 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             system: request.system,
             tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
             temperature: request.temperature,
-            messages: request.messages.map(normalizeMessage) as Anthropic.Messages.MessageParam[],
+            messages: request.messages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
           });
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(
               "auth",
               false,
-              error.message || "Authentication failed"
+              error.message || "authentication failed"
             );
           }
           if (error instanceof Anthropic.RateLimitError) {
             throw new ModelError(
               "rate_limit",
               true,
-              error.message || "Rate limit exceeded"
+              error.message || "rate limit exceeded"
             );
           }
           if (error instanceof Anthropic.APIError) {
             throw new ModelError(
               "api_error",
               false,
-              error.message || "API error"
+              error.message || "api error"
             );
           }
           throw error;
         }
-      });
+      }, isRetryableError);
 
       return {
         content: normalizeContentBlocks(response.content),
-        stop_reason: response.stop_reason as any,
+        stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "end_turn"),
         usage: normalizeUsage(response.usage),
       };
     },
@@ -212,26 +196,26 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             throw new ModelError(
               "auth",
               false,
-              error.message || "Authentication failed"
+              error.message || "authentication failed"
             );
           }
           if (error instanceof Anthropic.RateLimitError) {
             throw new ModelError(
               "rate_limit",
               true,
-              error.message || "Rate limit exceeded"
+              error.message || "rate limit exceeded"
             );
           }
           if (error instanceof Anthropic.APIError) {
             throw new ModelError(
               "api_error",
               false,
-              error.message || "API error"
+              error.message || "api error"
             );
           }
           throw error;
         }
-      });
+      }, isRetryableError);
 
       for await (const event of stream) {
         if (event.type === "message_start") {
@@ -249,8 +233,9 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
               type: event.content_block.type,
               index: event.index,
               ...(event.content_block.type === "tool_use" && {
-                id: (event.content_block as any).id,
-                name: (event.content_block as any).name,
+                // SDK types content_block as generic ContentBlock; tool_use variant has id and name
+                id: (event.content_block as unknown as { id?: string }).id,
+                name: (event.content_block as unknown as { name?: string }).name,
               }),
             },
           };
@@ -260,10 +245,12 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             delta: {
               type: event.delta.type,
               ...(event.delta.type === "text_delta" && {
-                text: (event.delta as any).text,
+                // SDK types delta as generic ContentBlockDelta; text_delta variant has text property
+                text: (event.delta as unknown as { text?: string }).text,
               }),
               ...(event.delta.type === "input_json_delta" && {
-                input: (event.delta as any).partial_json,
+                // SDK types delta as generic ContentBlockDelta; input_json_delta variant has partial_json
+                input: (event.delta as unknown as { partial_json?: string }).partial_json,
               }),
               index: event.index,
             },
@@ -272,7 +259,8 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           yield {
             type: "message_stop",
             message: {
-              stop_reason: event.delta.stop_reason as any,
+              // SDK types stop_reason as string; we map to normalized StopReason type via function
+              stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "end_turn"),
             },
           };
         }

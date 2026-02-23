@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 import type { ModelConfig } from "../config/schema.js";
 import type { ModelProvider } from "./types.js";

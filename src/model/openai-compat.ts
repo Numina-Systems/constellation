@@ -13,9 +13,7 @@ import type {
   UsageStats,
 } from "./types.js";
 import { ModelError } from "./types.js";
-
-const MAX_RETRIES = 3;
-const INITIAL_BACKOFF_MS = 1000;
+import { callWithRetry } from "./retry.js";
 
 function isRetryableError(error: unknown): boolean {
   if (error instanceof OpenAI.RateLimitError) {
@@ -31,8 +29,8 @@ function isRetryableError(error: unknown): boolean {
 }
 
 function normalizeToolDefinitions(
-  tools: ToolDefinition[]
-): OpenAI.Chat.ChatCompletionTool[] {
+  tools: ReadonlyArray<ToolDefinition>
+): Array<OpenAI.Chat.ChatCompletionTool> {
   return tools.map((tool) => ({
     type: "function",
     function: {
@@ -45,8 +43,8 @@ function normalizeToolDefinitions(
 
 function normalizeContentBlocks(
   content: string | null,
-  toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] | undefined
-): ContentBlock[] {
+  toolCalls: Array<OpenAI.Chat.ChatCompletionMessageToolCall> | undefined
+): Array<ContentBlock> {
   const blocks: ContentBlock[] = [];
 
   if (content) {
@@ -58,11 +56,21 @@ function normalizeContentBlocks(
 
   if (toolCalls) {
     for (const toolCall of toolCalls) {
+      let input: Record<string, unknown>;
+      try {
+        input = JSON.parse(toolCall.function.arguments);
+      } catch {
+        throw new ModelError(
+          "api_error",
+          false,
+          `failed to parse tool call arguments: ${toolCall.function.arguments}`
+        );
+      }
       blocks.push({
         type: "tool_use",
         id: toolCall.id,
         name: toolCall.function.name,
-        input: JSON.parse(toolCall.function.arguments),
+        input,
       });
     }
   }
@@ -100,7 +108,7 @@ function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam 
     };
   }
 
-  const contentArray: OpenAI.Chat.ChatCompletionContentPart[] = [];
+  const contentArray: Array<OpenAI.Chat.ChatCompletionContentPart> = [];
 
   for (const block of msg.content) {
     if (block.type === "text") {
@@ -125,30 +133,6 @@ function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam 
   } as OpenAI.Chat.ChatCompletionMessageParam;
 }
 
-async function callWithRetry<T>(
-  fn: () => Promise<T>
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-
-      if (!isRetryableError(error)) {
-        throw error;
-      }
-
-      if (attempt < MAX_RETRIES - 1) {
-        const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-      }
-    }
-  }
-
-  throw lastError;
-}
 
 export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
   const apiKey = config.api_key || process.env["OPENAI_API_KEY"];
@@ -168,7 +152,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
     async complete(request: ModelRequest): Promise<ModelResponse> {
       const response = await callWithRetry(async () => {
         try {
-          const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+          const messages: Array<OpenAI.Chat.ChatCompletionMessageParam> = [];
 
           if (request.system) {
             messages.push({
@@ -191,26 +175,26 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
             throw new ModelError(
               "auth",
               false,
-              error.message || "Authentication failed"
+              error.message || "authentication failed"
             );
           }
           if (error instanceof OpenAI.RateLimitError) {
             throw new ModelError(
               "rate_limit",
               true,
-              error.message || "Rate limit exceeded"
+              error.message || "rate limit exceeded"
             );
           }
           if (error instanceof OpenAI.APIError) {
             throw new ModelError(
               "api_error",
               false,
-              error.message || "API error"
+              error.message || "api error"
             );
           }
           throw error;
         }
-      });
+      }, isRetryableError);
 
       const choice = response.choices[0];
       if (!choice) {
@@ -232,7 +216,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
       const stream = await callWithRetry(async () => {
         try {
-          const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+          const messages: Array<OpenAI.Chat.ChatCompletionMessageParam> = [];
 
           if (request.system) {
             messages.push({
@@ -256,26 +240,26 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
             throw new ModelError(
               "auth",
               false,
-              error.message || "Authentication failed"
+              error.message || "authentication failed"
             );
           }
           if (error instanceof OpenAI.RateLimitError) {
             throw new ModelError(
               "rate_limit",
               true,
-              error.message || "Rate limit exceeded"
+              error.message || "rate limit exceeded"
             );
           }
           if (error instanceof OpenAI.APIError) {
             throw new ModelError(
               "api_error",
               false,
-              error.message || "API error"
+              error.message || "api error"
             );
           }
           throw error;
         }
-      });
+      }, isRetryableError);
 
       let messageId = "";
       const toolCallMap = new Map<number, { name: string; arguments: string }>();
@@ -347,13 +331,14 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
                 current.name = toolCall.function.name;
               }
               if (toolCall.function?.arguments) {
-                current.arguments += toolCall.function.arguments;
+                const chunk = toolCall.function.arguments;
+                current.arguments += chunk;
 
                 yield {
                   type: "content_block_delta",
                   delta: {
                     type: "input_json_delta",
-                    input: current.arguments,
+                    input: chunk,
                     index,
                   },
                 };

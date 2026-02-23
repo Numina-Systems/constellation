@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 import type { EmbeddingConfig } from "../config/schema.js";
 import type { EmbeddingProvider } from "./types.js";

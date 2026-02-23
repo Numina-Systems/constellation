@@ -59,8 +59,8 @@ describe("callWithRetry", () => {
     });
 
     it("should call onError callback on each retry", async () => {
-      const errors: unknown[] = [];
-      const attempts: number[] = [];
+      const errors: Array<unknown> = [];
+      const attempts: Array<number> = [];
 
       try {
         await callWithRetry(
@@ -105,7 +105,7 @@ describe("callWithRetry", () => {
 
   describe("backoff timing", () => {
     it("should increase backoff with exponential growth", async () => {
-      const timestamps: number[] = [];
+      const timestamps: Array<number> = [];
 
       try {
         await callWithRetry(

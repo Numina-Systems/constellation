@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 /**
  * Retry logic shared across all model adapters.

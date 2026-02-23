@@ -45,7 +45,7 @@ function normalizeContentBlocks(
   content: string | null,
   toolCalls: Array<OpenAI.Chat.ChatCompletionMessageToolCall> | undefined
 ): Array<ContentBlock> {
-  const blocks: ContentBlock[] = [];
+  const blocks: Array<ContentBlock> = [];
 
   if (content) {
     blocks.push({

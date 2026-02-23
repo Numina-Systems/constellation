@@ -1,0 +1,317 @@
+// pattern: Imperative Shell
+
+/**
+ * Deno code executor with IPC bridge and controlled permissions.
+ * Spawns Deno subprocesses to execute code in a controlled sandbox environment.
+ * Manages:
+ * - Size validation (code and output)
+ * - Permission flags for network, filesystem, environment access
+ * - Timeout enforcement
+ * - IPC communication with the Deno subprocess
+ * - Tool dispatch bridging between Deno code and host tools
+ */
+
+import { readFileSync, rmSync, writeFileSync } from 'fs';
+import { resolve } from 'path';
+import { randomUUID } from 'crypto';
+
+import type { RuntimeConfig } from '@/config/schema';
+import type { AgentConfig } from '@/config/schema';
+import type {
+  CodeRuntime,
+  ExecutionResult,
+  IpcMessage,
+  IpcToolCall,
+} from '@/runtime/types';
+import type { ToolRegistry } from '@/tool/types';
+
+/**
+ * Create a CodeRuntime that executes code in Deno subprocesses.
+ * Handles permission flags, IPC communication, and resource limits.
+ */
+export function createDenoExecutor(
+  config: RuntimeConfig & AgentConfig,
+  registry: ToolRegistry,
+): CodeRuntime {
+  return {
+    async execute(code: string, toolStubs: string): Promise<ExecutionResult> {
+      const startTime = Date.now();
+
+      // AC3.8: Size check before execution
+      if (code.length > config.max_code_size) {
+        return {
+          success: false,
+          output: '',
+          error: `code exceeds max size of ${config.max_code_size} bytes`,
+          tool_calls_made: 0,
+          duration_ms: Date.now() - startTime,
+        };
+      }
+
+      // Get the Deno runtime bridge code
+      // Resolve path relative to this file's location
+      const currentFilePath = new URL(import.meta.url).pathname;
+      const currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf('/'));
+      const runtimePath = resolve(currentDir, 'deno/runtime.ts');
+
+      let runtimeCode: string;
+      try {
+        runtimeCode = readFileSync(runtimePath, 'utf-8');
+      } catch (readError) {
+        return {
+          success: false,
+          output: '',
+          error: `failed to read Deno runtime bridge: ${readError instanceof Error ? readError.message : 'unknown error'}`,
+          tool_calls_made: 0,
+          duration_ms: Date.now() - startTime,
+        };
+      }
+
+      // Build combined script: runtime + stubs + user code
+      const combinedScript = `${runtimeCode}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${code}`;
+
+      // Create temporary file in working directory
+      const tempFileName = `exec_${randomUUID()}.ts`;
+      const scriptPath = resolve(config.working_dir, tempFileName);
+
+      try {
+        writeFileSync(scriptPath, combinedScript, 'utf-8');
+      } catch {
+        return {
+          success: false,
+          output: '',
+          error: 'failed to write temporary execution file',
+          tool_calls_made: 0,
+          duration_ms: Date.now() - startTime,
+        };
+      }
+
+      try {
+        // Build permission flags
+        const permissionFlags: Array<string> = [];
+
+        // Network permission with allowed hosts
+        if (config.allowed_hosts.length > 0) {
+          permissionFlags.push(`--allow-net=${config.allowed_hosts.join(',')}`);
+        } else {
+          permissionFlags.push('--deny-net');
+        }
+
+        // Filesystem permissions
+        permissionFlags.push(`--allow-read=${config.working_dir}`);
+        permissionFlags.push(`--allow-write=${config.working_dir}`);
+
+        // Deny dangerous permissions
+        permissionFlags.push('--deny-run');
+        permissionFlags.push('--deny-env');
+        permissionFlags.push('--deny-ffi');
+
+        // Spawn Deno subprocess
+        const proc = Bun.spawn(['deno', 'run', ...permissionFlags, scriptPath], {
+          stdin: 'pipe',
+          stdout: 'pipe',
+          stderr: 'pipe',
+          cwd: resolve(config.working_dir),
+        });
+
+        // Track state
+        let accumulatedOutput = '';
+        let toolCallCount = 0;
+        let timedOut = false;
+
+        // Set timeout
+        const timeoutPromise = new Promise<void>((resolve) => {
+          setTimeout(() => {
+            timedOut = true;
+            proc.kill();
+            resolve();
+          }, config.code_timeout);
+        });
+
+        try {
+          // Helper to handle IPC messages
+          const handleIpcMessage = async (message: IpcMessage): Promise<void> => {
+            if (message.type === '__output__') {
+              accumulatedOutput += message.data + '\n';
+
+              // AC3.8: Check output size limit
+              if (accumulatedOutput.length > config.max_output_size) {
+                proc.kill();
+                throw new Error(
+                  `output exceeds max size of ${config.max_output_size} bytes`,
+                );
+              }
+            } else if (message.type === '__tool_call__') {
+              toolCallCount += 1;
+
+              // Check tool call limit
+              if (toolCallCount > config.max_tool_calls_per_exec) {
+                proc.kill();
+                throw new Error(
+                  `exceeded max tool calls per execution: ${config.max_tool_calls_per_exec}`,
+                );
+              }
+
+              // Dispatch tool and send result back
+              const toolCall = message as IpcToolCall;
+              const toolResult = await registry.dispatch(
+                toolCall.name,
+                toolCall.params,
+              );
+
+              const responseMsg =
+                toolResult.success || !toolResult.error
+                  ? {
+                      type: '__tool_result__' as const,
+                      call_id: toolCall.call_id,
+                      result: toolResult,
+                    }
+                  : {
+                      type: '__tool_error__' as const,
+                      call_id: toolCall.call_id,
+                      error: toolResult.error || 'unknown error',
+                    };
+
+              const stdin = proc.stdin;
+              if (stdin) {
+                const encoder = new TextEncoder();
+                stdin.write(
+                  encoder.encode(JSON.stringify(responseMsg) + '\n'),
+                );
+              }
+            }
+          };
+
+          // Read stdout and process IPC messages
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let processingError: Error | undefined;
+
+          const readStdout = async (): Promise<void> => {
+            const outputStream = proc.stdout;
+            if (!outputStream) return;
+
+            const reader = outputStream.getReader();
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+              while (true) {
+                const { done, value } = await reader.read();
+
+                if (value) {
+                  const chunk = decoder.decode(value, { stream: !done });
+                  buffer += chunk;
+
+                  // Process complete lines
+                  const lines = buffer.split('\n');
+                  buffer = lines.pop() || '';
+
+                  for (const line of lines) {
+                    if (!line.trim()) continue;
+
+                    try {
+                      const message = JSON.parse(line) as IpcMessage;
+                      await handleIpcMessage(message);
+                    } catch (parseError) {
+                      // Ignore JSON parse errors but continue
+                      if (!processingError && parseError instanceof Error) {
+                        processingError = parseError;
+                      }
+                    }
+                  }
+                }
+
+                if (done) break;
+              }
+            } finally {
+              reader.releaseLock();
+            }
+          };
+
+          // Close stdin to signal to Deno that no more input is coming
+          try {
+            const stdin = proc.stdin;
+            if (stdin) {
+              stdin.end();
+            }
+          } catch {
+            // stdin might not be available
+          }
+
+          // Wait for either stdout to close or timeout
+          await Promise.race([
+            readStdout(),
+            timeoutPromise,
+          ]).catch(() => {
+            // Ignore errors, we've already set the state
+          });
+
+          // Kill process if still running
+          try {
+            proc.kill();
+          } catch {
+            // Process already exited
+          }
+
+          // Determine exit status
+          if (timedOut) {
+            return {
+              success: false,
+              output: accumulatedOutput,
+              error: `execution timed out after ${config.code_timeout}ms`,
+              tool_calls_made: toolCallCount,
+              duration_ms: Date.now() - startTime,
+            };
+          }
+
+          if (processingError) {
+            return {
+              success: false,
+              output: accumulatedOutput,
+              error: processingError.message,
+              tool_calls_made: toolCallCount,
+              duration_ms: Date.now() - startTime,
+            };
+          }
+
+          return {
+            success: true,
+            output: accumulatedOutput.trim(),
+            tool_calls_made: toolCallCount,
+            duration_ms: Date.now() - startTime,
+          };
+        } catch (error) {
+          if (timedOut) {
+            return {
+              success: false,
+              output: accumulatedOutput,
+              error: `execution timed out after ${config.code_timeout}ms`,
+              tool_calls_made: toolCallCount,
+              duration_ms: Date.now() - startTime,
+            };
+          }
+
+          return {
+            success: false,
+            output: accumulatedOutput,
+            error: error instanceof Error ? error.message : 'unknown error',
+            tool_calls_made: toolCallCount,
+            duration_ms: Date.now() - startTime,
+          };
+        } finally {
+          try {
+            proc.kill();
+          } catch {
+            // Process already exited
+          }
+        }
+      } finally {
+        // Clean up temporary file
+        try {
+          rmSync(scriptPath);
+        } catch {
+          // File may not exist or already cleaned up
+        }
+      }
+    },
+  };
+}

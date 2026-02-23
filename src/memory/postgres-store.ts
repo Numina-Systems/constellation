@@ -167,7 +167,7 @@ export function createPostgresMemoryStore(
   async function updateBlock(
     id: string,
     content: string,
-    embedding: Array<number> | null,
+    embedding: ReadonlyArray<number> | null,
   ): Promise<MemoryBlock> {
     const embeddingSql = embedding ? `'${toSql(embedding)}'::vector` : 'NULL';
 
@@ -179,7 +179,10 @@ export function createPostgresMemoryStore(
       [content, id],
     );
 
-    // UPDATE RETURNING always produces a row or throws
+    if (rows.length === 0) {
+      throw new Error(`block not found: ${id}`);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return parseMemoryBlock(rows[0]!);
   }
@@ -190,7 +193,7 @@ export function createPostgresMemoryStore(
 
   async function searchByEmbedding(
     owner: string,
-    embedding: Array<number>,
+    embedding: ReadonlyArray<number>,
     limit: number,
     tier?: MemoryTier,
   ): Promise<Array<MemorySearchResult>> {
@@ -199,10 +202,10 @@ export function createPostgresMemoryStore(
     const params = tier ? [owner, limit, tier] : [owner, limit];
 
     const rows = await persistence.query<SearchResult>(
-      `SELECT *, (embedding <=> ${embeddingSql}) as similarity
+      `SELECT *, (1 - (embedding <=> ${embeddingSql})) as similarity
        FROM memory_blocks
        WHERE owner = $1 AND embedding IS NOT NULL ${tierFilter}
-       ORDER BY embedding <=> ${embeddingSql}
+       ORDER BY similarity DESC
        LIMIT $2`,
       params,
     );
@@ -284,7 +287,10 @@ export function createPostgresMemoryStore(
       [status, feedback || null, id],
     );
 
-    // UPDATE RETURNING always produces a row or throws
+    if (rows.length === 0) {
+      throw new Error(`mutation not found: ${id}`);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     return parsePendingMutation(rows[0]!);
   }

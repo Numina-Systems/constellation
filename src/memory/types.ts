@@ -15,7 +15,7 @@ export type MemoryBlock = {
   tier: MemoryTier;
   label: string;
   content: string;
-  embedding: Array<number> | null;
+  embedding: ReadonlyArray<number> | null;
   permission: MemoryPermission;
   pinned: boolean;
   created_at: Date;

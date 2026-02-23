@@ -1,4 +1,4 @@
-// pattern: Functional Core + Imperative Shell
+// pattern: Imperative Shell
 
 /**
  * MemoryManager orchestrates the three-tier memory system.
@@ -176,10 +176,12 @@ export function createMemoryManager(
       return store.getBlocksByTier(owner, tier);
     }
 
-    // Return all blocks for the owner
-    const core = await store.getBlocksByTier(owner, 'core');
-    const working = await store.getBlocksByTier(owner, 'working');
-    const archival = await store.getBlocksByTier(owner, 'archival');
+    // Return all blocks for the owner - fetch in parallel
+    const [core, working, archival] = await Promise.all([
+      store.getBlocksByTier(owner, 'core'),
+      store.getBlocksByTier(owner, 'working'),
+      store.getBlocksByTier(owner, 'archival'),
+    ]);
 
     return [...core, ...working, ...archival];
   }

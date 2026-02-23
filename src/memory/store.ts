@@ -28,14 +28,14 @@ export interface MemoryStore {
   updateBlock(
     id: string,
     content: string,
-    embedding: Array<number> | null,
+    embedding: ReadonlyArray<number> | null,
   ): Promise<MemoryBlock>;
   deleteBlock(id: string): Promise<void>;
 
   // Semantic search
   searchByEmbedding(
     owner: string,
-    embedding: Array<number>,
+    embedding: ReadonlyArray<number>,
     limit: number,
     tier?: MemoryTier,
   ): Promise<Array<MemorySearchResult>>;

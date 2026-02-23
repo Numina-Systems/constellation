@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import { describe, it, expect, beforeAll, afterEach } from 'bun:test';
+import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import { createPostgresMemoryStore } from './postgres-store.ts';
 import { createMemoryManager } from './manager.ts';
@@ -52,6 +52,10 @@ describe('MemoryManager', () => {
 
   afterEach(async () => {
     await cleanupTables();
+  });
+
+  afterAll(async () => {
+    await persistence.disconnect();
   });
 
   describe('AC1.3: Core blocks in system prompt', () => {
@@ -145,6 +149,30 @@ describe('MemoryManager', () => {
 
       const blocks = await manager.getWorkingBlocks();
       expect(blocks).toHaveLength(1);
+    });
+
+    it('deleteBlock removes working block from list', async () => {
+      const manager = createMemoryManager(store, mockEmbedding, TEST_OWNER);
+
+      // Create a working block
+      const result = await manager.write('Delete Block', 'Content to delete');
+      expect(result.applied).toBe(true);
+
+      if (result.applied) {
+        const blockId = result.block.id;
+
+        // Verify it appears in the list
+        let blocks = await manager.getWorkingBlocks();
+        expect(blocks).toHaveLength(1);
+        expect(blocks[0]?.id).toBe(blockId);
+
+        // Delete the block
+        await store.deleteBlock(blockId);
+
+        // Verify it's removed from the list
+        blocks = await manager.getWorkingBlocks();
+        expect(blocks).toHaveLength(0);
+      }
     });
   });
 
@@ -383,9 +411,10 @@ describe('MemoryManager', () => {
         expect(approvedBlock.content).toBe('New Content');
         expect(approvedBlock.embedding).not.toBeNull();
 
-        // Verify mutation status is approved
-        const resolvedMutation = await store.resolveMutation(mutationId, 'approved');
-        expect(resolvedMutation.status).toBe('approved');
+        // Verify mutation is no longer pending
+        const pendingMutations = await manager.getPendingMutations();
+        const stillPending = pendingMutations.find((m) => m.id === mutationId);
+        expect(stillPending).toBeUndefined();
 
         // Verify event was logged
         const events = await store.getEvents(block.id);

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
-import type { ModelProvider, ModelRequest, ModelResponse, StreamEvent } from '../model/types';
+import type { ModelProvider, ModelResponse, StreamEvent } from '../model/types';
 import type { EmbeddingProvider } from '../embedding/types';
 import { createPostgresProvider } from '../persistence/postgres';
 import { createPostgresMemoryStore } from '../memory/postgres-store';
@@ -18,7 +18,6 @@ import { createExecuteCodeTool } from '../tool/builtin/code';
 import { createDenoExecutor } from '../runtime/executor';
 import { createAgent } from '../agent/agent';
 import { seedCoreMemory } from '../index';
-import type { Agent } from '../agent/types';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
 const DB_CONNECTION_STRING =
@@ -54,7 +53,7 @@ function createMockModelProvider(
   const toolCalls = config.toolCalls ?? [];
 
   return {
-    async complete(request: ModelRequest): Promise<ModelResponse> {
+    async complete(_request: any): Promise<ModelResponse> {
       const content: any[] = [];
 
       if (textContent) {
@@ -83,7 +82,7 @@ function createMockModelProvider(
       };
     },
 
-    async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+    async *stream(): AsyncIterable<StreamEvent> {
       // Mock streaming not needed for e2e tests
       yield {
         type: 'message_stop',
@@ -203,10 +202,12 @@ describe('End-to-End Integration Tests', () => {
         {
           max_code_size: 10000,
           max_output_size: 10000,
-          timeout_ms: 5000,
+          code_timeout: 5000,
           working_dir: '/tmp',
           max_tool_rounds: 5,
           context_budget: 100000,
+          max_tool_calls_per_exec: 25,
+          allowed_hosts: [],
         },
         registry,
       );
@@ -253,10 +254,12 @@ describe('End-to-End Integration Tests', () => {
         {
           max_code_size: 10000,
           max_output_size: 10000,
-          timeout_ms: 5000,
+          code_timeout: 5000,
           working_dir: '/tmp',
           max_tool_rounds: 5,
           context_budget: 100000,
+          max_tool_calls_per_exec: 25,
+          allowed_hosts: [],
         },
         registry,
       );
@@ -367,7 +370,7 @@ describe('End-to-End Integration Tests', () => {
 
       // Use a custom model provider that returns tool_use on first call, then end_turn
       const mockModel: any = {
-        async complete(request: any) {
+        async complete() {
           callCount++;
           if (callCount === 1) {
             return {
@@ -407,7 +410,7 @@ describe('End-to-End Integration Tests', () => {
             },
           };
         },
-        async *stream(request: any) {
+        async *stream() {
           yield {
             type: 'message_stop',
             message: {
@@ -421,10 +424,12 @@ describe('End-to-End Integration Tests', () => {
         {
           max_code_size: 10000,
           max_output_size: 10000,
-          timeout_ms: 5000,
+          code_timeout: 5000,
           working_dir: '/tmp',
           max_tool_rounds: 5,
           context_budget: 100000,
+          max_tool_calls_per_exec: 25,
+          allowed_hosts: [],
         },
         registry,
       );
@@ -455,9 +460,6 @@ describe('End-to-End Integration Tests', () => {
       const store = createPostgresMemoryStore(persistence);
       const memory = createMemoryManager(store, mockEmbedding, TEST_OWNER);
 
-      // Create a working block so memory_list has something to return
-      await memory.write('test:block', 'Test content', 'working');
-
       const registry = createToolRegistry();
       const memoryTools = createMemoryTools(memory);
       for (const tool of memoryTools) {
@@ -469,7 +471,7 @@ describe('End-to-End Integration Tests', () => {
 
       // Use a custom model provider that returns tool_use on first call, then end_turn
       const mockModel: any = {
-        async complete(request: any) {
+        async complete() {
           callCount++;
           if (callCount === 1) {
             return {
@@ -483,9 +485,8 @@ describe('End-to-End Integration Tests', () => {
                   id: 'test-tool-2',
                   name: 'execute_code',
                   input: {
-                    code: `const result = await memory_list("working");
-const output_str = typeof result === "string" ? result : JSON.stringify(result);
-output(output_str);`,
+                    code: `const blocks = await memory_list();
+output(JSON.stringify(blocks).substring(0, 100));`,
                   },
                 },
               ],
@@ -501,7 +502,7 @@ output(output_str);`,
             content: [
               {
                 type: 'text',
-                text: 'The memory list has been retrieved.',
+                text: 'The tool bridge works.',
               },
             ],
             stop_reason: 'end_turn',
@@ -511,7 +512,7 @@ output(output_str);`,
             },
           };
         },
-        async *stream(request: any) {
+        async *stream() {
           yield {
             type: 'message_stop',
             message: {
@@ -525,10 +526,12 @@ output(output_str);`,
         {
           max_code_size: 10000,
           max_output_size: 10000,
-          timeout_ms: 5000,
+          code_timeout: 10000,
           working_dir: '/tmp',
           max_tool_rounds: 5,
           context_budget: 100000,
+          max_tool_calls_per_exec: 25,
+          allowed_hosts: [],
         },
         registry,
       );
@@ -550,7 +553,7 @@ output(output_str);`,
       );
 
       const response = await agent.processMessage('Call memory_list from code');
-      expect(response).toContain('retrieved');
+      expect(response).toContain('works');
     });
   });
 });

@@ -207,7 +207,7 @@ Use execute_code for anything beyond basic memory operations — API calls, file
     label: 'core:persona',
     content: personaContent,
     embedding: personaEmbedding,
-    permission: 'familiar',
+    permission: 'readwrite',
     pinned: true,
   });
 

@@ -139,7 +139,7 @@ describe('End-to-End Integration Tests', () => {
 
       const personaBlock = blocks.find((b) => b.label === 'core:persona');
       expect(personaBlock).toBeDefined();
-      expect(personaBlock?.permission).toBe('familiar');
+      expect(personaBlock?.permission).toBe('readwrite');
       expect(personaBlock?.content).toContain('machine spirit');
       expect(personaBlock?.embedding).not.toBeNull();
 

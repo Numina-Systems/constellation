@@ -1,0 +1,24 @@
+{
+  "name": "constellation",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "build": "tsc --noEmit",
+    "test": "bun test",
+    "migrate": "bun run src/persistence/migrate.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@iarna/toml": "^2.2.5",
+    "openai": "^4.80.0",
+    "pg": "^8.13.0",
+    "pgvector": "^0.2.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.7.0"
+  }
+}

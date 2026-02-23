@@ -296,40 +296,20 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);
 
-  // REPL loop with multiline support
-  // Accumulates lines in a buffer; submits on empty line (double-enter).
-  console.log('Type your message (blank line to send, Ctrl+C to exit):\n');
-
-  const inputBuffer: Array<string> = [];
-  let processing = false;
+  // REPL loop
+  console.log('Type your message (press Ctrl+C to exit):\n');
 
   rl.setPrompt('> ');
   rl.on('line', async (line: string) => {
-    if (processing) return; // ignore input while processing
-
-    if (line.trim() === '' && inputBuffer.length > 0) {
-      // Empty line after content — submit the buffer
-      const message = inputBuffer.join('\n').trim();
-      inputBuffer.length = 0;
-
-      if (message) {
-        processing = true;
-        try {
-          await interactionHandler(message);
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          console.error(`error: ${errorMsg}`);
-        }
-        processing = false;
+    const trimmed = line.trim();
+    if (trimmed) {
+      try {
+        await interactionHandler(trimmed);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`error: ${errorMsg}`);
       }
-      rl.setPrompt('> ');
-    } else if (line.trim() !== '') {
-      // Non-empty line — accumulate
-      inputBuffer.push(line);
-      rl.setPrompt('... ');
     }
-    // Empty line with empty buffer — just re-prompt
-
     rl.prompt();
   });
 

@@ -8,11 +8,11 @@ context_budget = 0.8
 
 [model]
 provider = "anthropic"
-name = "claude-sonnet-4-5-latest"
+name = "claude-sonnet-4-5-20250514"
 
 [embedding]
 provider = "ollama"
-model = "qwen3-embedding:0.6b"
+model = "qwen3-embedding"
 endpoint = "http://192.168.1.6:11434"
 dimensions = 1024
 

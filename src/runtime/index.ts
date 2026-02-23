@@ -8,3 +8,5 @@ export type {
   IpcToolError,
   IpcToolResult,
 } from './types.ts';
+
+export { createDenoExecutor } from './executor.ts';

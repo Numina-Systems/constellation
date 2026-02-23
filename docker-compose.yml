@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: constellation-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: constellation
+      POSTGRES_PASSWORD: constellation
+      POSTGRES_DB: constellation
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U constellation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

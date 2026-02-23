@@ -1,0 +1,43 @@
+// pattern: Functional Core
+
+/**
+ * Agent types for the core agent loop.
+ * These types define the agent's configuration, message format, dependencies,
+ * and the public interface for the agent.
+ */
+
+import type { ModelProvider } from '../model/types.ts';
+import type { MemoryManager } from '../memory/manager.ts';
+import type { ToolRegistry } from '../tool/types.ts';
+import type { CodeRuntime } from '../runtime/types.ts';
+import type { PersistenceProvider } from '../persistence/types.ts';
+
+export type AgentConfig = {
+  max_tool_rounds: number;
+  context_budget: number;
+};
+
+export type ConversationMessage = {
+  id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  tool_calls?: unknown;
+  tool_call_id?: string;
+  created_at: Date;
+};
+
+export type AgentDependencies = {
+  model: ModelProvider;
+  memory: MemoryManager;
+  registry: ToolRegistry;
+  runtime: CodeRuntime;
+  persistence: PersistenceProvider;
+  config: AgentConfig;
+};
+
+export type Agent = {
+  processMessage(userMessage: string): Promise<string>;
+  getConversationHistory(): Promise<Array<ConversationMessage>>;
+  conversationId: string;
+};

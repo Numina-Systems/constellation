@@ -5,7 +5,6 @@
 
 import { describe, it, expect } from 'bun:test';
 import { createCompactContextTool } from './compaction.ts';
-import type { Tool } from '../types.ts';
 
 describe('createCompactContextTool', () => {
   it('returns a valid Tool object', () => {

@@ -617,30 +617,6 @@ describe('Agent loop', () => {
     });
 
     it('AC5.3: history is replaced with compressed version for subsequent tool calls', async () => {
-      const originalMessages: ReadonlyArray<ConversationMessage> = [
-        {
-          id: 'msg-1',
-          conversation_id: 'test-conv-2',
-          role: 'user',
-          content: 'Message 1',
-          created_at: new Date(),
-        },
-        {
-          id: 'msg-2',
-          conversation_id: 'test-conv-2',
-          role: 'assistant',
-          content: 'Response 1',
-          created_at: new Date(),
-        },
-        {
-          id: 'msg-3',
-          conversation_id: 'test-conv-2',
-          role: 'user',
-          content: 'Message 2',
-          created_at: new Date(),
-        },
-      ];
-
       const compressedMessages: ReadonlyArray<ConversationMessage> = [
         {
           id: 'msg-1',

@@ -308,6 +308,45 @@ async function main(): Promise<void> {
   registry.register(createExecuteCodeTool());
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
+
+  // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
+  let blueskySource: BlueskyDataSource | null = null;
+  let blueskyConnected = false;
+
+  if (config.bluesky?.enabled) {
+    try {
+      const bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
+      blueskySource = createBlueskySource(config.bluesky, bskyAgent);
+      await blueskySource.connect();
+      blueskyConnected = true;
+    } catch (error) {
+      // AC6.3: Jetstream failure doesn't block REPL
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`bluesky datasource failed to connect: ${errorMsg}`);
+      console.error('continuing without bluesky integration');
+      blueskySource = null;
+    }
+  }
+
+  // Getter reads fresh tokens from the DataSource at execution time.
+  // Shared by both REPL and Bluesky agents so either can post to Bluesky.
+  // Returns undefined when bluesky is not connected, so the sandbox
+  // simply won't have BSKY_* constants available.
+  const getExecutionContext = blueskyConnected && blueskySource
+    ? (): ExecutionContext => {
+        const src = blueskySource!;
+        return {
+          bluesky: {
+            service: "https://bsky.social",
+            accessToken: src.getAccessToken(),
+            refreshToken: src.getRefreshToken(),
+            did: config.bluesky.did!,
+            handle: config.bluesky.handle!,
+          },
+        };
+      }
+    : undefined;
+
   const agent = createAgent({
     model,
     memory,
@@ -320,33 +359,13 @@ async function main(): Promise<void> {
       model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
       model_name: config.model.name,
     },
+    getExecutionContext,
   });
 
-  // Set up Bluesky DataSource if enabled
-  let blueskySource: BlueskyDataSource | null = null;
-
-  if (config.bluesky?.enabled) {
-    try {
-      const bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
-      blueskySource = createBlueskySource(config.bluesky, bskyAgent);
-      await blueskySource.connect();
-
+  if (blueskyConnected && blueskySource) {
       // Create dedicated Bluesky agent with deterministic conversation ID
       // Zod validates that did is present when enabled, but TypeScript doesn't know it
       const blueskyConversationId = `bluesky-${config.bluesky.did!}`;
-
-      // Getter reads fresh tokens from the DataSource at execution time,
-      // so auto-refreshed credentials are always current
-      const src = blueskySource; // capture for closure (blueskySource may be nulled on error)
-      const getExecutionContext = (): ExecutionContext => ({
-        bluesky: {
-          service: "https://bsky.social",
-          accessToken: src.getAccessToken(),
-          refreshToken: src.getRefreshToken(),
-          did: config.bluesky.did!,
-          handle: config.bluesky.handle!,
-        },
-      });
 
       const blueskyAgent = createAgent({
         model,
@@ -394,13 +413,6 @@ async function main(): Promise<void> {
       });
 
       console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
-    } catch (error) {
-      // AC6.3: Jetstream failure doesn't block REPL
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`bluesky datasource failed to connect: ${errorMsg}`);
-      console.error('continuing without bluesky integration');
-      blueskySource = null;
-    }
   }
 
   // Set up readline interface for REPL

@@ -68,9 +68,9 @@ describe('Pure helper functions', () => {
       const { toCompress, toKeep } = splitHistory(messages, 5);
       expect(toCompress.length).toBe(5);
       expect(toKeep.length).toBe(5);
-      expect(toCompress[0].id).toBe('1');
-      expect(toKeep[0].id).toBe('6');
-      expect(toKeep[4].id).toBe('10');
+      expect(toCompress[0]?.id).toBe('1');
+      expect(toKeep[0]?.id).toBe('6');
+      expect(toKeep[4]?.id).toBe('10');
     });
 
     it('AC1.6: returns empty toCompress when history length <= keepRecent', () => {
@@ -83,6 +83,8 @@ describe('Pure helper functions', () => {
       const { toCompress, toKeep } = splitHistory(messages, 5);
       expect(toCompress.length).toBe(0);
       expect(toKeep.length).toBe(3);
+      expect(toKeep[0]?.id).toBe('1');
+      expect(toKeep[2]?.id).toBe('3');
     });
 
     it('handles empty history', () => {
@@ -127,10 +129,10 @@ describe('Pure helper functions', () => {
 
       const chunks = chunkMessages(messages, 3);
       expect(chunks.length).toBe(4);
-      expect(chunks[0].length).toBe(3);
-      expect(chunks[1].length).toBe(3);
-      expect(chunks[2].length).toBe(3);
-      expect(chunks[3].length).toBe(1);
+      expect(chunks[0]?.length).toBe(3);
+      expect(chunks[1]?.length).toBe(3);
+      expect(chunks[2]?.length).toBe(3);
+      expect(chunks[3]?.length).toBe(1);
     });
 
     it('returns empty when input is empty', () => {
@@ -146,7 +148,7 @@ describe('Pure helper functions', () => {
 
       const chunks = chunkMessages(messages, 5);
       expect(chunks.length).toBe(1);
-      expect(chunks[0].length).toBe(2);
+      expect(chunks[0]?.length).toBe(2);
     });
 
     it('handles chunkSize of 1', () => {
@@ -158,9 +160,9 @@ describe('Pure helper functions', () => {
 
       const chunks = chunkMessages(messages, 1);
       expect(chunks.length).toBe(3);
-      expect(chunks[0].length).toBe(1);
-      expect(chunks[1].length).toBe(1);
-      expect(chunks[2].length).toBe(1);
+      expect(chunks[0]?.length).toBe(1);
+      expect(chunks[1]?.length).toBe(1);
+      expect(chunks[2]?.length).toBe(1);
     });
   });
 
@@ -517,7 +519,8 @@ describe('Compaction pipeline with mocked dependencies', () => {
 
     // Each call should have included existing summary in the prompt
     for (let i = 0; i < model._calls.length; i++) {
-      const callContent = model._calls[i].messages[0]?.content;
+      const callRequest = model._calls[i];
+      const callContent = callRequest?.messages[0]?.content;
       expect(callContent).toBeDefined();
       if (i > 0) {
         expect(String(callContent)).toContain('Summary');
@@ -703,7 +706,7 @@ describe('Compaction pipeline with mocked dependencies', () => {
       getPersona: async () => 'Test persona',
     });
 
-    const result = await compactor.compress(messages, 'test-conv');
+    await compactor.compress(messages, 'test-conv');
 
     const memory = mockMemory as unknown as {
       _archivedBatches: Array<{ label: string; content: string }>;
@@ -745,8 +748,10 @@ describe('Compaction pipeline with mocked dependencies', () => {
       _archivedBatches: Array<{ label: string; content: string }>;
     };
     for (const batch of memory._archivedBatches) {
-      expect(batch.label).toMatch(/^compaction-batch-test-conv-123-/);
-      expect(batch.label).toContain('T'); // ISO timestamp format
+      if (batch) {
+        expect(batch.label).toMatch(/^compaction-batch-test-conv-123-/);
+        expect(batch.label).toContain('T'); // ISO timestamp format
+      }
     }
   });
 
@@ -780,10 +785,10 @@ describe('Compaction pipeline with mocked dependencies', () => {
       getPersona: async () => 'Test persona',
     });
 
-    const result = await compactor.compress(messages, 'test-conv');
+    const compResult = await compactor.compress(messages, 'test-conv');
 
-    expect(result.batchesCreated).toBe(0);
-    expect(result.messagesCompressed).toBe(0);
-    expect(result.history).toEqual(messages);
+    expect(compResult.batchesCreated).toBe(0);
+    expect(compResult.messagesCompressed).toBe(0);
+    expect(compResult.history).toEqual(messages);
   });
 });

@@ -20,12 +20,30 @@ import type { AgentConfig } from '@/config/schema';
 import type {
   CodeRuntime,
   ExecutionResult,
+  ExecutionContext,
   IpcMessage,
 } from '@/runtime/types';
 import type { ToolRegistry } from '@/tool/types';
 
 // Reusable text encoder for IPC messages
 const encoder = new TextEncoder();
+
+/**
+ * Generate Bluesky credential constants for injection into sandbox code.
+ * Returns a block of TypeScript const declarations, or empty string if no credentials.
+ * Pure function for testability.
+ */
+export function generateCredentialConstants(context?: ExecutionContext): string {
+  if (!context?.bluesky) return '';
+  const { service, accessToken, refreshToken, did, handle } = context.bluesky;
+  return [
+    `const BSKY_SERVICE = ${JSON.stringify(service)};`,
+    `const BSKY_ACCESS_TOKEN = ${JSON.stringify(accessToken)};`,
+    `const BSKY_REFRESH_TOKEN = ${JSON.stringify(refreshToken)};`,
+    `const BSKY_DID = ${JSON.stringify(did)};`,
+    `const BSKY_HANDLE = ${JSON.stringify(handle)};`,
+  ].join('\n');
+}
 
 /**
  * Create a CodeRuntime that executes code in Deno subprocesses.
@@ -36,7 +54,7 @@ export function createDenoExecutor(
   registry: ToolRegistry,
 ): CodeRuntime {
   return {
-    async execute(code: string, toolStubs: string): Promise<ExecutionResult> {
+    async execute(code: string, toolStubs: string, context?: ExecutionContext): Promise<ExecutionResult> {
       const startTime = Date.now();
 
       // AC3.8: Size check before execution
@@ -73,7 +91,7 @@ export function createDenoExecutor(
         };
       }
 
-      // Build combined script: runtime + stubs + user code
+      // Build combined script: runtime + credentials + stubs + user code
       // User code is wrapped in an async IIFE that exits the process on completion.
       // This is necessary because the IPC listener (for await on stdin) keeps the
       // Deno event loop alive indefinitely. Without explicit exit, the subprocess
@@ -89,7 +107,8 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
   }
 })();
 `;
-      const combinedScript = `${runtimeCode}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
+      const credentialBlock = generateCredentialConstants(context);
+      const combinedScript = `${runtimeCode}\n\n// Credentials\n${credentialBlock}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
 
       // Create temporary file in working directory
       const tempFileName = `exec_${randomUUID()}.ts`;

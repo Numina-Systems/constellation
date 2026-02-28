@@ -34,7 +34,7 @@ export type CreateCompactorOptions = {
 
 /**
  * Split history into two parts: messages to compress and messages to keep.
- * If the first message is a prior compaction summary (role='system' and content starts with '[Context Summary'),
+ * If the first message is a prior compaction summary (role='system' and content starts with '[Context Summary —'),
  * extract it separately to avoid re-summarizing it.
  */
 export function splitHistory(

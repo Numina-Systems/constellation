@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import { describe, it, expect, mock } from "bun:test";
 import { shouldAcceptEvent, createBlueskySource } from "./source.ts";
 import type { CommitEvent } from "@atcute/jetstream";

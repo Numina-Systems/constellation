@@ -1,4 +1,4 @@
-// pattern: Functional Core / Imperative Shell
+// pattern: Imperative Shell
 
 import type { BskyAgent } from "@atproto/api";
 import { JetstreamSubscription } from "@atcute/jetstream";
@@ -50,17 +50,23 @@ export function createBlueskySource(
   agent: BskyAgent,
 ): BlueskyDataSource {
   let subscription: JetstreamSubscription | null = null;
+  let subscriptionIterator: AsyncIterator<unknown> | null = null;
   let messageHandler: ((message: IncomingMessage) => void) | null = null;
   const watchedDids = new Set(config.watched_dids);
-  let abortController: AbortController | null = null;
 
   const adapter: BlueskyDataSource = {
     name: "bluesky",
 
     async connect(): Promise<void> {
+      if (!config.handle || !config.app_password || !config.did) {
+        throw new Error("bluesky config requires handle, app_password, and did");
+      }
+
+      const agentDid = config.did;
+
       await agent.login({
-        identifier: config.handle!,
-        password: config.app_password!,
+        identifier: config.handle,
+        password: config.app_password,
       });
 
       subscription = new JetstreamSubscription({
@@ -68,7 +74,7 @@ export function createBlueskySource(
         wantedCollections: ["app.bsky.feed.post"],
       });
 
-      abortController = new AbortController();
+      subscriptionIterator = subscription[Symbol.asyncIterator]();
 
       (async () => {
         try {
@@ -80,17 +86,18 @@ export function createBlueskySource(
             }
 
             const commitEvent = event as CommitEvent;
-            if (!shouldAcceptEvent(commitEvent, watchedDids, config.did!)) {
+            if (!shouldAcceptEvent(commitEvent, watchedDids, agentDid)) {
               continue;
             }
 
             const commit = commitEvent.commit;
-            if (commit.operation === "delete") {
+
+            if (commit.operation !== "create") {
               continue;
             }
 
             const record = commit.record as EventRecord;
-            const rkey = commit.rkey || "";
+            const rkey = commit.rkey;
 
             const replyTo =
               record.reply?.parent?.uri && record.reply?.root?.uri
@@ -133,9 +140,9 @@ export function createBlueskySource(
     },
 
     async disconnect(): Promise<void> {
-      if (abortController) {
-        abortController.abort();
-        abortController = null;
+      if (subscriptionIterator) {
+        await subscriptionIterator.return?.();
+        subscriptionIterator = null;
       }
       subscription = null;
       messageHandler = null;

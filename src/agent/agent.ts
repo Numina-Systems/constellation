@@ -10,9 +10,7 @@
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
 import type { Agent, AgentDependencies, ConversationMessage } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
-import type { Compactor } from '../compaction/types.ts';
 
-const COMPRESSION_KEEP_RECENT = 5; // Always keep the most recent N messages
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
 const DEFAULT_MAX_TOKENS = 4096; // Default token limit per request
 
@@ -42,8 +40,9 @@ export function createAgent(
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
-    if (shouldCompress(history, deps.config.context_budget, modelMaxTokens)) {
-      history = await compressConversationHistory(history, id);
+    if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens)) {
+      const result = await deps.compactor.compress(history, id);
+      history = Array.from(result.history);
     }
 
     // Step 4 & 5: Build context and call model
@@ -116,9 +115,8 @@ export function createAgent(
               toolResult = result.success ? result.output : `Error: ${result.error}`;
             } else if (toolUse.name === 'compact_context') {
               // Special case: context compaction
-              const compactorDep = (deps as Record<string, unknown>)['compactor'] as Compactor | undefined;
-              if (compactorDep) {
-                const compactionResult = await compactorDep.compress(history, id);
+              if (deps.compactor) {
+                const compactionResult = await deps.compactor.compress(history, id);
                 history = Array.from(compactionResult.history);
 
                 toolResult = JSON.stringify({
@@ -130,7 +128,7 @@ export function createAgent(
               } else {
                 toolResult = JSON.stringify({
                   success: false,
-                  output: 'Compaction not yet configured',
+                  output: 'Compaction not configured',
                 });
               }
             } else {
@@ -255,79 +253,6 @@ export function createAgent(
       tool_call_id: row['tool_call_id'] ? String(row['tool_call_id']) : undefined,
       created_at: new Date(String(row['created_at'])),
     }));
-  }
-
-  /**
-   * Compress conversation history by summarizing old messages.
-   * Keeps the most recent N messages and replaces older ones with a summary.
-   */
-  async function compressConversationHistory(
-    history: ReadonlyArray<ConversationMessage>,
-    convId: string,
-  ): Promise<Array<ConversationMessage>> {
-    if (history.length <= COMPRESSION_KEEP_RECENT) {
-      return Array.from(history);
-    }
-
-    // Split into old and recent messages
-    const toCompress = history.slice(0, history.length - COMPRESSION_KEEP_RECENT);
-    const toKeep = Array.from(history.slice(history.length - COMPRESSION_KEEP_RECENT));
-
-    // Build a summarization request
-    const messageText = toCompress.map((msg) => `${msg.role}: ${msg.content}`).join('\n');
-
-    const summaryRequest = {
-      messages: [
-        {
-          role: 'user' as const,
-          content: `Please summarize the following conversation messages concisely, preserving important context and decisions:\n\n${messageText}`,
-        },
-      ],
-      system: 'You are a conversation summarization assistant. Create a concise summary that preserves key information and context.',
-      tools: [] as ReadonlyArray<never>,
-      model: modelName,
-      max_tokens: 1024,
-    };
-
-    const summaryResponse = await deps.model.complete(summaryRequest);
-    const summaryText = summaryResponse.content
-      .filter((block) => block.type === 'text')
-      .map((block) => (block as TextBlock).text)
-      .join('');
-
-    // Replace old messages with summary
-    const oldIds = toCompress.map((msg) => msg.id);
-
-    // Delete old messages and insert summary
-    await deps.persistence.query(
-      `DELETE FROM messages WHERE id = ANY($1)`,
-      [oldIds],
-    );
-
-    const summaryId = await persistMessage({
-      conversation_id: convId,
-      role: 'system',
-      content: `[Context Summary]\n${summaryText}`,
-    });
-
-    // Return compressed history
-    const summaryMessage: ConversationMessage = {
-      id: summaryId,
-      conversation_id: convId,
-      role: 'system',
-      content: `[Context Summary]\n${summaryText}`,
-      created_at: new Date(),
-    };
-
-    // Archive to memory
-    await deps.memory.write(
-      'archived-conversation-summary',
-      `[Context Summary from ${toCompress[0]?.created_at?.toISOString() || 'unknown'} to ${toCompress[toCompress.length - 1]?.created_at?.toISOString() || 'unknown'}]\n${summaryText}`,
-      'archival',
-      'automatic compression of conversation history',
-    );
-
-    return [summaryMessage, ...toKeep];
   }
 }
 

@@ -281,7 +281,8 @@ export async function getCompactionBatches(
   const allArchival = await memory.list('archival');
 
   // Filter to only compaction batch blocks for this conversation
-  const labelPrefix = `compaction-batch-${conversationId}`;
+  // Append trailing dash to prevent prefix collision (e.g., "test" matching "test-123")
+  const labelPrefix = `compaction-batch-${conversationId}-`;
   const batchBlocks = allArchival.filter((block) =>
     block.label.startsWith(labelPrefix),
   );
@@ -320,21 +321,27 @@ export function shouldResummarize(
 }
 
 /**
+ * Options for re-summarizing accumulated batches.
+ */
+export type ResummarizeBatchesOptions = {
+  readonly batches: ReadonlyArray<{ id: string; batch: SummaryBatch }>;
+  readonly conversationId: string;
+  readonly memory: MemoryManager;
+  readonly model: ModelProvider;
+  readonly modelName: string;
+  readonly config: CompactionConfig;
+  readonly persona: string;
+  readonly template: string;
+};
+
+/**
  * Re-summarize accumulated batches into a single higher-depth batch.
  * Selects batches that would be omitted by clip-archive (outside the clip window),
  * groups them, re-summarizes, and replaces them with a single depth+1 batch.
  * Async function with side effects (memory writes/deletes, LLM calls).
  */
-export async function resummarizeBatches(
-  batches: ReadonlyArray<{ id: string; batch: SummaryBatch }>,
-  conversationId: string,
-  memory: MemoryManager,
-  model: ModelProvider,
-  modelName: string,
-  config: CompactionConfig,
-  persona: string,
-  template: string,
-): Promise<void> {
+export async function resummarizeBatches(options: ResummarizeBatchesOptions): Promise<void> {
+  const { batches, conversationId, memory, model, modelName, config, persona, template } = options;
   if (batches.length <= config.clipFirst + config.clipLast) {
     // Not enough batches to trigger re-summarization
     return;
@@ -401,6 +408,12 @@ export async function resummarizeBatches(
     messageCount: totalMessageCount,
   };
 
+  // Delete the source batches from memory FIRST to avoid label collision
+  // (if the last source batch has the same endTime as newBatch, deletion must happen before write)
+  for (const { id } of batchesToResummarize) {
+    await memory.deleteBlock(id);
+  }
+
   // Archive the new batch
   const label = `compaction-batch-${conversationId}-${newBatch.endTime.toISOString()}`;
   const metadataHeader = `[depth:${newBatch.depth}|start:${newBatch.startTime.toISOString()}|end:${newBatch.endTime.toISOString()}|count:${newBatch.messageCount}]`;
@@ -412,11 +425,6 @@ export async function resummarizeBatches(
     'archival',
     'Re-summarized during context compaction',
   );
-
-  // Delete the source batches from memory
-  for (const { id } of batchesToResummarize) {
-    await memory.deleteBlock(id);
-  }
 }
 
 export function createCompactor(
@@ -546,8 +554,8 @@ export function createCompactor(
       // 7. Check if re-summarization is needed and perform it
       const allBatches = await getCompactionBatches(memory, conversationId);
       if (shouldResummarize(allBatches.length, config)) {
-        await resummarizeBatches(
-          allBatches,
+        await resummarizeBatches({
+          batches: allBatches,
           conversationId,
           memory,
           model,
@@ -555,7 +563,7 @@ export function createCompactor(
           config,
           persona,
           template,
-        );
+        });
       }
 
       // 8. Rebuild batch list after potential re-summarization

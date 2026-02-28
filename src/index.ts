@@ -19,6 +19,7 @@ import { createMemoryManager } from '@/memory/manager';
 import { createToolRegistry } from '@/tool/registry';
 import { createMemoryTools } from '@/tool/builtin/memory';
 import { createExecuteCodeTool } from '@/tool/builtin/code';
+import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import type { MemoryManager } from '@/memory/manager';
@@ -278,6 +279,7 @@ async function main(): Promise<void> {
     registry.register(tool);
   }
   registry.register(createExecuteCodeTool());
+  registry.register(createCompactContextTool());
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
   const agent = createAgent({

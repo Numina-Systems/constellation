@@ -1,13 +1,13 @@
 # Config
 
-Last verified: 2026-02-23
+Last verified: 2026-02-28
 
 ## Purpose
 Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.
 
 ## Contracts
-- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas, config type aliases
-- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets.
+- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `SummarizationConfigSchema`, etc.), config type aliases (`AppConfig`, `SummarizationConfig`, etc.)
+- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets. `summarization` section is optional; when absent, compaction uses defaults.
 - **Expects**: `config.toml` exists at project root (or path provided). TOML structure matches `AppConfigSchema`.
 
 ## Dependencies

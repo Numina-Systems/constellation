@@ -10,6 +10,7 @@
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
 import type { Agent, AgentDependencies, ConversationMessage } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
+import type { Compactor } from '../compaction/types.ts';
 
 const COMPRESSION_KEEP_RECENT = 5; // Always keep the most recent N messages
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
@@ -113,6 +114,25 @@ export function createAgent(
               const result = await deps.runtime.execute(code, stubs);
 
               toolResult = result.success ? result.output : `Error: ${result.error}`;
+            } else if (toolUse.name === 'compact_context') {
+              // Special case: context compaction
+              const compactorDep = (deps as Record<string, unknown>)['compactor'] as Compactor | undefined;
+              if (compactorDep) {
+                const compactionResult = await compactorDep.compress(history, id);
+                history = Array.from(compactionResult.history);
+
+                toolResult = JSON.stringify({
+                  messagesCompressed: compactionResult.messagesCompressed,
+                  batchesCreated: compactionResult.batchesCreated,
+                  tokensEstimateBefore: compactionResult.tokensEstimateBefore,
+                  tokensEstimateAfter: compactionResult.tokensEstimateAfter,
+                });
+              } else {
+                toolResult = JSON.stringify({
+                  success: false,
+                  output: 'Compaction not yet configured',
+                });
+              }
             } else {
               // Regular tool dispatch
               const result = await deps.registry.dispatch(toolUse.name, toolUse.input);

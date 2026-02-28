@@ -70,7 +70,6 @@ export async function performShutdown(
   rl: readline.Interface,
   persistence: PersistenceProvider,
 ): Promise<void> {
-  console.log('\nShutting down...');
   rl.close();
   await persistence.disconnect();
 }

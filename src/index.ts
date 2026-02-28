@@ -22,7 +22,9 @@ import { createExecuteCodeTool } from '@/tool/builtin/code';
 import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
+import { createCompactor } from '@/compaction';
 import type { MemoryManager } from '@/memory/manager';
+import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
@@ -282,6 +284,30 @@ async function main(): Promise<void> {
   registry.register(createCompactContextTool());
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
+
+  // Create compactor with configuration from config.summarization
+  const compactionConfig: CompactionConfig = {
+    chunkSize: config.summarization?.chunk_size ?? 20,
+    keepRecent: config.summarization?.keep_recent ?? 5,
+    maxSummaryTokens: config.summarization?.max_summary_tokens ?? 1024,
+    clipFirst: config.summarization?.clip_first ?? 2,
+    clipLast: config.summarization?.clip_last ?? 2,
+    prompt: config.summarization?.prompt ?? null,
+  };
+
+  const compactor = createCompactor({
+    model: summarizationModel,
+    memory,
+    persistence,
+    config: compactionConfig,
+    modelName: config.summarization?.name ?? config.model.name,
+    getPersona: async () => {
+      const blocks = await memory.list('core');
+      const persona = blocks.find(b => b.label === 'core:persona');
+      return persona?.content ?? '';
+    },
+  });
+
   const agent = createAgent({
     model,
     memory,
@@ -294,6 +320,7 @@ async function main(): Promise<void> {
       model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
       model_name: config.model.name,
     },
+    compactor,
   });
 
   // Set up readline interface for REPL

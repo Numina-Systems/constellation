@@ -170,6 +170,14 @@ export function createBlueskySource(
       }
       return session.refreshJwt;
     },
+
+    getPdsUrl(): string {
+      const pdsUrl = agent.pdsUrl;
+      if (!pdsUrl) {
+        throw new Error("No PDS URL available (not logged in?)");
+      }
+      return pdsUrl.toString();
+    },
   };
 
   return adapter;

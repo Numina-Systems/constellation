@@ -131,8 +131,24 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
         const permissionFlags: Array<string> = [];
 
         // Network permission with allowed hosts
-        if (config.allowed_hosts.length > 0) {
-          permissionFlags.push(`--allow-net=${config.allowed_hosts.join(',')}`);
+        // When bluesky credentials are present, the PDS host must also be permitted.
+        // The AT Protocol redirects write operations to the user's PDS, which is a
+        // dynamically assigned host (e.g. bankera.us-west.host.bsky.network).
+        const extraHosts: Array<string> = [];
+        if (context?.bluesky?.pdsUrl) {
+          try {
+            const pdsHostname = new URL(context.bluesky.pdsUrl).hostname;
+            if (pdsHostname && !config.allowed_hosts.includes(pdsHostname)) {
+              extraHosts.push(pdsHostname);
+            }
+          } catch {
+            // Invalid URL — skip
+          }
+        }
+
+        const allHosts = [...config.allowed_hosts, ...extraHosts];
+        if (allHosts.length > 0) {
+          permissionFlags.push(`--allow-net=${allHosts.join(',')}`);
         } else {
           permissionFlags.push('--deny-net');
         }

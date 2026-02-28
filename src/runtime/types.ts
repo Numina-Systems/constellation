@@ -26,6 +26,7 @@ export type ExecutionResult = {
 export type ExecutionContext = {
   readonly bluesky?: {
     readonly service: string;
+    readonly pdsUrl: string;
     readonly accessToken: string;
     readonly refreshToken: string;
     readonly did: string;

@@ -255,6 +255,7 @@ describe("shouldAcceptEvent", () => {
           did: "did:plc:test",
           active: true,
         },
+        pdsUrl: new URL("https://bankera.us-west.host.bsky.network/"),
       } as unknown as BskyAgent;
 
       const config: BlueskyConfig = {
@@ -279,6 +280,7 @@ describe("shouldAcceptEvent", () => {
 
       expect(source.getAccessToken()).toBe("access-token-xyz");
       expect(source.getRefreshToken()).toBe("refresh-token-abc");
+      expect(source.getPdsUrl()).toBe("https://bankera.us-west.host.bsky.network/");
     });
 
     it("should throw when accessing tokens without active session", () => {
@@ -302,6 +304,7 @@ describe("shouldAcceptEvent", () => {
       expect(() => source.getRefreshToken()).toThrow(
         "No active session or refresh token",
       );
+      expect(() => source.getPdsUrl()).toThrow("No PDS URL available");
     });
   });
 });

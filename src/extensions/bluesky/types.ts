@@ -20,4 +20,5 @@ export type BlueskyPostMetadata = {
 export interface BlueskyDataSource extends DataSource {
   getAccessToken(): string;
   getRefreshToken(): string;
+  getPdsUrl(): string;
 }

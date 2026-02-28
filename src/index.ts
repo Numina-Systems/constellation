@@ -338,6 +338,7 @@ async function main(): Promise<void> {
         return {
           bluesky: {
             service: "https://bsky.social",
+            pdsUrl: src.getPdsUrl(),
             accessToken: src.getAccessToken(),
             refreshToken: src.getRefreshToken(),
             did: config.bluesky.did!,

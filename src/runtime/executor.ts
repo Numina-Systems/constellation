@@ -20,12 +20,30 @@ import type { AgentConfig } from '@/config/schema';
 import type {
   CodeRuntime,
   ExecutionResult,
+  ExecutionContext,
   IpcMessage,
 } from '@/runtime/types';
 import type { ToolRegistry } from '@/tool/types';
 
 // Reusable text encoder for IPC messages
 const encoder = new TextEncoder();
+
+/**
+ * Generate Bluesky credential constants for injection into sandbox code.
+ * Returns a block of TypeScript const declarations, or empty string if no credentials.
+ * Pure function for testability.
+ */
+export function generateCredentialConstants(context?: ExecutionContext): string {
+  if (!context?.bluesky) return '';
+  const { service, accessToken, refreshToken, did, handle } = context.bluesky;
+  return [
+    `const BSKY_SERVICE = ${JSON.stringify(service)};`,
+    `const BSKY_ACCESS_TOKEN = ${JSON.stringify(accessToken)};`,
+    `const BSKY_REFRESH_TOKEN = ${JSON.stringify(refreshToken)};`,
+    `const BSKY_DID = ${JSON.stringify(did)};`,
+    `const BSKY_HANDLE = ${JSON.stringify(handle)};`,
+  ].join('\n');
+}
 
 /**
  * Create a CodeRuntime that executes code in Deno subprocesses.
@@ -36,7 +54,7 @@ export function createDenoExecutor(
   registry: ToolRegistry,
 ): CodeRuntime {
   return {
-    async execute(code: string, toolStubs: string): Promise<ExecutionResult> {
+    async execute(code: string, toolStubs: string, context?: ExecutionContext): Promise<ExecutionResult> {
       const startTime = Date.now();
 
       // AC3.8: Size check before execution
@@ -73,7 +91,7 @@ export function createDenoExecutor(
         };
       }
 
-      // Build combined script: runtime + stubs + user code
+      // Build combined script: runtime + credentials + stubs + user code
       // User code is wrapped in an async IIFE that exits the process on completion.
       // This is necessary because the IPC listener (for await on stdin) keeps the
       // Deno event loop alive indefinitely. Without explicit exit, the subprocess
@@ -89,7 +107,8 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
   }
 })();
 `;
-      const combinedScript = `${runtimeCode}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
+      const credentialBlock = generateCredentialConstants(context);
+      const combinedScript = `${runtimeCode}\n\n// Credentials\n${credentialBlock}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
 
       // Create temporary file in working directory
       const tempFileName = `exec_${randomUUID()}.ts`;
@@ -112,8 +131,24 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
         const permissionFlags: Array<string> = [];
 
         // Network permission with allowed hosts
-        if (config.allowed_hosts.length > 0) {
-          permissionFlags.push(`--allow-net=${config.allowed_hosts.join(',')}`);
+        // When bluesky credentials are present, the PDS host must also be permitted.
+        // The AT Protocol redirects write operations to the user's PDS, which is a
+        // dynamically assigned host (e.g. bankera.us-west.host.bsky.network).
+        const extraHosts: Array<string> = [];
+        if (context?.bluesky?.pdsUrl) {
+          try {
+            const pdsHostname = new URL(context.bluesky.pdsUrl).hostname;
+            if (pdsHostname && !config.allowed_hosts.includes(pdsHostname)) {
+              extraHosts.push(pdsHostname);
+            }
+          } catch {
+            // Invalid URL — skip
+          }
+        }
+
+        const allHosts = [...config.allowed_hosts, ...extraHosts];
+        if (allHosts.length > 0) {
+          permissionFlags.push(`--allow-net=${allHosts.join(',')}`);
         } else {
           permissionFlags.push('--deny-net');
         }
@@ -265,9 +300,31 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
             }
           };
 
-          // Read stdout and process IPC messages, but enforce timeout by killing process
+          // Read stderr to capture Deno errors (permission denials, crashes, etc.)
+          let stderrOutput = '';
+          const readStderr = async (): Promise<void> => {
+            const errStream = proc.stderr;
+            if (!errStream) return;
+
+            const errReader = errStream.getReader();
+            const errDecoder = new TextDecoder();
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+              while (true) {
+                const { done, value } = await errReader.read();
+                if (value) {
+                  stderrOutput += errDecoder.decode(value, { stream: !done });
+                }
+                if (done) break;
+              }
+            } finally {
+              errReader.releaseLock();
+            }
+          };
+
+          // Read stdout and stderr in parallel, enforce timeout by killing process
           await Promise.race([
-            readStdout(),
+            Promise.all([readStdout(), readStderr()]),
             timeoutPromise,
           ]).catch(() => {
             // Ignore errors from either promise
@@ -322,6 +379,19 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
               success: false,
               output: accumulatedOutput,
               error: processingError.message,
+              tool_calls_made: toolCallCount,
+              duration_ms: Date.now() - startTime,
+            };
+          }
+
+          // If no IPC output was produced but stderr has content, the Deno process
+          // likely crashed (e.g. permission denial, unhandled rejection). Surface
+          // the stderr as an error so the agent gets actionable feedback.
+          if (!accumulatedOutput.trim() && stderrOutput.trim()) {
+            return {
+              success: false,
+              output: '',
+              error: stderrOutput.trim().slice(0, 2000),
               tool_calls_made: toolCallCount,
               duration_ms: Date.now() - startTime,
             };

@@ -4,7 +4,7 @@
  * Agent loop module exports
  */
 
-export type { Agent, AgentConfig, AgentDependencies, ConversationMessage } from './types.ts';
+export type { Agent, AgentConfig, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 export { createAgent } from './agent.ts';
 export {
   buildSystemPrompt,

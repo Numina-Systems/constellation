@@ -7,17 +7,11 @@ import type { MemoryBlock } from "../../memory/types.ts";
 // Mock implementations
 function createMockMemoryStore(): MemoryStore {
   const blocks: MemoryBlock[] = [];
-  let existingBlock: MemoryBlock | null = null;
 
   return {
     getBlock: async () => null,
     getBlocksByTier: async () => [],
-    getBlockByLabel: async (_owner: string, label: string) => {
-      if (label === "bluesky:post" && existingBlock) {
-        return existingBlock;
-      }
-      return null;
-    },
+    getBlockByLabel: async () => null,
     createBlock: async (block) => {
       const fullBlock: MemoryBlock = {
         ...block,
@@ -58,20 +52,8 @@ describe("seedBlueskyTemplates", () => {
     const store = createMockMemoryStore();
     const embedding = createMockEmbeddingProvider();
 
-    await seedBlueskyTemplates(store, embedding);
-
-    // Verify createBlock was called 3 times
-    // We'll track calls by checking the blocks created
     const calls: unknown[] = [];
-    const originalCreateBlock = store.createBlock;
     store.createBlock = async (block) => {
-      calls.push(block);
-      return originalCreateBlock.call(store, block);
-    };
-
-    // Reset and run again
-    const store2 = createMockMemoryStore();
-    store2.createBlock = async (block) => {
       calls.push(block);
       return {
         ...block,
@@ -80,7 +62,7 @@ describe("seedBlueskyTemplates", () => {
       };
     };
 
-    await seedBlueskyTemplates(store2, embedding);
+    await seedBlueskyTemplates(store, embedding);
 
     expect(calls.length).toBe(3);
 

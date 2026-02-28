@@ -64,19 +64,25 @@ describe("seedBlueskyTemplates", () => {
 
     await seedBlueskyTemplates(store, embedding);
 
-    expect(calls.length).toBe(3);
+    expect(calls.length).toBe(4);
 
-    // Verify the labels and tier
+    // Verify the labels
     const blockCalls = calls as Array<Record<string, unknown>>;
     const labels = blockCalls.map((b) => b["label"]);
     expect(labels).toContain("bluesky:post");
     expect(labels).toContain("bluesky:reply");
     expect(labels).toContain("bluesky:like");
+    expect(labels).toContain("bluesky:capabilities");
 
-    // Verify all are archival tier
-    blockCalls.forEach((b) => {
+    // Verify archival templates are archival tier
+    const archivalBlocks = blockCalls.filter((b) => b["label"] !== "bluesky:capabilities");
+    archivalBlocks.forEach((b) => {
       expect(b["tier"]).toBe("archival");
     });
+
+    // Verify capabilities block is working tier
+    const capBlock = blockCalls.find((b) => b["label"] === "bluesky:capabilities");
+    expect(capBlock?.["tier"]).toBe("working");
   });
 
   it("AC5.4: Idempotent — does not duplicate templates on re-run", async () => {
@@ -97,12 +103,21 @@ describe("seedBlueskyTemplates", () => {
       updated_at: new Date(),
     };
 
-    // Mock the store to return existing block
+    const capabilitiesBlock: MemoryBlock = {
+      ...existingBlock,
+      label: "bluesky:capabilities",
+      tier: "working",
+    };
+
+    // Mock the store to return existing blocks for both checks
     let getBlockByLabelCalls = 0;
     store.getBlockByLabel = async (_owner: string, label: string) => {
       getBlockByLabelCalls++;
       if (label === "bluesky:post") {
         return existingBlock;
+      }
+      if (label === "bluesky:capabilities") {
+        return capabilitiesBlock;
       }
       return null;
     };
@@ -184,11 +199,21 @@ describe("seedBlueskyTemplates", () => {
 
     await seedBlueskyTemplates(store, embedding);
 
-    createdBlocks.forEach((block) => {
+    // Archival templates
+    const archivalBlocks = createdBlocks.filter((b) => b["label"] !== "bluesky:capabilities");
+    archivalBlocks.forEach((block) => {
       expect(block["tier"]).toBe("archival");
       expect(block["permission"]).toBe("readwrite");
       expect(block["pinned"]).toBe(false);
       expect(block["owner"]).toBe("spirit");
     });
+
+    // Capabilities working block
+    const capBlock = createdBlocks.find((b) => b["label"] === "bluesky:capabilities");
+    expect(capBlock).toBeDefined();
+    expect(capBlock?.["tier"]).toBe("working");
+    expect(capBlock?.["permission"]).toBe("readonly");
+    expect(capBlock?.["pinned"]).toBe(true);
+    expect(capBlock?.["owner"]).toBe("spirit");
   });
 });

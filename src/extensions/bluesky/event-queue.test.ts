@@ -35,7 +35,7 @@ describe("EventQueue", () => {
   it("should drop oldest when capacity exceeded (AC6.2)", () => {
     const queue = createEventQueue(3);
 
-    const events: IncomingMessage[] = [];
+    const events: Array<IncomingMessage> = [];
     for (let i = 0; i < 4; i++) {
       events.push({
         source: `test${i}`,
@@ -69,7 +69,7 @@ describe("EventQueue", () => {
   it("should handle 51 events with capacity 50 (AC6.2)", () => {
     const queue = createEventQueue(50);
 
-    const events: IncomingMessage[] = [];
+    const events: Array<IncomingMessage> = [];
     for (let i = 0; i < 51; i++) {
       events.push({
         source: `test${i}`,

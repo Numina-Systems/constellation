@@ -23,7 +23,7 @@ url = "postgresql://constellation:constellation@localhost:5432/constellation"
 
 [runtime]
 working_dir = "./workspace"
-allowed_hosts = ["api.anthropic.com", "api.moonshot.ai"]
+allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 
 # Bluesky integration. Requires handle, app_password, and did when enabled.
 # For production, use environment variables: BLUESKY_HANDLE, BLUESKY_APP_PASSWORD

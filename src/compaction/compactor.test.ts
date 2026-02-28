@@ -17,6 +17,8 @@ import {
   estimateTokens,
   createCompactor,
   parseBatchMetadata,
+  shouldResummarize,
+  resummarizeBatches,
 } from './compactor.js';
 
 /**
@@ -447,7 +449,7 @@ describe('Compaction pipeline with mocked dependencies', () => {
   }
 
   function createMockMemoryManager(): MemoryManager {
-    const archivedBatches: Array<{ label: string; content: string }> = [];
+    const archivedBatches: Array<{ id: string; label: string; content: string }> = [];
 
     return {
       async getCoreBlocks() {
@@ -463,11 +465,12 @@ describe('Compaction pipeline with mocked dependencies', () => {
         return [];
       },
       async write(label: string, content: string) {
-        archivedBatches.push({ label, content });
+        const id = `block-${archivedBatches.length}`;
+        archivedBatches.push({ id, label, content });
         return {
           applied: true,
           block: {
-            id: 'test',
+            id,
             owner: 'test',
             tier: 'archival',
             label,
@@ -480,8 +483,28 @@ describe('Compaction pipeline with mocked dependencies', () => {
           },
         };
       },
-      async list() {
+      async list(tier?: string) {
+        if (tier === 'archival') {
+          return archivedBatches.map(b => ({
+            id: b.id,
+            owner: 'test',
+            tier: 'archival' as const,
+            label: b.label,
+            content: b.content,
+            embedding: null,
+            permission: 'readwrite' as const,
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          }));
+        }
         return [];
+      },
+      async deleteBlock(id: string) {
+        const idx = archivedBatches.findIndex(b => b.id === id);
+        if (idx >= 0) {
+          archivedBatches.splice(idx, 1);
+        }
       },
       async getPendingMutations() {
         return [];
@@ -492,7 +515,9 @@ describe('Compaction pipeline with mocked dependencies', () => {
       async rejectMutation() {
         throw new Error('not implemented');
       },
-      _archivedBatches: archivedBatches,
+      get _archivedBatches() {
+        return archivedBatches.map(b => ({ label: b.label, content: b.content }));
+      },
     } as unknown as MemoryManager;
   }
 
@@ -855,5 +880,469 @@ describe('Compaction pipeline with mocked dependencies', () => {
     expect(compResult.batchesCreated).toBe(0);
     expect(compResult.messagesCompressed).toBe(0);
     expect(compResult.history).toEqual(messages);
+  });
+});
+
+/**
+ * Tests for batch metadata parsing and recursive re-summarization.
+ * Covers context-compaction.AC2 requirements.
+ */
+describe('Batch metadata and recursive re-summarization', () => {
+  describe('parseBatchMetadata', () => {
+    it('Task 4 AC2.2: extracts all metadata fields from valid header', () => {
+      const now = new Date();
+      const startStr = now.toISOString();
+      const endStr = new Date(now.getTime() + 3600000).toISOString();
+      const content = `[depth:1|start:${startStr}|end:${endStr}|count:25]\nActual summary content here`;
+
+      const { metadata, cleanContent } = parseBatchMetadata(content);
+
+      expect(metadata.depth).toBe(1);
+      expect(metadata.startTime.toISOString()).toBe(startStr);
+      expect(metadata.endTime.toISOString()).toBe(endStr);
+      expect(metadata.messageCount).toBe(25);
+      expect(cleanContent).toBe('Actual summary content here');
+    });
+
+    it('Task 4: returns default metadata when no header present', () => {
+      const content = 'Just plain content without header';
+
+      const { metadata, cleanContent } = parseBatchMetadata(content);
+
+      expect(metadata.depth).toBe(0);
+      expect(metadata.messageCount).toBe(0);
+      expect(cleanContent).toBe(content);
+    });
+
+    it('Task 4: handles malformed metadata gracefully', () => {
+      const content = '[invalid metadata]\nActual content';
+
+      const { metadata, cleanContent } = parseBatchMetadata(content);
+
+      expect(metadata.depth).toBe(0);
+      expect(cleanContent).toBe(content);
+    });
+  });
+
+  describe('shouldResummarize', () => {
+    it('Task 3 AC2.1: returns true when batch count exceeds clip window + buffer', () => {
+      const config = {
+        chunkSize: 3,
+        keepRecent: 5,
+        maxSummaryTokens: 500,
+        clipFirst: 2,
+        clipLast: 2,
+        prompt: null,
+      };
+
+      // Threshold = clipFirst + clipLast + buffer = 2 + 2 + 2 = 6
+      expect(shouldResummarize(7, config)).toBe(true);
+      expect(shouldResummarize(6, config)).toBe(false);
+      expect(shouldResummarize(5, config)).toBe(false);
+    });
+
+    it('Task 3: returns false when batch count is within threshold', () => {
+      const config = {
+        chunkSize: 3,
+        keepRecent: 5,
+        maxSummaryTokens: 500,
+        clipFirst: 2,
+        clipLast: 2,
+        prompt: null,
+      };
+
+      expect(shouldResummarize(4, config)).toBe(false);
+      expect(shouldResummarize(1, config)).toBe(false);
+    });
+  });
+
+  describe('resummarizeBatches', () => {
+    it('Task 5 AC2.2: produces new batch with depth = max(source depths) + 1', async () => {
+      // Create 7 batches (exceeds threshold of 2+2+2=6)
+      // We'll re-summarize the first 5 (all except the last 2)
+      const sourceBatches = Array.from({ length: 7 }, (_, i) => ({
+        id: `batch-${i}`,
+        batch: {
+          content: `Summary ${i}`,
+          depth: 0,
+          startTime: new Date(2000 + i * 100),
+          endTime: new Date(2000 + i * 100 + 90),
+          messageCount: 10,
+        },
+      }));
+
+      // Create mock dependencies
+      const deletedBlocks: Array<string> = [];
+      const writtenBlocks: Array<{ label: string; content: string }> = [];
+
+      const mockMemory: MemoryManager = {
+        async getCoreBlocks() {
+          return [];
+        },
+        async getWorkingBlocks() {
+          return [];
+        },
+        async buildSystemPrompt() {
+          return '';
+        },
+        async read() {
+          return [];
+        },
+        async write(label: string, content: string) {
+          writtenBlocks.push({ label, content });
+          return {
+            applied: true,
+            block: {
+              id: 'new-batch',
+              owner: 'test',
+              tier: 'archival',
+              label,
+              content,
+              embedding: null,
+              permission: 'readwrite',
+              pinned: false,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          };
+        },
+        async list() {
+          return [];
+        },
+        async deleteBlock(id: string) {
+          deletedBlocks.push(id);
+        },
+        async getPendingMutations() {
+          return [];
+        },
+        async approveMutation() {
+          throw new Error('not implemented');
+        },
+        async rejectMutation() {
+          throw new Error('not implemented');
+        },
+      };
+
+      const mockModel: ModelProvider = {
+        async complete() {
+          return {
+            content: [{ type: 'text', text: 'Re-summarized content' }],
+            stop_reason: 'end_turn',
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+            },
+          };
+        },
+        async *stream() {
+          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+        },
+      };
+
+      const config = {
+        chunkSize: 3,
+        keepRecent: 5,
+        maxSummaryTokens: 500,
+        clipFirst: 2,
+        clipLast: 2,
+        prompt: null,
+      };
+
+      await resummarizeBatches(
+        sourceBatches,
+        'test-conv',
+        mockMemory,
+        mockModel,
+        'test-model',
+        config,
+        'Test persona',
+        'Summarize: {messages}',
+      );
+
+      // Verify new batch has depth 1 (max 0 + 1)
+      expect(writtenBlocks.length).toBe(1);
+      const newBlockContent = writtenBlocks[0]?.content || '';
+      expect(newBlockContent).toContain('[depth:1|');
+      expect(newBlockContent).toContain('Re-summarized content');
+    });
+
+    it('Task 5 AC2.3: deletes source batches from memory', async () => {
+      // Create 7 batches (exceeds threshold of 2+2+2=6)
+      // We'll re-summarize the first 5 (all except the last 2)
+      const sourceBatches = Array.from({ length: 7 }, (_, i) => ({
+        id: `batch-${i}`,
+        batch: {
+          content: `Summary ${i}`,
+          depth: 0,
+          startTime: new Date(2000 + i * 100),
+          endTime: new Date(2000 + i * 100 + 90),
+          messageCount: 10,
+        },
+      }));
+
+      const deletedBlocks: Array<string> = [];
+
+      const mockMemory: MemoryManager = {
+        async getCoreBlocks() {
+          return [];
+        },
+        async getWorkingBlocks() {
+          return [];
+        },
+        async buildSystemPrompt() {
+          return '';
+        },
+        async read() {
+          return [];
+        },
+        async write() {
+          return {
+            applied: true,
+            block: {
+              id: 'new-batch',
+              owner: 'test',
+              tier: 'archival',
+              label: 'test',
+              content: 'test',
+              embedding: null,
+              permission: 'readwrite',
+              pinned: false,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          };
+        },
+        async list() {
+          return [];
+        },
+        async deleteBlock(id: string) {
+          deletedBlocks.push(id);
+        },
+        async getPendingMutations() {
+          return [];
+        },
+        async approveMutation() {
+          throw new Error('not implemented');
+        },
+        async rejectMutation() {
+          throw new Error('not implemented');
+        },
+      };
+
+      const mockModel: ModelProvider = {
+        async complete() {
+          return {
+            content: [{ type: 'text', text: 'Re-summarized' }],
+            stop_reason: 'end_turn',
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+            },
+          };
+        },
+        async *stream() {
+          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+        },
+      };
+
+      const config = {
+        chunkSize: 3,
+        keepRecent: 5,
+        maxSummaryTokens: 500,
+        clipFirst: 2,
+        clipLast: 2,
+        prompt: null,
+      };
+
+      await resummarizeBatches(
+        sourceBatches,
+        'test-conv',
+        mockMemory,
+        mockModel,
+        'test-model',
+        config,
+        'Test persona',
+        'Summarize: {messages}',
+      );
+
+      // Verify source batches (0-4) were deleted (5 total to re-summarize, keeping last 2)
+      expect(deletedBlocks).toEqual(['batch-0', 'batch-1', 'batch-2', 'batch-3', 'batch-4']);
+    });
+
+    it('Task 5 AC2.4: handles mixed-depth batches and produces depth+1', async () => {
+      // Create 8 batches with mixed depths to exceed threshold
+      // First 5 will be re-summarized, last 2 kept intact
+      const sourceBatches = [
+        {
+          id: 'batch-0',
+          batch: {
+            content: 'Summary 0',
+            depth: 0,
+            startTime: new Date(2000),
+            endTime: new Date(2090),
+            messageCount: 10,
+          },
+        },
+        {
+          id: 'batch-1',
+          batch: {
+            content: 'Summary 1',
+            depth: 0,
+            startTime: new Date(2100),
+            endTime: new Date(2190),
+            messageCount: 10,
+          },
+        },
+        {
+          id: 'batch-2',
+          batch: {
+            content: 'Summary 2',
+            depth: 0,
+            startTime: new Date(2200),
+            endTime: new Date(2290),
+            messageCount: 10,
+          },
+        },
+        {
+          id: 'batch-3',
+          batch: {
+            content: 'Summary 3',
+            depth: 1,
+            startTime: new Date(2300),
+            endTime: new Date(2390),
+            messageCount: 20,
+          },
+        },
+        {
+          id: 'batch-4',
+          batch: {
+            content: 'Summary 4',
+            depth: 1,
+            startTime: new Date(2400),
+            endTime: new Date(2490),
+            messageCount: 20,
+          },
+        },
+        {
+          id: 'batch-5',
+          batch: {
+            content: 'Summary 5',
+            depth: 0,
+            startTime: new Date(2500),
+            endTime: new Date(2590),
+            messageCount: 10,
+          },
+        },
+        {
+          id: 'batch-6',
+          batch: {
+            content: 'Summary 6',
+            depth: 0,
+            startTime: new Date(2600),
+            endTime: new Date(2690),
+            messageCount: 10,
+          },
+        },
+        {
+          id: 'batch-7',
+          batch: {
+            content: 'Summary 7',
+            depth: 0,
+            startTime: new Date(2700),
+            endTime: new Date(2790),
+            messageCount: 10,
+          },
+        },
+      ];
+
+      const writtenBlocks: Array<{ label: string; content: string }> = [];
+
+      const mockMemory: MemoryManager = {
+        async getCoreBlocks() {
+          return [];
+        },
+        async getWorkingBlocks() {
+          return [];
+        },
+        async buildSystemPrompt() {
+          return '';
+        },
+        async read() {
+          return [];
+        },
+        async write(label: string, content: string) {
+          writtenBlocks.push({ label, content });
+          return {
+            applied: true,
+            block: {
+              id: 'new-batch',
+              owner: 'test',
+              tier: 'archival',
+              label,
+              content,
+              embedding: null,
+              permission: 'readwrite',
+              pinned: false,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          };
+        },
+        async list() {
+          return [];
+        },
+        async deleteBlock() {},
+        async getPendingMutations() {
+          return [];
+        },
+        async approveMutation() {
+          throw new Error('not implemented');
+        },
+        async rejectMutation() {
+          throw new Error('not implemented');
+        },
+      };
+
+      const mockModel: ModelProvider = {
+        async complete() {
+          return {
+            content: [{ type: 'text', text: 'Re-summarized' }],
+            stop_reason: 'end_turn',
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+            },
+          };
+        },
+        async *stream() {
+          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+        },
+      };
+
+      const config = {
+        chunkSize: 3,
+        keepRecent: 5,
+        maxSummaryTokens: 500,
+        clipFirst: 2,
+        clipLast: 2,
+        prompt: null,
+      };
+
+      await resummarizeBatches(
+        sourceBatches,
+        'test-conv',
+        mockMemory,
+        mockModel,
+        'test-model',
+        config,
+        'Test persona',
+        'Summarize: {messages}',
+      );
+
+      // Verify new batch has depth 2 (max depth 1 + 1)
+      expect(writtenBlocks.length).toBe(1);
+      const newBlockContent = writtenBlocks[0]?.content || '';
+      expect(newBlockContent).toContain('[depth:2|');
+    });
   });
 });

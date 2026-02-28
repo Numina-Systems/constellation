@@ -8,3 +8,5 @@
 export type { SummaryBatch, CompactionResult, CompactionConfig, Compactor } from './types.js';
 export type { InterpolatePromptOptions } from './prompt.js';
 export { DEFAULT_SUMMARIZATION_PROMPT, interpolatePrompt } from './prompt.js';
+export type { CreateCompactorOptions } from './compactor.js';
+export { createCompactor } from './compactor.js';

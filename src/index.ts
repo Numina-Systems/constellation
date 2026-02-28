@@ -27,6 +27,7 @@ import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
+import type { ModelProvider } from '@/model/types';
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -241,6 +242,22 @@ async function main(): Promise<void> {
   const persistence = createPostgresProvider(config.database);
   const model = createModelProvider(config.model);
   const embedding = createEmbeddingProvider(config.embedding);
+
+  // Create summarization model provider
+  // If summarization config exists, create a dedicated provider from it
+  // Otherwise, reuse the main model provider
+  // TODO: Wire this into the compactor in Phase 5/6
+  const summarizationModel: ModelProvider = config.summarization
+    ? createModelProvider({
+        provider: config.summarization.provider,
+        name: config.summarization.name,
+        api_key: config.summarization.api_key,
+        base_url: config.summarization.base_url,
+      })
+    : model;
+
+  // Ensure summarizationModel is not optimized away (used in Phase 5/6)
+  void summarizationModel;
 
   // Connect to database and run migrations
   await persistence.connect();

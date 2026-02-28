@@ -300,9 +300,31 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
             }
           };
 
-          // Read stdout and process IPC messages, but enforce timeout by killing process
+          // Read stderr to capture Deno errors (permission denials, crashes, etc.)
+          let stderrOutput = '';
+          const readStderr = async (): Promise<void> => {
+            const errStream = proc.stderr;
+            if (!errStream) return;
+
+            const errReader = errStream.getReader();
+            const errDecoder = new TextDecoder();
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+              while (true) {
+                const { done, value } = await errReader.read();
+                if (value) {
+                  stderrOutput += errDecoder.decode(value, { stream: !done });
+                }
+                if (done) break;
+              }
+            } finally {
+              errReader.releaseLock();
+            }
+          };
+
+          // Read stdout and stderr in parallel, enforce timeout by killing process
           await Promise.race([
-            readStdout(),
+            Promise.all([readStdout(), readStderr()]),
             timeoutPromise,
           ]).catch(() => {
             // Ignore errors from either promise
@@ -357,6 +379,19 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
               success: false,
               output: accumulatedOutput,
               error: processingError.message,
+              tool_calls_made: toolCallCount,
+              duration_ms: Date.now() - startTime,
+            };
+          }
+
+          // If no IPC output was produced but stderr has content, the Deno process
+          // likely crashed (e.g. permission denial, unhandled rejection). Surface
+          // the stderr as an error so the agent gets actionable feedback.
+          if (!accumulatedOutput.trim() && stderrOutput.trim()) {
+            return {
+              success: false,
+              output: '',
+              error: stderrOutput.trim().slice(0, 2000),
               tool_calls_made: toolCallCount,
               duration_ms: Date.now() - startTime,
             };

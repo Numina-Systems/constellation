@@ -216,7 +216,7 @@ export function buildClipArchive(
   let hasOmission = false;
 
   if (totalBatches <= clipFirst + clipLast) {
-    // Show all batches
+    // Show all batches without section headers
     earliestBatches = batches;
     recentBatches = [];
   } else {
@@ -226,9 +226,11 @@ export function buildClipArchive(
     hasOmission = true;
   }
 
-  // Earliest context section
+  // Earliest context section (only show header if there will be an omission)
   if (earliestBatches.length > 0) {
-    lines.push('## Earliest context');
+    if (hasOmission) {
+      lines.push('## Earliest context');
+    }
     for (let i = 0; i < earliestBatches.length; i++) {
       const batch = earliestBatches[i];
       if (batch) {
@@ -250,9 +252,11 @@ export function buildClipArchive(
     lines.push('');
   }
 
-  // Recent context section
+  // Recent context section (only show header if there will be an omission)
   if (recentBatches.length > 0) {
-    lines.push('## Recent context');
+    if (hasOmission) {
+      lines.push('## Recent context');
+    }
     for (let i = 0; i < recentBatches.length; i++) {
       const batch = recentBatches[i];
       if (batch) {

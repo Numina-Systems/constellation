@@ -208,6 +208,27 @@ function createMockModelProvider(
   };
 }
 
+// Helper to create AgentDependencies with optional compactor
+function createAgentDependencies(overrides?: {
+  model?: ModelProvider;
+  memory?: MemoryManager;
+  registry?: ToolRegistry;
+  runtime?: CodeRuntime;
+  persistence?: PersistenceProvider;
+  config?: AgentConfig;
+  compactor?: Compactor;
+}): AgentDependencies {
+  return {
+    model: overrides?.model ?? createMockModelProvider([]),
+    memory: overrides?.memory ?? createMockMemoryManager(),
+    registry: overrides?.registry ?? createMockToolRegistry(),
+    runtime: overrides?.runtime ?? createMockCodeRuntime(),
+    persistence: overrides?.persistence ?? createMockPersistenceProvider(),
+    config: overrides?.config ?? { max_tool_rounds: 5, context_budget: 0.8 },
+    compactor: overrides?.compactor,
+  };
+}
+
 describe('Agent loop', () => {
   let mockPersistence: PersistenceProvider;
   let mockMemory: MemoryManager;
@@ -598,7 +619,7 @@ describe('Agent loop', () => {
       };
 
       const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
-      const deps: AgentDependencies & { compactor: Compactor } = {
+      const deps = createAgentDependencies({
         model: mockModel,
         memory: mockMemory,
         registry: mockRegistry,
@@ -606,9 +627,9 @@ describe('Agent loop', () => {
         persistence: mockPersistence,
         config,
         compactor: mockCompactor,
-      };
+      });
 
-      const agent = createAgent(deps as unknown as AgentDependencies);
+      const agent = createAgent(deps);
       const response = await agent.processMessage('Compress context please');
 
       // The response should be the final text from the assistant
@@ -704,7 +725,7 @@ describe('Agent loop', () => {
       // Track model requests to verify compressed history is used
       const tracker = { requests: [] as Array<ModelRequest> };
       const mockModel = createMockModelProvider([compactResponse, secondToolResponse, finalResponse], tracker);
-      const deps: AgentDependencies & { compactor: Compactor } = {
+      const deps = createAgentDependencies({
         model: mockModel,
         memory: mockMemory,
         registry: mockRegistry,
@@ -712,9 +733,9 @@ describe('Agent loop', () => {
         persistence: mockPersistence,
         config,
         compactor: mockCompactor,
-      };
+      });
 
-      const agent = createAgent(deps as unknown as AgentDependencies);
+      const agent = createAgent(deps);
       const response = await agent.processMessage('Start compaction round');
 
       // Verify the agent handled the round with multiple tool calls
@@ -783,7 +804,7 @@ describe('Agent loop', () => {
       };
 
       const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
-      const deps: AgentDependencies & { compactor: Compactor } = {
+      const deps = createAgentDependencies({
         model: mockModel,
         memory: mockMemory,
         registry: mockRegistry,
@@ -791,9 +812,9 @@ describe('Agent loop', () => {
         persistence: mockPersistence,
         config,
         compactor: mockCompactor,
-      };
+      });
 
-      const agent = createAgent(deps as unknown as AgentDependencies);
+      const agent = createAgent(deps);
       const response = await agent.processMessage('Maybe compress');
 
       expect(response).toBe('No compression needed');

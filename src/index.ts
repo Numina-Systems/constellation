@@ -249,7 +249,6 @@ async function main(): Promise<void> {
   // Create summarization model provider
   // If summarization config exists, create a dedicated provider from it
   // Otherwise, reuse the main model provider
-  // TODO: Wire this into the compactor in Phase 5/6
   const summarizationModel: ModelProvider = config.summarization
     ? createModelProvider({
         provider: config.summarization.provider,
@@ -258,9 +257,6 @@ async function main(): Promise<void> {
         base_url: config.summarization.base_url,
       })
     : model;
-
-  // Ensure summarizationModel is not optimized away (used in Phase 5/6)
-  void summarizationModel;
 
   // Connect to database and run migrations
   await persistence.connect();

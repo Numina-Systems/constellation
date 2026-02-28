@@ -52,6 +52,92 @@ function createBatch(index: number, depth: number = 0): SummaryBatch {
   };
 }
 
+/**
+ * Helper factory for creating mock dependencies for resummarize tests.
+ * Provides customizable mocks with default implementations for MemoryManager and ModelProvider.
+ */
+function createResummarizeTestContext(overrides?: {
+  onMemoryWrite?: (label: string, content: string) => void;
+  onBlockDelete?: (id: string) => void;
+  modelResponseText?: string;
+}): {
+  mockMemory: MemoryManager;
+  mockModel: ModelProvider;
+  writtenBlocks: Array<{ label: string; content: string }>;
+  deletedBlocks: Array<string>;
+} {
+  const writtenBlocks: Array<{ label: string; content: string }> = [];
+  const deletedBlocks: Array<string> = [];
+
+  const mockMemory: MemoryManager = {
+    async getCoreBlocks() {
+      return [];
+    },
+    async getWorkingBlocks() {
+      return [];
+    },
+    async buildSystemPrompt() {
+      return '';
+    },
+    async read() {
+      return [];
+    },
+    async write(label: string, content: string) {
+      writtenBlocks.push({ label, content });
+      overrides?.onMemoryWrite?.(label, content);
+      return {
+        applied: true,
+        block: {
+          id: 'new-batch',
+          owner: 'test',
+          tier: 'archival',
+          label,
+          content,
+          embedding: null,
+          permission: 'readwrite',
+          pinned: false,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      };
+    },
+    async list() {
+      return [];
+    },
+    async deleteBlock(id: string) {
+      deletedBlocks.push(id);
+      overrides?.onBlockDelete?.(id);
+    },
+    async getPendingMutations() {
+      return [];
+    },
+    async approveMutation() {
+      throw new Error('not implemented');
+    },
+    async rejectMutation() {
+      throw new Error('not implemented');
+    },
+  };
+
+  const mockModel: ModelProvider = {
+    async complete() {
+      return {
+        content: [{ type: 'text', text: overrides?.modelResponseText ?? 'Re-summarized content' }],
+        stop_reason: 'end_turn',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+      };
+    },
+    async *stream() {
+      yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+    },
+  };
+
+  return { mockMemory, mockModel, writtenBlocks, deletedBlocks };
+}
+
 describe('Pure helper functions', () => {
   describe('splitHistory', () => {
     it('AC1.6: preserves last keepRecent messages in toKeep', () => {
@@ -1124,73 +1210,9 @@ describe('Recursive re-summarization', () => {
         },
       }));
 
-      // Create mock dependencies
-      const deletedBlocks: Array<string> = [];
-      const writtenBlocks: Array<{ label: string; content: string }> = [];
-
-      const mockMemory: MemoryManager = {
-        async getCoreBlocks() {
-          return [];
-        },
-        async getWorkingBlocks() {
-          return [];
-        },
-        async buildSystemPrompt() {
-          return '';
-        },
-        async read() {
-          return [];
-        },
-        async write(label: string, content: string) {
-          writtenBlocks.push({ label, content });
-          return {
-            applied: true,
-            block: {
-              id: 'new-batch',
-              owner: 'test',
-              tier: 'archival',
-              label,
-              content,
-              embedding: null,
-              permission: 'readwrite',
-              pinned: false,
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-          };
-        },
-        async list() {
-          return [];
-        },
-        async deleteBlock(id: string) {
-          deletedBlocks.push(id);
-        },
-        async getPendingMutations() {
-          return [];
-        },
-        async approveMutation() {
-          throw new Error('not implemented');
-        },
-        async rejectMutation() {
-          throw new Error('not implemented');
-        },
-      };
-
-      const mockModel: ModelProvider = {
-        async complete() {
-          return {
-            content: [{ type: 'text', text: 'Re-summarized content' }],
-            stop_reason: 'end_turn',
-            usage: {
-              input_tokens: 100,
-              output_tokens: 50,
-            },
-          };
-        },
-        async *stream() {
-          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-        },
-      };
+      const { mockMemory, mockModel, writtenBlocks } = createResummarizeTestContext({
+        modelResponseText: 'Re-summarized content',
+      });
 
       const config = {
         chunkSize: 3,
@@ -1233,70 +1255,7 @@ describe('Recursive re-summarization', () => {
         },
       }));
 
-      const deletedBlocks: Array<string> = [];
-
-      const mockMemory: MemoryManager = {
-        async getCoreBlocks() {
-          return [];
-        },
-        async getWorkingBlocks() {
-          return [];
-        },
-        async buildSystemPrompt() {
-          return '';
-        },
-        async read() {
-          return [];
-        },
-        async write() {
-          return {
-            applied: true,
-            block: {
-              id: 'new-batch',
-              owner: 'test',
-              tier: 'archival',
-              label: 'test',
-              content: 'test',
-              embedding: null,
-              permission: 'readwrite',
-              pinned: false,
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-          };
-        },
-        async list() {
-          return [];
-        },
-        async deleteBlock(id: string) {
-          deletedBlocks.push(id);
-        },
-        async getPendingMutations() {
-          return [];
-        },
-        async approveMutation() {
-          throw new Error('not implemented');
-        },
-        async rejectMutation() {
-          throw new Error('not implemented');
-        },
-      };
-
-      const mockModel: ModelProvider = {
-        async complete() {
-          return {
-            content: [{ type: 'text', text: 'Re-summarized' }],
-            stop_reason: 'end_turn',
-            usage: {
-              input_tokens: 100,
-              output_tokens: 50,
-            },
-          };
-        },
-        async *stream() {
-          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-        },
-      };
+      const { mockMemory, mockModel, deletedBlocks } = createResummarizeTestContext();
 
       const config = {
         chunkSize: 3,
@@ -1408,69 +1367,7 @@ describe('Recursive re-summarization', () => {
         },
       ];
 
-      const writtenBlocks: Array<{ label: string; content: string }> = [];
-
-      const mockMemory: MemoryManager = {
-        async getCoreBlocks() {
-          return [];
-        },
-        async getWorkingBlocks() {
-          return [];
-        },
-        async buildSystemPrompt() {
-          return '';
-        },
-        async read() {
-          return [];
-        },
-        async write(label: string, content: string) {
-          writtenBlocks.push({ label, content });
-          return {
-            applied: true,
-            block: {
-              id: 'new-batch',
-              owner: 'test',
-              tier: 'archival',
-              label,
-              content,
-              embedding: null,
-              permission: 'readwrite',
-              pinned: false,
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-          };
-        },
-        async list() {
-          return [];
-        },
-        async deleteBlock() {},
-        async getPendingMutations() {
-          return [];
-        },
-        async approveMutation() {
-          throw new Error('not implemented');
-        },
-        async rejectMutation() {
-          throw new Error('not implemented');
-        },
-      };
-
-      const mockModel: ModelProvider = {
-        async complete() {
-          return {
-            content: [{ type: 'text', text: 'Re-summarized' }],
-            stop_reason: 'end_turn',
-            usage: {
-              input_tokens: 100,
-              output_tokens: 50,
-            },
-          };
-        },
-        async *stream() {
-          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-        },
-      };
+      const { mockMemory, mockModel, writtenBlocks } = createResummarizeTestContext();
 
       const config = {
         chunkSize: 3,

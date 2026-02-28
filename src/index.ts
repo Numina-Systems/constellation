@@ -124,7 +124,10 @@ export async function processEventQueue(
   let event = eventQueue.shift();
   while (event) {
     try {
-      await agent.processEvent(event);
+      const result = await agent.processEvent(event);
+      if (result) {
+        console.log(`[bluesky] agent response: ${result}`);
+      }
     } catch (error) {
       // AC6.5: Log error but don't crash
       const errorMsg = error instanceof Error ? error.message : String(error);

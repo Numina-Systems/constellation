@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, mock } from "bun:test";
 import { shouldAcceptEvent, createBlueskySource } from "./source.ts";
 import type { CommitEvent } from "@atcute/jetstream";
 import type { BskyAgent } from "@atproto/api";

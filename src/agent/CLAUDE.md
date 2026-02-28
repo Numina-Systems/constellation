@@ -11,7 +11,7 @@ Implements the core agent loop: receives user messages, builds context from memo
   - Each message round persists user input, assistant response, and tool results to the `messages` table
   - Tool dispatch loop runs up to `max_tool_rounds` before stopping
   - `execute_code` tool calls route to the Deno runtime (with optional `ExecutionContext` for credential injection); all other tools route through the registry
-  - `processEvent` formats external events as structured user messages and delegates to `processMessage`
+  - `processEvent` formats external events as structured user messages (with expanded reply metadata and source-specific `[Instructions:]` blocks) and delegates to `processMessage`
   - Context compression triggers when estimated tokens exceed `context_budget * model_max_tokens`, summarizing old messages via the LLM and archiving to memory
   - Core memory blocks are always included in the system prompt
   - Working memory blocks are prepended to the message context

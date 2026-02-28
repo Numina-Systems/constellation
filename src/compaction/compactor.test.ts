@@ -3,7 +3,7 @@
  * Covers pure helper functions and compress() pipeline with mocked dependencies.
  */
 
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 import type { ConversationMessage } from '../agent/types.js';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
@@ -94,7 +94,7 @@ describe('Pure helper functions', () => {
       expect(priorSummary).toBeNull();
     });
 
-    it('detects prior compaction summary and extracts it', () => {
+    it('detects prior compaction summary with em-dash and extracts it', () => {
       const messages = [
         createMessage('summary', 'system', '[Context Summary — 50 messages]', 0),
         createMessage('1', 'user', 'msg1', 100),
@@ -447,10 +447,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
     } as unknown as MemoryManager;
   }
 
-  beforeEach(() => {
-    // Reset state before each test
-  });
-
   it('AC1.1: compress() produces summary batches when history exceeds token budget', async () => {
     const messages = Array.from({ length: 20 }, (_, i) =>
       createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(100), i * 100),
@@ -562,6 +558,26 @@ describe('Compaction pipeline with mocked dependencies', () => {
     const clipMessage = result.history[0];
     expect(clipMessage?.role).toBe('system');
     expect(clipMessage?.content).toContain('Context Summary');
+
+    // Verify SummaryBatch properties via clip-archive content and archived batches
+    const clipContent = clipMessage?.content || '';
+    // Check for depth 0 in the batch descriptions
+    expect(clipContent).toContain('depth 0');
+    // Check for timestamp format (ISO timestamps are in the batch headers)
+    expect(clipContent).toMatch(/\d{4}-\d{2}-\d{2}T/);
+
+    // Verify archived batches were created with correct structure
+    const memory = mockMemory as unknown as {
+      _archivedBatches: Array<{ label: string; content: string }>;
+    };
+    expect(memory._archivedBatches.length).toBeGreaterThan(0);
+    for (const batch of memory._archivedBatches) {
+      if (batch) {
+        // Each archived batch should have a label and content
+        expect(batch.label).toBeTruthy();
+        expect(batch.content).toBeTruthy();
+      }
+    }
   });
 
   it('AC1.5: old message IDs are deleted from database', async () => {

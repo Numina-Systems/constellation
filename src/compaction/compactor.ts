@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'crypto';
 import type { ConversationMessage } from '../agent/types.js';
-import type { ModelProvider, ModelRequest } from '../model/types.js';
+import type { ModelProvider, ModelRequest, TextBlock } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider } from '../persistence/types.js';
 import type {
@@ -61,7 +61,7 @@ export function splitHistory(
   if (
     firstMessage &&
     firstMessage.role === 'system' &&
-    firstMessage.content.startsWith('[Context Summary')
+    firstMessage.content.startsWith('[Context Summary —')
   ) {
     priorSummary = firstMessage;
     compressStartIndex = 1;
@@ -134,7 +134,7 @@ export function buildClipArchive(
   const lines: Array<string> = [];
 
   // Header
-  const cycleCount = 1; // First compaction, depth 0
+  const cycleCount = batches.length > 0 ? Math.max(...batches.map(b => b.depth)) + 1 : 0;
   lines.push(
     `[Context Summary — ${totalMessagesCompressed} messages compressed across ${cycleCount} compaction cycle${cycleCount === 1 ? '' : 's'}]`
   );
@@ -231,9 +231,9 @@ export function createCompactor(
     };
 
     const response = await model.complete(request);
-    const textBlocks = response.content.filter((b) => b.type === 'text');
-    const summary = textBlocks
-      .map((b) => (b.type === 'text' ? b.text : ''))
+    const summary = response.content
+      .filter((b): b is TextBlock => b.type === 'text')
+      .map((b) => b.text)
       .join('');
 
     return summary;
@@ -334,9 +334,10 @@ export function createCompactor(
 
       // 9. Insert clip-archive as a system message
       const clipArchiveId = randomUUID();
+      const now = new Date();
       await persistence.query(
         'INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [clipArchiveId, conversationId, 'system', clipArchiveContent, new Date()],
+        [clipArchiveId, conversationId, 'system', clipArchiveContent, now],
       );
 
       // 10. Build the clip-archive ConversationMessage object
@@ -345,7 +346,7 @@ export function createCompactor(
         conversation_id: conversationId,
         role: 'system',
         content: clipArchiveContent,
-        created_at: new Date(),
+        created_at: now,
       };
 
       // 11. Calculate token estimates
@@ -367,7 +368,8 @@ export function createCompactor(
       };
     } catch (error) {
       // Error handling: return original history unchanged
-      console.error('Compaction pipeline failed, returning original history:', error);
+      // TODO: Replace console.error with injected logger for proper observability
+      console.error('compaction pipeline failed', { conversationId, error: String(error) });
       const tokenEstimate = estimateTokens(
         history.map((m) => m.content).join(''),
       );

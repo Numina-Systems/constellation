@@ -38,6 +38,102 @@ async function cleanupTables(): Promise<void> {
   await persistence.query('TRUNCATE TABLE memory_blocks CASCADE');
 }
 
+/**
+ * Helper function to seed messages into the database.
+ * Takes an array of content strings and creates alternating user/assistant messages.
+ */
+async function seedMessages(
+  content: ReadonlyArray<string>,
+): Promise<Array<ConversationMessage>> {
+  const messages: Array<ConversationMessage> = [];
+  const startTime = new Date(Date.now() - content.length * 60000);
+
+  for (let i = 0; i < content.length; i++) {
+    const created_at = new Date(startTime.getTime() + i * 60000);
+    const message: ConversationMessage = {
+      id: crypto.randomUUID(),
+      conversation_id: TEST_CONVERSATION_ID,
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: content[i] as string,
+      created_at,
+    };
+
+    messages.push(message);
+
+    await persistence.query(
+      `INSERT INTO messages (id, conversation_id, role, content, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [message.id, message.conversation_id, message.role, message.content, message.created_at],
+    );
+  }
+
+  return messages;
+}
+
+/**
+ * Helper function to create test compactor with Ollama connection check.
+ * Returns null if Ollama is not available, otherwise returns the compactor and related managers.
+ */
+async function createTestCompactor(): Promise<{
+  compactor: ReturnType<typeof createCompactor>;
+  store: ReturnType<typeof createPostgresMemoryStore>;
+  memory: ReturnType<typeof createMemoryManager>;
+} | null> {
+  const ollamaConfig: ModelConfig = {
+    provider: 'openai-compat',
+    name: getOllamaModel(),
+    api_key: 'ollama',
+    base_url: getOllamaEndpoint() + '/v1',
+  };
+
+  let model: ReturnType<typeof createOpenAICompatAdapter>;
+  try {
+    model = createOpenAICompatAdapter(ollamaConfig);
+    // Test connection with a minimal request
+    await model.complete({
+      model: getOllamaModel(),
+      messages: [{ role: 'user', content: 'test' }],
+      max_tokens: 10,
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('Failed to connect') ||
+        error.message.includes('Unable to connect') ||
+        error.message.includes('ECONNREFUSED') ||
+        error.message.includes('network'))
+    ) {
+      console.log('Skipping integration test: Ollama server not available');
+      return null;
+    }
+    throw error;
+  }
+
+  // Create memory manager with real PostgreSQL and mock embeddings
+  const store = createPostgresMemoryStore(persistence);
+  const memory = createMemoryManager(store, mockEmbedding, TEST_CONVERSATION_ID);
+
+  // Create compactor
+  const compactor = createCompactor({
+    model,
+    memory,
+    persistence,
+    config: {
+      chunkSize: 5,
+      keepRecent: 3,
+      maxSummaryTokens: 500,
+      clipFirst: 100,
+      clipLast: 200,
+      prompt: null,
+    },
+    modelName: getOllamaModel(),
+    getPersona: async () =>
+      'You are a helpful assistant analyzing conversation history. Summarize key decisions and events.',
+  });
+
+  return { compactor, store, memory };
+}
+
 describe('Compaction Integration Tests', () => {
   beforeAll(async () => {
     persistence = createPostgresProvider({
@@ -61,62 +157,10 @@ describe('Compaction Integration Tests', () => {
 
   describe('Context compaction with Ollama summarization', () => {
     it('compacts conversation history and produces summary batches', async () => {
-      // Create Ollama model provider
-      const ollamaConfig: ModelConfig = {
-        provider: 'openai-compat',
-        name: getOllamaModel(),
-        api_key: 'ollama',
-        base_url: getOllamaEndpoint() + '/v1',
-      };
+      const setup = await createTestCompactor();
+      if (!setup) return;
 
-      let model: ReturnType<typeof createOpenAICompatAdapter>;
-      try {
-        model = createOpenAICompatAdapter(ollamaConfig);
-        // Test connection with a minimal request
-        await model.complete({
-          model: getOllamaModel(),
-          messages: [{ role: 'user', content: 'test' }],
-          max_tokens: 10,
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.includes('Failed to connect') ||
-            error.message.includes('Unable to connect') ||
-            error.message.includes('ECONNREFUSED') ||
-            error.message.includes('network'))
-        ) {
-          console.log('Skipping integration test: Ollama server not available');
-          return;
-        }
-        throw error;
-      }
-
-      // Create memory manager with real PostgreSQL and mock embeddings
-      const store = createPostgresMemoryStore(persistence);
-      const memory = createMemoryManager(store, mockEmbedding, TEST_CONVERSATION_ID);
-
-      // Create compactor
-      const compactor = createCompactor({
-        model,
-        memory,
-        persistence,
-        config: {
-          chunkSize: 5,
-          keepRecent: 3,
-          maxSummaryTokens: 500,
-          clipFirst: 100,
-          clipLast: 200,
-          prompt: null,
-        },
-        modelName: getOllamaModel(),
-        getPersona: async () =>
-          'You are a helpful assistant analyzing conversation history. Summarize key decisions and events.',
-      });
-
-      // Insert 15 test messages into the messages table
-      const messages: Array<ConversationMessage> = [];
-      const startTime = new Date(Date.now() - 15 * 60000); // 15 minutes ago
+      const { compactor } = setup;
 
       const conversationContent: ReadonlyArray<string> = [
         'User: I need help with PostgreSQL',
@@ -136,28 +180,7 @@ describe('Compaction Integration Tests', () => {
         'User: Can you detail the fix?',
       ];
 
-      for (let i = 0; i < conversationContent.length; i++) {
-        const isUser = i % 2 === 0;
-        const created_at = new Date(startTime.getTime() + i * 60000);
-        const content = conversationContent[i] as string;
-
-        const message: ConversationMessage = {
-          id: crypto.randomUUID(),
-          conversation_id: TEST_CONVERSATION_ID,
-          role: isUser ? 'user' : 'assistant',
-          content,
-          created_at,
-        };
-
-        messages.push(message);
-
-        // Insert message into database
-        await persistence.query(
-          `INSERT INTO messages (id, conversation_id, role, content, created_at)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [message.id, message.conversation_id, message.role, message.content, message.created_at],
-        );
-      }
+      const messages = await seedMessages(conversationContent);
 
       // Run compaction
       const result = await compactor.compress(messages, TEST_CONVERSATION_ID);
@@ -184,80 +207,14 @@ describe('Compaction Integration Tests', () => {
     });
 
     it('archives summary batches to archival memory', async () => {
-      const ollamaConfig: ModelConfig = {
-        provider: 'openai-compat',
-        name: getOllamaModel(),
-        api_key: 'ollama',
-        base_url: getOllamaEndpoint() + '/v1',
-      };
+      const setup = await createTestCompactor();
+      if (!setup) return;
 
-      let model: ReturnType<typeof createOpenAICompatAdapter>;
-      try {
-        model = createOpenAICompatAdapter(ollamaConfig);
-        // Test connection
-        await model.complete({
-          model: getOllamaModel(),
-          messages: [{ role: 'user', content: 'test' }],
-          max_tokens: 10,
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.includes('Failed to connect') ||
-            error.message.includes('Unable to connect') ||
-            error.message.includes('ECONNREFUSED') ||
-            error.message.includes('network'))
-        ) {
-          console.log('Skipping integration test: Ollama server not available');
-          return;
-        }
-        throw error;
-      }
+      const { compactor, store } = setup;
 
-      const store = createPostgresMemoryStore(persistence);
-      const memory = createMemoryManager(store, mockEmbedding, TEST_CONVERSATION_ID);
-
-      const compactor = createCompactor({
-        model,
-        memory,
-        persistence,
-        config: {
-          chunkSize: 5,
-          keepRecent: 3,
-          maxSummaryTokens: 500,
-          clipFirst: 100,
-          clipLast: 200,
-          prompt: null,
-        },
-        modelName: getOllamaModel(),
-        getPersona: async () =>
-          'You are a helpful assistant analyzing conversation history. Summarize key decisions and events.',
-      });
-
-      // Create and insert test messages
-      const messages: Array<ConversationMessage> = [];
-      const startTime = new Date(Date.now() - 15 * 60000);
-
-      for (let i = 0; i < 15; i++) {
-        const isUser = i % 2 === 0;
-        const created_at = new Date(startTime.getTime() + i * 60000);
-
-        const message: ConversationMessage = {
-          id: crypto.randomUUID(),
-          conversation_id: TEST_CONVERSATION_ID,
-          role: isUser ? 'user' : 'assistant',
-          content: `Message ${i + 1}`,
-          created_at,
-        };
-
-        messages.push(message);
-
-        await persistence.query(
-          `INSERT INTO messages (id, conversation_id, role, content, created_at)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [message.id, message.conversation_id, message.role, message.content, message.created_at],
-        );
-      }
+      const messages = await seedMessages(
+        Array.from({ length: 15 }, (_, i) => `Message ${i + 1}`)
+      );
 
       // Run compaction
       await compactor.compress(messages, TEST_CONVERSATION_ID);
@@ -276,59 +233,10 @@ describe('Compaction Integration Tests', () => {
     });
 
     it('produces coherent summaries', async () => {
-      const ollamaConfig: ModelConfig = {
-        provider: 'openai-compat',
-        name: getOllamaModel(),
-        api_key: 'ollama',
-        base_url: getOllamaEndpoint() + '/v1',
-      };
+      const setup = await createTestCompactor();
+      if (!setup) return;
 
-      let model: ReturnType<typeof createOpenAICompatAdapter>;
-      try {
-        model = createOpenAICompatAdapter(ollamaConfig);
-        // Test connection
-        await model.complete({
-          model: getOllamaModel(),
-          messages: [{ role: 'user', content: 'test' }],
-          max_tokens: 10,
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.includes('Failed to connect') ||
-            error.message.includes('Unable to connect') ||
-            error.message.includes('ECONNREFUSED') ||
-            error.message.includes('network'))
-        ) {
-          console.log('Skipping integration test: Ollama server not available');
-          return;
-        }
-        throw error;
-      }
-
-      const store = createPostgresMemoryStore(persistence);
-      const memory = createMemoryManager(store, mockEmbedding, TEST_CONVERSATION_ID);
-
-      const compactor = createCompactor({
-        model,
-        memory,
-        persistence,
-        config: {
-          chunkSize: 5,
-          keepRecent: 3,
-          maxSummaryTokens: 500,
-          clipFirst: 100,
-          clipLast: 200,
-          prompt: null,
-        },
-        modelName: getOllamaModel(),
-        getPersona: async () =>
-          'You are a helpful assistant analyzing conversation history. Summarize key decisions and events.',
-      });
-
-      // Insert messages with identifiable content
-      const messages: Array<ConversationMessage> = [];
-      const startTime = new Date(Date.now() - 15 * 60000);
+      const { compactor } = setup;
 
       const identifiableContent: ReadonlyArray<string> = [
         'User: We decided to use PostgreSQL for the database',
@@ -348,25 +256,7 @@ describe('Compaction Integration Tests', () => {
         'User: Ready for production deployment',
       ];
 
-      for (let i = 0; i < identifiableContent.length; i++) {
-        const created_at = new Date(startTime.getTime() + i * 60000);
-        const content = identifiableContent[i] as string;
-        const message: ConversationMessage = {
-          id: crypto.randomUUID(),
-          conversation_id: TEST_CONVERSATION_ID,
-          role: i % 2 === 0 ? 'user' : 'assistant',
-          content,
-          created_at,
-        };
-
-        messages.push(message);
-
-        await persistence.query(
-          `INSERT INTO messages (id, conversation_id, role, content, created_at)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [message.id, message.conversation_id, message.role, message.content, message.created_at],
-        );
-      }
+      const messages = await seedMessages(identifiableContent);
 
       // Run compaction
       const result = await compactor.compress(messages, TEST_CONVERSATION_ID);
@@ -393,78 +283,14 @@ describe('Compaction Integration Tests', () => {
     });
 
     it('clip-archive format is correct', async () => {
-      const ollamaConfig: ModelConfig = {
-        provider: 'openai-compat',
-        name: getOllamaModel(),
-        api_key: 'ollama',
-        base_url: getOllamaEndpoint() + '/v1',
-      };
+      const setup = await createTestCompactor();
+      if (!setup) return;
 
-      let model: ReturnType<typeof createOpenAICompatAdapter>;
-      try {
-        model = createOpenAICompatAdapter(ollamaConfig);
-        // Test connection
-        await model.complete({
-          model: getOllamaModel(),
-          messages: [{ role: 'user', content: 'test' }],
-          max_tokens: 10,
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.includes('Failed to connect') ||
-            error.message.includes('Unable to connect') ||
-            error.message.includes('ECONNREFUSED') ||
-            error.message.includes('network'))
-        ) {
-          console.log('Skipping integration test: Ollama server not available');
-          return;
-        }
-        throw error;
-      }
+      const { compactor } = setup;
 
-      const store = createPostgresMemoryStore(persistence);
-      const memory = createMemoryManager(store, mockEmbedding, TEST_CONVERSATION_ID);
-
-      const compactor = createCompactor({
-        model,
-        memory,
-        persistence,
-        config: {
-          chunkSize: 5,
-          keepRecent: 3,
-          maxSummaryTokens: 500,
-          clipFirst: 100,
-          clipLast: 200,
-          prompt: null,
-        },
-        modelName: getOllamaModel(),
-        getPersona: async () =>
-          'You are a helpful assistant analyzing conversation history. Summarize key decisions and events.',
-      });
-
-      // Create and insert test messages
-      const messages: Array<ConversationMessage> = [];
-      const startTime = new Date(Date.now() - 15 * 60000);
-
-      for (let i = 0; i < 15; i++) {
-        const created_at = new Date(startTime.getTime() + i * 60000);
-        const message: ConversationMessage = {
-          id: crypto.randomUUID(),
-          conversation_id: TEST_CONVERSATION_ID,
-          role: i % 2 === 0 ? 'user' : 'assistant',
-          content: `Conversation message ${i + 1} with some content`,
-          created_at,
-        };
-
-        messages.push(message);
-
-        await persistence.query(
-          `INSERT INTO messages (id, conversation_id, role, content, created_at)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [message.id, message.conversation_id, message.role, message.content, message.created_at],
-        );
-      }
+      const messages = await seedMessages(
+        Array.from({ length: 15 }, (_, i) => `Conversation message ${i + 1} with some content`)
+      );
 
       // Run compaction
       const result = await compactor.compress(messages, TEST_CONVERSATION_ID);
@@ -484,9 +310,9 @@ describe('Compaction Integration Tests', () => {
         content.includes('## Earliest context') || content.includes('## Recent context'),
       ).toBe(true);
 
-      // Check for depth/timestamp metadata markers (batch markers)
-      // These appear as [depth:N|...] patterns
-      expect(content).toMatch(/\[depth:\d+/);
+      // Check for clip-archive batch markers
+      // These appear as [Batch N — depth M, ISO to ISO] patterns
+      expect(content).toMatch(/\[Batch \d+ — depth \d+/);
     });
   });
 });

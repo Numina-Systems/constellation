@@ -24,3 +24,13 @@ url = "postgresql://constellation:constellation@localhost:5432/constellation"
 [runtime]
 working_dir = "./workspace"
 allowed_hosts = ["api.anthropic.com", "api.moonshot.ai"]
+
+# Bluesky integration. Requires handle, app_password, and did when enabled.
+# For production, use environment variables: BLUESKY_HANDLE, BLUESKY_APP_PASSWORD
+[bluesky]
+enabled = false
+handle = "spirit.bsky.social"
+app_password = "xxxx-xxxx-xxxx-xxxx"
+did = "did:plc:example"
+watched_dids = ["did:plc:friend1", "did:plc:friend2"]
+jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"

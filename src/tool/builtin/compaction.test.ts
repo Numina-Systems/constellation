@@ -38,12 +38,12 @@ describe('createCompactContextTool', () => {
       expect(typeof tool.handler).toBe('function');
     });
 
-    it('returns success result indicating special-case handling', async () => {
+    it('returns error result indicating special-case handling', async () => {
       const tool = createCompactContextTool();
       const result = await tool.handler({});
-      expect(result.success).toBe(true);
-      expect(result.output).toBeTruthy();
-      expect(result.output).toContain('special case');
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
+      expect(result.error).toContain('agent loop');
     });
   });
 });

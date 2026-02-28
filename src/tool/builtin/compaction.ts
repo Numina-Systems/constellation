@@ -1,4 +1,4 @@
-// pattern: Imperative Shell
+// pattern: Functional Core
 
 /**
  * compact_context tool definition for agent-initiated conversation history compression.
@@ -16,8 +16,9 @@ export function createCompactContextTool(): Tool {
       parameters: [],
     },
     handler: async () => ({
-      success: true,
-      output: 'compact_context is handled as a special case by the agent loop.',
+      success: false,
+      output: '',
+      error: 'compact_context is dispatched by the agent loop, not the tool registry',
     }),
   };
 }

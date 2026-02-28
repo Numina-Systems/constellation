@@ -170,14 +170,19 @@ function createMockCodeRuntime(): CodeRuntime {
   };
 }
 
-// Mock ModelProvider with configurable responses
+// Mock ModelProvider with configurable responses and tracking
 function createMockModelProvider(
   responses: ReadonlyArray<ModelResponse>,
+  tracker?: { requests: Array<ModelRequest> },
 ): ModelProvider {
   let callIndex = 0;
 
   return {
-    async complete(_request: ModelRequest): Promise<ModelResponse> {
+    async complete(request: ModelRequest): Promise<ModelResponse> {
+      if (tracker) {
+        tracker.requests.push(request);
+      }
+
       const response = responses[callIndex];
       callIndex++;
 
@@ -611,9 +616,29 @@ describe('Agent loop', () => {
       // The response should be the final text from the assistant
       expect(response).toBe('Compaction complete');
 
-      // Verify compaction was called by checking history was persisted
+      // Retrieve the tool result from persisted messages
       const history = await agent.getConversationHistory();
       expect(history.length).toBeGreaterThanOrEqual(2);
+
+      // Find the tool result message for compact_context
+      const toolResultMessage = history.find(
+        (msg) => msg.role === 'tool' && msg.tool_call_id === 'tool-use-1',
+      );
+      expect(toolResultMessage).toBeDefined();
+      expect(toolResultMessage?.content).toBeDefined();
+
+      // Parse the JSON tool result and verify compression stats
+      const toolResult = JSON.parse(toolResultMessage?.content || '{}') as {
+        messagesCompressed?: number;
+        batchesCreated?: number;
+        tokensEstimateBefore?: number;
+        tokensEstimateAfter?: number;
+      };
+
+      expect(toolResult.messagesCompressed).toBe(10);
+      expect(toolResult.batchesCreated).toBe(2);
+      expect(toolResult.tokensEstimateBefore).toBe(5000);
+      expect(toolResult.tokensEstimateAfter).toBe(2000);
     });
 
     it('AC5.3: history is replaced with compressed version for subsequent tool calls', async () => {
@@ -678,7 +703,9 @@ describe('Agent loop', () => {
         usage: { input_tokens: 100, output_tokens: 50 },
       };
 
-      const mockModel = createMockModelProvider([compactResponse, secondToolResponse, finalResponse]);
+      // Track model requests to verify compressed history is used
+      const tracker = { requests: [] as Array<ModelRequest> };
+      const mockModel = createMockModelProvider([compactResponse, secondToolResponse, finalResponse], tracker);
       const deps: AgentDependencies & { compactor: Compactor } = {
         model: mockModel,
         memory: mockMemory,
@@ -694,6 +721,29 @@ describe('Agent loop', () => {
 
       // Verify the agent handled the round with multiple tool calls
       expect(response).toBe('All done');
+
+      // Verify we made at least 2 model calls (one before compact_context, one after)
+      expect(tracker.requests.length).toBeGreaterThanOrEqual(2);
+
+      // The second model call should include the compressed history
+      // The compressed history should contain messages from compressedMessages
+      const secondCall = tracker.requests[1];
+      if (!secondCall) {
+        throw new Error('Expected second model call');
+      }
+      expect(secondCall).toBeDefined();
+
+      // Verify that the second call's message history reflects compression
+      // The compressed history has 2 messages (summary + final user message)
+      // The second call should include these compressed messages
+      const secondCallMessages = secondCall.messages;
+      expect(secondCallMessages.length).toBeGreaterThanOrEqual(2);
+
+      // Verify the compressed message is present in the second call
+      const hasCompressedContent = secondCallMessages.some(
+        (msg) => msg.content && typeof msg.content === 'string' && msg.content.includes('Context Summary'),
+      );
+      expect(hasCompressedContent).toBe(true);
     });
 
     it('AC5.4: no-op when compactor returns 0 compression stats', async () => {
@@ -749,6 +799,30 @@ describe('Agent loop', () => {
       const response = await agent.processMessage('Maybe compress');
 
       expect(response).toBe('No compression needed');
+
+      // Retrieve the tool result from persisted messages
+      const history = await agent.getConversationHistory();
+      expect(history.length).toBeGreaterThanOrEqual(2);
+
+      // Find the tool result message for compact_context
+      const toolResultMessage = history.find(
+        (msg) => msg.role === 'tool' && msg.tool_call_id === 'tool-use-4',
+      );
+      expect(toolResultMessage).toBeDefined();
+      expect(toolResultMessage?.content).toBeDefined();
+
+      // Parse the JSON tool result and verify zero-compression stats
+      const toolResult = JSON.parse(toolResultMessage?.content || '{}') as {
+        messagesCompressed?: number;
+        batchesCreated?: number;
+        tokensEstimateBefore?: number;
+        tokensEstimateAfter?: number;
+      };
+
+      expect(toolResult.messagesCompressed).toBe(0);
+      expect(toolResult.batchesCreated).toBe(0);
+      expect(toolResult.tokensEstimateBefore).toBe(100);
+      expect(toolResult.tokensEstimateAfter).toBe(100);
     });
   });
 });

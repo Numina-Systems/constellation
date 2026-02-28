@@ -592,7 +592,12 @@ describe('processEvent', () => {
         handle: 'alice',
         uri: 'at://did:plc:examplexxxxxxxxxxxx/app.bsky.feed.post/abc123',
         cid: 'bafy123...',
-        reply_to: 'at://did:plc:yyyyyyyyyyyyyyyyyyyyy/app.bsky.feed.post/xyz789',
+        reply_to: {
+          parent_uri: 'at://did:plc:yyyyy/app.bsky.feed.post/xyz789',
+          parent_cid: 'bafy-parent',
+          root_uri: 'at://did:plc:yyyyy/app.bsky.feed.post/root1',
+          root_cid: 'bafy-root',
+        },
       },
       timestamp: new Date('2026-02-28T12:00:00.000Z'),
     };
@@ -636,9 +641,18 @@ describe('processEvent', () => {
     expect(content).toContain('@alice');
     expect(content).toContain('did:plc:examplexxxxxxxxxxxx');
     expect(content).toContain('at://did:plc:examplexxxxxxxxxxxx/app.bsky.feed.post/abc123');
-    expect(content).toContain('at://did:plc:yyyyyyyyyyyyyyyyyyyyy/app.bsky.feed.post/xyz789');
+    expect(content).toContain('CID: bafy123...');
+    // Reply-to fields are expanded as structured lines
+    expect(content).toContain('Parent URI: at://did:plc:yyyyy/app.bsky.feed.post/xyz789');
+    expect(content).toContain('Parent CID: bafy-parent');
+    expect(content).toContain('Root URI: at://did:plc:yyyyy/app.bsky.feed.post/root1');
+    expect(content).toContain('Root CID: bafy-root');
     expect(content).toContain('2026-02-28T12:00:00.000Z');
     expect(content).toContain('This is a test post');
+    // Bluesky events include instructions for using execute_code
+    expect(content).toContain('[Instructions:');
+    expect(content).toContain('memory_read');
+    expect(content).toContain('execute_code');
   });
 
   it('AC2.3: agent can use tools during event processing', async () => {
@@ -778,6 +792,8 @@ describe('processEvent', () => {
     expect(content).toContain('[External Event: bluesky]');
     expect(content).toContain('2026-02-28T15:30:00.000Z');
     expect(content).toContain('Just content, no metadata');
+    // Instructions still present even with minimal metadata
+    expect(content).toContain('[Instructions:');
   });
 });
 

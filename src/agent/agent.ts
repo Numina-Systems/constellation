@@ -23,11 +23,31 @@ function formatExternalEvent(event: ExternalEvent): string {
   const header = `[External Event: ${event.source}]`;
   const from = event.metadata['handle'] ? `From: @${event.metadata['handle']} (${event.metadata['did']})` : '';
   const post = event.metadata['uri'] ? `Post: ${event.metadata['uri']}` : '';
-  const replyTo = event.metadata['reply_to'] ? `Reply to: ${event.metadata['reply_to']}` : '';
+  const cid = event.metadata['cid'] ? `CID: ${event.metadata['cid']}` : '';
   const time = `Time: ${event.timestamp.toISOString()}`;
 
-  const parts = [header, from, post, replyTo, time].filter(Boolean).concat('', event.content);
-  return parts.join('\n');
+  const parts = [header, from, post, cid, time];
+
+  // Format reply_to as structured fields so the agent has the URIs and CIDs it needs
+  const replyTo = event.metadata['reply_to'] as
+    | { parent_uri: string; parent_cid: string; root_uri: string; root_cid: string }
+    | undefined;
+  if (replyTo) {
+    parts.push(`Parent URI: ${replyTo.parent_uri}`);
+    parts.push(`Parent CID: ${replyTo.parent_cid}`);
+    parts.push(`Root URI: ${replyTo.root_uri}`);
+    parts.push(`Root CID: ${replyTo.root_cid}`);
+  }
+
+  parts.push('', event.content);
+
+  // For bluesky events, add instructions so the agent knows to use execute_code
+  if (event.source === 'bluesky') {
+    parts.push('');
+    parts.push('[Instructions: To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.]');
+  }
+
+  return parts.filter(Boolean).join('\n');
 }
 
 /**

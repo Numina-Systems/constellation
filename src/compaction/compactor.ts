@@ -80,6 +80,76 @@ export function splitHistory(
 }
 
 /**
+ * Batch metadata structure extracted from archived content headers.
+ * Format in content: [depth:N|start:ISO|end:ISO|count:M]\n{actual content}
+ */
+export type BatchMetadata = {
+  readonly depth: number;
+  readonly startTime: Date;
+  readonly endTime: Date;
+  readonly messageCount: number;
+};
+
+/**
+ * Parse batch metadata header from archived batch content.
+ * If no metadata header found, returns defaults (depth 0, current time, count 0).
+ * Handles malformed metadata gracefully.
+ */
+export function parseBatchMetadata(content: string): {
+  readonly metadata: BatchMetadata;
+  readonly cleanContent: string;
+} {
+  const metadataRegex = /^\[depth:(\d+)\|start:([^\|]+)\|end:([^\|]+)\|count:(\d+)\]\n(.*)$/s;
+  const match = content.match(metadataRegex);
+
+  if (!match) {
+    // No metadata header found, return defaults
+    const now = new Date();
+    return {
+      metadata: {
+        depth: 0,
+        startTime: now,
+        endTime: now,
+        messageCount: 0,
+      },
+      cleanContent: content,
+    };
+  }
+
+  const [, depthStr, startStr, endStr, countStr, cleanContent] = match;
+  const depth = parseInt(depthStr ?? '0', 10) || 0;
+  const messageCount = parseInt(countStr ?? '0', 10) || 0;
+
+  let startTime: Date;
+  let endTime: Date;
+
+  try {
+    startTime = new Date(startStr ?? '');
+    endTime = new Date(endStr ?? '');
+
+    // Validate dates are valid
+    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+      throw new Error('Invalid date in metadata');
+    }
+  } catch {
+    // If dates fail to parse, use current time
+    const now = new Date();
+    startTime = now;
+    endTime = now;
+  }
+
+  return {
+    metadata: {
+      depth,
+      startTime,
+      endTime,
+      messageCount,
+    },
+    cleanContent: cleanContent ?? '',
+  };
+}
+
+/**
  * Break an array of messages into chunks of a given size.
  * Last chunk may be smaller.
  */
@@ -199,6 +269,41 @@ export function buildClipArchive(
   return lines.join('\n').trim();
 }
 
+/**
+ * List existing compaction batches for a conversation.
+ * Returns blocks in chronological order (oldest first).
+ * Used in Phase 4 Task 3 for recursive re-summarization.
+ */
+export async function getCompactionBatches(
+  memory: MemoryManager,
+  conversationId: string,
+): Promise<Array<{ id: string; batch: SummaryBatch }>> {
+  const allArchival = await memory.list('archival');
+
+  // Filter to only compaction batch blocks for this conversation
+  const labelPrefix = `compaction-batch-${conversationId}`;
+  const batchBlocks = allArchival.filter((block) =>
+    block.label.startsWith(labelPrefix),
+  );
+
+  // Parse each block to extract SummaryBatch metadata
+  const batches = batchBlocks
+    .map((block) => {
+      const { metadata, cleanContent } = parseBatchMetadata(block.content);
+      const batch: SummaryBatch = {
+        content: cleanContent,
+        depth: metadata.depth,
+        startTime: metadata.startTime,
+        endTime: metadata.endTime,
+        messageCount: metadata.messageCount,
+      };
+      return { id: block.id, batch };
+    })
+    .sort((a, b) => a.batch.startTime.getTime() - b.batch.startTime.getTime());
+
+  return batches;
+}
+
 export function createCompactor(
   options: CreateCompactorOptions,
 ): Compactor {
@@ -244,9 +349,14 @@ export function createCompactor(
     conversationId: string,
   ): Promise<void> {
     const label = `compaction-batch-${conversationId}-${batch.endTime.toISOString()}`;
+
+    // Prepend metadata header to batch content
+    const metadataHeader = `[depth:${batch.depth}|start:${batch.startTime.toISOString()}|end:${batch.endTime.toISOString()}|count:${batch.messageCount}]`;
+    const contentWithMetadata = `${metadataHeader}\n${batch.content}`;
+
     await memory.write(
       label,
-      batch.content,
+      contentWithMetadata,
       'archival',
       'Archived during context compaction',
     );

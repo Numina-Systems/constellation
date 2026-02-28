@@ -16,6 +16,7 @@ import {
   buildClipArchive,
   estimateTokens,
   createCompactor,
+  parseBatchMetadata,
 } from './compactor.js';
 
 /**
@@ -314,6 +315,54 @@ describe('Pure helper functions', () => {
 
       const result = buildClipArchive([], config, 0);
       expect(result).toContain('[Context Summary — 0 messages compressed]');
+    });
+  });
+
+  describe('parseBatchMetadata', () => {
+    it('parses valid metadata header and extracts all fields', () => {
+      const now = new Date();
+      const startStr = now.toISOString();
+      const endStr = new Date(now.getTime() + 3600000).toISOString();
+      const content = `[depth:1|start:${startStr}|end:${endStr}|count:25]\nActual summary content here`;
+
+      const { metadata, cleanContent } = parseBatchMetadata(content);
+
+      expect(metadata.depth).toBe(1);
+      expect(metadata.startTime.toISOString()).toBe(startStr);
+      expect(metadata.endTime.toISOString()).toBe(endStr);
+      expect(metadata.messageCount).toBe(25);
+      expect(cleanContent).toBe('Actual summary content here');
+    });
+
+    it('handles content with no metadata header', () => {
+      const content = 'Just plain content without header';
+
+      const { metadata, cleanContent } = parseBatchMetadata(content);
+
+      expect(metadata.depth).toBe(0);
+      expect(metadata.messageCount).toBe(0);
+      expect(cleanContent).toBe(content);
+    });
+
+    it('handles malformed metadata gracefully', () => {
+      const content = '[invalid metadata]\nActual content';
+
+      const { metadata, cleanContent } = parseBatchMetadata(content);
+
+      expect(metadata.depth).toBe(0);
+      expect(cleanContent).toBe(content);
+    });
+
+    it('preserves multiline content after metadata', () => {
+      const now = new Date();
+      const startStr = now.toISOString();
+      const endStr = new Date(now.getTime() + 3600000).toISOString();
+      const multilineContent = 'Line 1\nLine 2\nLine 3\nLine 4';
+      const content = `[depth:0|start:${startStr}|end:${endStr}|count:10]\n${multilineContent}`;
+
+      const { cleanContent } = parseBatchMetadata(content);
+
+      expect(cleanContent).toBe(multilineContent);
     });
   });
 });

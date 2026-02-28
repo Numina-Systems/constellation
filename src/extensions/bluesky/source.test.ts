@@ -148,7 +148,9 @@ describe("shouldAcceptEvent", () => {
       // Verify required fields exist on the accepted event
       expect(simplePostEvent.did).toBe("did:plc:poster");
       expect(simplePostEvent.commit.rkey).toBe("xyz789");
-      expect(simplePostEvent.commit.cid).toBe("bafy456");
+      if (simplePostEvent.commit.operation === "create") {
+        expect(simplePostEvent.commit.cid).toBe("bafy456");
+      }
 
       // Test reply event
       const replyEvent: CommitEvent = {
@@ -179,7 +181,8 @@ describe("shouldAcceptEvent", () => {
 
       const watchedDidsWithReplier = new Set(["did:plc:replier"]);
       expect(shouldAcceptEvent(replyEvent, watchedDidsWithReplier, agentDid)).toBe(true);
-      // Verify reply_to structure exists
+      // Verify reply_to structure exists — narrow to create operation for type safety
+      if (replyEvent.commit.operation !== "create") throw new Error("expected create");
       const record = replyEvent.commit.record as {
         reply?: { parent: { uri: string; cid: string }; root: { uri: string; cid: string } };
       };
@@ -211,6 +214,9 @@ describe("shouldAcceptEvent", () => {
 
       // Verify shouldAcceptEvent passes through all required event fields
       expect(shouldAcceptEvent(event, watchedDids, agentDid)).toBe(true);
+
+      // Narrow to create operation for type safety
+      if (event.commit.operation !== "create") throw new Error("expected create");
 
       // Construct expected metadata as the adapter would
       const expectedMetadata = {

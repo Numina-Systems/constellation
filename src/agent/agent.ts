@@ -8,12 +8,27 @@
 
 // UUID generation is built-in to Bun via crypto
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
-import type { Agent, AgentDependencies, ConversationMessage } from './types.ts';
+import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
 const COMPRESSION_KEEP_RECENT = 5; // Always keep the most recent N messages
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
 const DEFAULT_MAX_TOKENS = 4096; // Default token limit per request
+
+/**
+ * Format an external event as a structured user message with metadata header.
+ * Pure function for testability.
+ */
+function formatExternalEvent(event: ExternalEvent): string {
+  const header = `[External Event: ${event.source}]`;
+  const from = event.metadata['handle'] ? `From: @${event.metadata['handle']} (${event.metadata['did']})` : '';
+  const post = event.metadata['uri'] ? `Post: ${event.metadata['uri']}` : '';
+  const replyTo = event.metadata['reply_to'] ? `Reply to: ${event.metadata['reply_to']}` : '';
+  const time = `Time: ${event.timestamp.toISOString()}`;
+
+  const parts = [header, from, post, replyTo, time].filter(Boolean).concat('', event.content);
+  return parts.join('\n');
+}
 
 /**
  * Create an agent instance.
@@ -181,8 +196,14 @@ export function createAgent(
     return loadConversationHistory(id);
   }
 
+  async function processEvent(event: ExternalEvent): Promise<string> {
+    const formattedMessage = formatExternalEvent(event);
+    return processMessage(formattedMessage);
+  }
+
   return {
     processMessage,
+    processEvent,
     getConversationHistory,
     conversationId: id,
   };

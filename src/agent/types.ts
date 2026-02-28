@@ -30,6 +30,13 @@ export type ConversationMessage = {
   created_at: Date;
 };
 
+export type ExternalEvent = {
+  readonly source: string;
+  readonly content: string;
+  readonly metadata: Record<string, unknown>;
+  readonly timestamp: Date;
+};
+
 export type AgentDependencies = {
   model: ModelProvider;
   memory: MemoryManager;
@@ -41,6 +48,7 @@ export type AgentDependencies = {
 
 export type Agent = {
   processMessage(userMessage: string): Promise<string>;
+  processEvent(event: ExternalEvent): Promise<string>;
   getConversationHistory(): Promise<Array<ConversationMessage>>;
   conversationId: string;
 };

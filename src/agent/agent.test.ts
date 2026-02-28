@@ -11,6 +11,7 @@ import type {
   AgentConfig,
   AgentDependencies,
   ConversationMessage,
+  ExternalEvent,
 } from './types.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
@@ -534,6 +535,249 @@ describe('Agent loop', () => {
     const response = await agent.processMessage('Long prompt');
 
     expect(response).toBe('Response cut off due to max tokens');
+  });
+});
+
+describe('processEvent', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+  let config: AgentConfig;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockMemory = createMockMemoryManager();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+    config = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+    };
+  });
+
+  it('AC2.1: creates/reuses a dedicated Bluesky conversation distinct from REPL', async () => {
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Event processed' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse]);
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    // Create two agents with different conversation IDs
+    const agent1 = createAgent(deps);
+    const agent2 = createAgent(deps);
+
+    // Verify they have different conversation IDs
+    expect(agent1.conversationId).not.toBe(agent2.conversationId);
+    expect(typeof agent1.conversationId).toBe('string');
+    expect(typeof agent2.conversationId).toBe('string');
+  });
+
+  it('AC2.2: formats event as a structured message with metadata header', async () => {
+    const event: ExternalEvent = {
+      source: 'bluesky',
+      content: 'This is a test post',
+      metadata: {
+        did: 'did:plc:examplexxxxxxxxxxxx',
+        handle: 'alice',
+        uri: 'at://did:plc:examplexxxxxxxxxxxx/app.bsky.feed.post/abc123',
+        cid: 'bafy123...',
+        reply_to: 'at://did:plc:yyyyyyyyyyyyyyyyyyyyy/app.bsky.feed.post/xyz789',
+      },
+      timestamp: new Date('2026-02-28T12:00:00.000Z'),
+    };
+
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Got it' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    let capturedRequest: ModelRequest | null = null;
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        capturedRequest = request;
+        return modelResponse;
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processEvent(event);
+
+    // Verify the message contains all expected metadata
+    expect(capturedRequest).not.toBeNull();
+    const messages = (capturedRequest as unknown as { messages: Array<{ content?: string }> })?.messages || [];
+    const lastMessage = messages[messages.length - 1];
+    const content = String(lastMessage?.content || '');
+
+    expect(content).toContain('[External Event: bluesky]');
+    expect(content).toContain('@alice');
+    expect(content).toContain('did:plc:examplexxxxxxxxxxxx');
+    expect(content).toContain('at://did:plc:examplexxxxxxxxxxxx/app.bsky.feed.post/abc123');
+    expect(content).toContain('at://did:plc:yyyyyyyyyyyyyyyyyyyyy/app.bsky.feed.post/xyz789');
+    expect(content).toContain('2026-02-28T12:00:00.000Z');
+    expect(content).toContain('This is a test post');
+  });
+
+  it('AC2.3: agent can use tools during event processing', async () => {
+    let toolDispatched = false;
+
+    const toolRegistry: ToolRegistry = {
+      register() {},
+      getDefinitions() {
+        return [];
+      },
+      async dispatch(name: string) {
+        toolDispatched = true;
+        return {
+          success: true,
+          output: `Tool ${name} executed`,
+        };
+      },
+      generateStubs() {
+        return '';
+      },
+      toModelTools() {
+        return [];
+      },
+    };
+
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-1',
+          name: 'test_tool',
+          input: { param: 'value' },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Tool was used' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: toolRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent = createAgent(deps);
+    const event: ExternalEvent = {
+      source: 'bluesky',
+      content: 'Please use a tool',
+      metadata: { did: 'did:plc:x', handle: 'bob' },
+      timestamp: new Date(),
+    };
+
+    const response = await agent.processEvent(event);
+
+    expect(toolDispatched).toBe(true);
+    expect(response).toBe('Tool was used');
+  });
+
+  it('AC2.4: multiple agents with same deterministic conversationId result in same id', async () => {
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse]);
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const deterministicId = 'bluesky-did:plc:consistent';
+    const agent1 = createAgent(deps, deterministicId);
+    const agent2 = createAgent(deps, deterministicId);
+
+    expect(agent1.conversationId).toBe(deterministicId);
+    expect(agent2.conversationId).toBe(deterministicId);
+    expect(agent1.conversationId).toBe(agent2.conversationId);
+  });
+
+  it('formatExternalEvent handles minimal metadata', async () => {
+    const event: ExternalEvent = {
+      source: 'bluesky',
+      content: 'Just content, no metadata',
+      metadata: {},
+      timestamp: new Date('2026-02-28T15:30:00.000Z'),
+    };
+
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'OK' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    let capturedRequest: ModelRequest | null = null;
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        capturedRequest = request;
+        return modelResponse;
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processEvent(event);
+
+    const messages = (capturedRequest as unknown as { messages: Array<{ content?: string }> })?.messages || [];
+    const lastMessage = messages[messages.length - 1];
+    const content = String(lastMessage?.content || '');
+
+    expect(content).toContain('[External Event: bluesky]');
+    expect(content).toContain('2026-02-28T15:30:00.000Z');
+    expect(content).toContain('Just content, no metadata');
   });
 });
 

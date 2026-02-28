@@ -19,6 +19,8 @@
     "packageJson": {
       "dependencies": [
         "npm:@anthropic-ai/sdk@0.39",
+        "npm:@atcute/jetstream@^1.1.2",
+        "npm:@atproto/api@0.19",
         "npm:@iarna/toml@^2.2.5",
         "npm:@types/bun@^1.3.0",
         "npm:@types/pg@^8.11.0",

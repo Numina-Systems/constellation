@@ -20,6 +20,7 @@ import type { Interface as ReadlineInterface } from 'readline';
 function createMockAgent(overrides?: Partial<Agent>): Agent {
   return {
     processMessage: mock(async (_message: string) => 'mock response'),
+    processEvent: mock(async () => 'mock response'),
     getConversationHistory: mock(async () => []),
     conversationId: 'test-conv-123',
     ...overrides,

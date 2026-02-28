@@ -20,11 +20,25 @@ export type ExecutionResult = {
 };
 
 /**
+ * Execution context for credential injection into sandbox code.
+ * Contains optional Bluesky credentials that are injected as constants.
+ */
+export type ExecutionContext = {
+  readonly bluesky?: {
+    readonly service: string;
+    readonly accessToken: string;
+    readonly refreshToken: string;
+    readonly did: string;
+    readonly handle: string;
+  };
+};
+
+/**
  * Port interface for code execution runtime.
  * Implementations spawn a Deno subprocess with controlled permissions and execute user code.
  */
 export interface CodeRuntime {
-  execute(code: string, toolStubs: string): Promise<ExecutionResult>;
+  execute(code: string, toolStubs: string, context?: ExecutionContext): Promise<ExecutionResult>;
 }
 
 /**

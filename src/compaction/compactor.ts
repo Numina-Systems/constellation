@@ -304,6 +304,121 @@ export async function getCompactionBatches(
   return batches;
 }
 
+/**
+ * Determine if accumulated summary batches should be re-summarized.
+ * Re-summarization triggers when total batch count exceeds the clip window
+ * plus a small buffer to allow natural accumulation.
+ * Pure function.
+ */
+export function shouldResummarize(
+  batchCount: number,
+  config: CompactionConfig,
+): boolean {
+  const buffer = 2;
+  const threshold = config.clipFirst + config.clipLast + buffer;
+  return batchCount > threshold;
+}
+
+/**
+ * Re-summarize accumulated batches into a single higher-depth batch.
+ * Selects batches that would be omitted by clip-archive (outside the clip window),
+ * groups them, re-summarizes, and replaces them with a single depth+1 batch.
+ * Async function with side effects (memory writes/deletes, LLM calls).
+ */
+export async function resummarizeBatches(
+  batches: ReadonlyArray<{ id: string; batch: SummaryBatch }>,
+  conversationId: string,
+  memory: MemoryManager,
+  model: ModelProvider,
+  modelName: string,
+  config: CompactionConfig,
+  persona: string,
+  template: string,
+): Promise<void> {
+  if (batches.length <= config.clipFirst + config.clipLast) {
+    // Not enough batches to trigger re-summarization
+    return;
+  }
+
+  // Select batches to re-summarize: all except the last clipLast
+  const batchesToResummarize = batches.slice(0, batches.length - config.clipLast);
+
+  if (batchesToResummarize.length === 0) {
+    return;
+  }
+
+  // Concatenate content of all batches to re-summarize
+  const concatenatedContent = batchesToResummarize
+    .map((b) => b.batch.content)
+    .join('\n\n');
+
+  // Calculate new batch metadata
+  const firstBatch = batchesToResummarize[0]?.batch;
+  const lastBatch = batchesToResummarize[batchesToResummarize.length - 1]?.batch;
+  if (!firstBatch || !lastBatch) {
+    return;
+  }
+
+  const maxDepth = Math.max(...batchesToResummarize.map((b) => b.batch.depth));
+  const newDepth = maxDepth + 1;
+  const totalMessageCount = batchesToResummarize.reduce(
+    (sum, b) => sum + b.batch.messageCount,
+    0,
+  );
+
+  // Call summarization model to produce a condensed summary
+  const prompt = interpolatePrompt({
+    template,
+    persona,
+    existingSummary: '',
+    messages: concatenatedContent,
+  });
+
+  const request: ModelRequest = {
+    messages: [
+      {
+        role: 'user',
+        content: prompt,
+      },
+    ],
+    model: modelName,
+    max_tokens: config.maxSummaryTokens,
+    temperature: 0,
+  };
+
+  const response = await model.complete(request);
+  const resummarizedContent = response.content
+    .filter((b): b is TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('');
+
+  // Create new batch with incremented depth
+  const newBatch: SummaryBatch = {
+    content: resummarizedContent,
+    depth: newDepth,
+    startTime: firstBatch.startTime,
+    endTime: lastBatch.endTime,
+    messageCount: totalMessageCount,
+  };
+
+  // Archive the new batch
+  const label = `compaction-batch-${conversationId}-${newBatch.endTime.toISOString()}`;
+  const metadataHeader = `[depth:${newBatch.depth}|start:${newBatch.startTime.toISOString()}|end:${newBatch.endTime.toISOString()}|count:${newBatch.messageCount}]`;
+  const contentWithMetadata = `${metadataHeader}\n${newBatch.content}`;
+
+  await memory.write(
+    label,
+    contentWithMetadata,
+    'archival',
+    'Re-summarized during context compaction',
+  );
+
+  // Delete the source batches from memory
+  for (const { id } of batchesToResummarize) {
+    await memory.deleteBlock(id);
+  }
+}
+
 export function createCompactor(
   options: CreateCompactorOptions,
 ): Compactor {
@@ -428,21 +543,39 @@ export function createCompactor(
         await archiveBatch(batch, conversationId);
       }
 
-      // 7. Delete old messages from database
+      // 7. Check if re-summarization is needed and perform it
+      const allBatches = await getCompactionBatches(memory, conversationId);
+      if (shouldResummarize(allBatches.length, config)) {
+        await resummarizeBatches(
+          allBatches,
+          conversationId,
+          memory,
+          model,
+          modelName,
+          config,
+          persona,
+          template,
+        );
+      }
+
+      // 8. Rebuild batch list after potential re-summarization
+      const finalBatches = await getCompactionBatches(memory, conversationId);
+
+      // 9. Delete old messages from database
       const idsToDelete = toCompress.map((m) => m.id);
       await persistence.query(
         'DELETE FROM messages WHERE id = ANY($1)',
         [idsToDelete],
       );
 
-      // 8. Build clip-archive content
+      // 10. Build clip-archive content
       const clipArchiveContent = buildClipArchive(
-        batches,
+        finalBatches.map((b) => b.batch),
         config,
         toCompress.length,
       );
 
-      // 9. Insert clip-archive as a system message
+      // 11. Insert clip-archive as a system message
       const clipArchiveId = randomUUID();
       const now = new Date();
       await persistence.query(
@@ -450,7 +583,7 @@ export function createCompactor(
         [clipArchiveId, conversationId, 'system', clipArchiveContent, now],
       );
 
-      // 10. Build the clip-archive ConversationMessage object
+      // 12. Build the clip-archive ConversationMessage object
       const clipArchiveMessage: ConversationMessage = {
         id: clipArchiveId,
         conversation_id: conversationId,
@@ -459,7 +592,7 @@ export function createCompactor(
         created_at: now,
       };
 
-      // 11. Calculate token estimates
+      // 13. Calculate token estimates
       const tokensBefore = estimateTokens(
         history.map((m) => m.content).join(''),
       );
@@ -468,7 +601,7 @@ export function createCompactor(
         compressedHistory.map((m) => m.content).join(''),
       );
 
-      // 12. Return result
+      // 14. Return result
       return {
         history: compressedHistory,
         batchesCreated: batches.length,

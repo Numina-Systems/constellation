@@ -38,6 +38,9 @@ function createMockMemory(overrides?: Partial<MemoryManager>): MemoryManager {
     read: mock(async () => []),
     write: mock(async () => successResult),
     list: mock(async () => []),
+    deleteBlock: mock(async () => {
+      // no-op for testing
+    }),
     getPendingMutations: mock(async () => []),
     approveMutation: mock(async () => ({} as MemoryBlock)),
     rejectMutation: mock(async () => ({} as PendingMutation)),

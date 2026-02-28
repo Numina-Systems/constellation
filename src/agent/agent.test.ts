@@ -117,6 +117,9 @@ function createMockMemoryManager(): MemoryManager {
     async list() {
       return [];
     },
+    async deleteBlock() {
+      // no-op for testing
+    },
     async getPendingMutations() {
       return [];
     },

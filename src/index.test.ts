@@ -7,11 +7,12 @@
  */
 
 import { describe, it, expect, mock } from 'bun:test';
-import { processPendingMutations, performShutdown, createInteractionLoop } from '@/index';
+import { processPendingMutations, performShutdown, createInteractionLoop, processEventQueue } from '@/index';
 import type { Agent } from '@/agent/types';
 import type { MemoryManager } from '@/memory/manager';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { PendingMutation, MemoryBlock, MemoryWriteResult } from '@/memory/types';
+import type { IncomingMessage } from '@/extensions/data-source';
 import type { Interface as ReadlineInterface } from 'readline';
 
 /**
@@ -307,6 +308,223 @@ describe('interaction loop', () => {
       expect(memoryNoMutations.getPendingMutations).toHaveBeenCalled();
       const response = await agent.processMessage('message');
       expect(response).toBe('response');
+    });
+  });
+
+  describe('AC6.5: processEventQueue error handling', () => {
+    it('processes single event successfully', async () => {
+      const { createEventQueue } = await import('@/extensions/bluesky');
+      const agent = createMockAgent({
+        processEvent: mock(async () => 'event processed'),
+      });
+
+      const event: IncomingMessage = {
+        source: 'bluesky',
+        content: 'test post',
+        metadata: { uri: 'at://did:key:xyz/app.bsky.feed.post/abc123' },
+        timestamp: new Date(),
+      };
+
+      const queue = createEventQueue(10);
+      queue.push(event);
+      await processEventQueue(queue, agent);
+
+      expect(agent.processEvent).toHaveBeenCalledWith(event);
+      expect(queue.length).toBe(0);
+    });
+
+    it('catches errors and continues processing subsequent events', async () => {
+      const { createEventQueue } = await import('@/extensions/bluesky');
+      const errorEvent: IncomingMessage = {
+        source: 'bluesky',
+        content: 'error post',
+        metadata: {},
+        timestamp: new Date(),
+      };
+
+      const goodEvent: IncomingMessage = {
+        source: 'bluesky',
+        content: 'good post',
+        metadata: {},
+        timestamp: new Date(),
+      };
+
+      const agent = createMockAgent({
+        processEvent: mock(async (event: any) => {
+          if (event === errorEvent) {
+            throw new Error('processing failed');
+          }
+          return 'ok';
+        }),
+      });
+
+      const queue = createEventQueue(10);
+      queue.push(errorEvent);
+      queue.push(goodEvent);
+      await processEventQueue(queue, agent);
+
+      expect(agent.processEvent).toHaveBeenCalledTimes(2);
+      expect(agent.processEvent).toHaveBeenNthCalledWith(1, errorEvent);
+      expect(agent.processEvent).toHaveBeenNthCalledWith(2, goodEvent);
+      expect(queue.length).toBe(0);
+    });
+
+    it('processes multiple events from queue', async () => {
+      const { createEventQueue } = await import('@/extensions/bluesky');
+      const events: Array<IncomingMessage> = [
+        {
+          source: 'bluesky',
+          content: 'post 1',
+          metadata: {},
+          timestamp: new Date(),
+        },
+        {
+          source: 'bluesky',
+          content: 'post 2',
+          metadata: {},
+          timestamp: new Date(),
+        },
+        {
+          source: 'bluesky',
+          content: 'post 3',
+          metadata: {},
+          timestamp: new Date(),
+        },
+      ];
+
+      const agent = createMockAgent({
+        processEvent: mock(async () => 'processed'),
+      });
+
+      const queue = createEventQueue(10);
+      for (const event of events) {
+        queue.push(event);
+      }
+      await processEventQueue(queue, agent);
+
+      expect(agent.processEvent).toHaveBeenCalledTimes(3);
+      events.forEach((event, index) => {
+        expect(agent.processEvent).toHaveBeenNthCalledWith(index + 1, event);
+      });
+      expect(queue.length).toBe(0);
+    });
+
+    it('drains queue completely even with intermittent errors', async () => {
+      const { createEventQueue } = await import('@/extensions/bluesky');
+      const events: Array<IncomingMessage> = [
+        {
+          source: 'bluesky',
+          content: 'post 1',
+          metadata: {},
+          timestamp: new Date(),
+        },
+        {
+          source: 'bluesky',
+          content: 'post 2 (will error)',
+          metadata: {},
+          timestamp: new Date(),
+        },
+        {
+          source: 'bluesky',
+          content: 'post 3',
+          metadata: {},
+          timestamp: new Date(),
+        },
+        {
+          source: 'bluesky',
+          content: 'post 4 (will error)',
+          metadata: {},
+          timestamp: new Date(),
+        },
+        {
+          source: 'bluesky',
+          content: 'post 5',
+          metadata: {},
+          timestamp: new Date(),
+        },
+      ];
+
+      const agent = createMockAgent({
+        processEvent: mock(async (event: any) => {
+          if ((event as any).content.includes('will error')) {
+            throw new Error('deliberate error');
+          }
+          return 'ok';
+        }),
+      });
+
+      const queue = createEventQueue(10);
+      for (const event of events) {
+        queue.push(event);
+      }
+      await processEventQueue(queue, agent);
+
+      expect(agent.processEvent).toHaveBeenCalledTimes(5);
+      expect(queue.length).toBe(0);
+    });
+
+    it('logs errors to console without re-throwing', async () => {
+      const { createEventQueue } = await import('@/extensions/bluesky');
+      const consoleMock = mock((_msg: string) => {});
+      const originalError = console.error;
+      console.error = consoleMock;
+
+      const errorEvent: IncomingMessage = {
+        source: 'bluesky',
+        content: 'error',
+        metadata: {},
+        timestamp: new Date(),
+      };
+
+      const agent = createMockAgent({
+        processEvent: mock(async () => {
+          throw new Error('test error message');
+        }),
+      });
+
+      const queue = createEventQueue(10);
+      queue.push(errorEvent);
+
+      try {
+        await processEventQueue(queue, agent);
+        expect(consoleMock).toHaveBeenCalledWith(
+          expect.stringContaining('bluesky processEvent error'),
+        );
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    it('handles non-Error exceptions gracefully', async () => {
+      const { createEventQueue } = await import('@/extensions/bluesky');
+      const consoleMock = mock((_msg: string) => {});
+      const originalError = console.error;
+      console.error = consoleMock;
+
+      const errorEvent: IncomingMessage = {
+        source: 'bluesky',
+        content: 'error',
+        metadata: {},
+        timestamp: new Date(),
+      };
+
+      const agent = createMockAgent({
+        processEvent: mock(async () => {
+          throw 'raw string error';
+        }),
+      });
+
+      const queue = createEventQueue(10);
+      queue.push(errorEvent);
+
+      try {
+        await processEventQueue(queue, agent);
+        expect(consoleMock).toHaveBeenCalledWith(
+          expect.stringContaining('bluesky processEvent error'),
+        );
+      } finally {
+        console.error = originalError;
+      }
     });
   });
 });

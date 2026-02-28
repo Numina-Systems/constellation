@@ -92,6 +92,9 @@ export function createBlueskySource(
 
             const commit = commitEvent.commit;
 
+            // Redundant check: shouldAcceptEvent already verifies commit.operation === "create".
+            // Kept as defensive programming—if shouldAcceptEvent logic changes, this guards
+            // the message construction below. Cost is negligible (one comparison per event).
             if (commit.operation !== "create") {
               continue;
             }

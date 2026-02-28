@@ -6,7 +6,7 @@ import type { MemoryBlock } from "../../memory/types.ts";
 
 // Mock implementations
 function createMockMemoryStore(): MemoryStore {
-  const blocks: MemoryBlock[] = [];
+  const blocks: Array<MemoryBlock> = [];
 
   return {
     getBlock: async () => null,
@@ -52,7 +52,7 @@ describe("seedBlueskyTemplates", () => {
     const store = createMockMemoryStore();
     const embedding = createMockEmbeddingProvider();
 
-    const calls: unknown[] = [];
+    const calls: Array<unknown> = [];
     store.createBlock = async (block) => {
       calls.push(block);
       return {

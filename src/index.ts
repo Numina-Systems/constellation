@@ -28,6 +28,7 @@ import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
 import type { ExecutionContext } from '@/runtime/types';
 import type { IncomingMessage } from '@/extensions/data-source';
+import type { EventQueue } from '@/extensions/bluesky';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
@@ -108,6 +109,29 @@ function promptForLine(rl: readline.Interface, prompt: string): Promise<string> 
       resolve(answer.trim());
     });
   });
+}
+
+/**
+ * Process events from a queue, catching errors so one failed event doesn't crash the loop.
+ * Extracted for testability (AC6.5: processEvent errors don't crash listener).
+ * Caller provides the event queue and agent; this function drains the queue
+ * and ensures errors are logged but don't prevent subsequent events from processing.
+ */
+export async function processEventQueue(
+  eventQueue: EventQueue,
+  agent: Agent,
+): Promise<void> {
+  let event = eventQueue.shift();
+  while (event) {
+    try {
+      await agent.processEvent(event);
+    } catch (error) {
+      // AC6.5: Log error but don't crash
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`bluesky processEvent error: ${errorMsg}`);
+    }
+    event = eventQueue.shift();
+  }
 }
 
 /**
@@ -345,23 +369,21 @@ async function main(): Promise<void> {
         processing = true;
 
         try {
-          let event = eventQueue.shift();
-          while (event) {
-            try {
-              await blueskyAgent.processEvent(event);
-            } catch (error) {
-              // AC6.5: Log error but don't crash
-              const errorMsg = error instanceof Error ? error.message : String(error);
-              console.error(`bluesky processEvent error: ${errorMsg}`);
-            }
-            event = eventQueue.shift();
-          }
+          // AC6.4: Drain the queue in a loop. Events that arrive while we're processing
+          // the current batch will be processed in the same call (not dropped). The queue
+          // is bounded to prevent unbounded growth. Subsequent calls to processNextEvent()
+          // are no-ops (guarded by the processing flag) until this one completes.
+          await processEventQueue(eventQueue, blueskyAgent);
         } finally {
           processing = false;
         }
       }
 
       blueskySource.onMessage((message: IncomingMessage) => {
+        // IncomingMessage (from DataSource) and ExternalEvent (agent input type) are
+        // structurally identical: { source, content, metadata, timestamp }. Both are
+        // passed as-is to processEvent without conversion; TypeScript confirms structural
+        // compatibility across module boundaries.
         eventQueue.push(message);
         processNextEvent().catch((error) => {
           console.error('bluesky event processing error:', error);

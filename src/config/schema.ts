@@ -36,12 +36,36 @@ const RuntimeConfigSchema = z.object({
   allowed_run: z.array(z.string()).default([]),
 });
 
+const BlueskyConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    handle: z.string().optional(),
+    app_password: z.string().optional(),
+    did: z.string().optional(),
+    watched_dids: z.array(z.string()).default([]),
+    jetstream_url: z.string().url().default("wss://jetstream2.us-east.bsky.network/subscribe"),
+  })
+  .superRefine((data, ctx) => {
+    if (data.enabled) {
+      if (!data.handle) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "handle is required when bluesky is enabled", path: ["handle"] });
+      }
+      if (!data.app_password) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "app_password is required when bluesky is enabled", path: ["app_password"] });
+      }
+      if (!data.did) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "did is required when bluesky is enabled", path: ["did"] });
+      }
+    }
+  });
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
   embedding: EmbeddingConfigSchema,
   database: DatabaseConfigSchema,
   runtime: RuntimeConfigSchema.default({}),
+  bluesky: BlueskyConfigSchema.default({}),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -50,5 +74,6 @@ export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema };

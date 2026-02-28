@@ -24,3 +24,14 @@ url = "postgresql://constellation:constellation@localhost:5432/constellation"
 [runtime]
 working_dir = "./workspace"
 allowed_hosts = ["api.anthropic.com", "api.moonshot.ai"]
+
+# [summarization]
+# provider = "openai-compat"
+# name = "olmo-3:7b-think"
+# base_url = "http://192.168.1.6:11434/v1"
+# chunk_size = 20
+# keep_recent = 5
+# max_summary_tokens = 1024
+# clip_first = 2
+# clip_last = 2
+# prompt = "Custom summarization prompt with {persona}, {existing_summary}, {messages} placeholders"

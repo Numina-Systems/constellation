@@ -298,7 +298,19 @@ describe('Agent loop', () => {
 
   it('AC1.12: compresses context when budget exceeded', async () => {
     // Verify that when history exceeds the context budget, the agent calls
-    // the model to summarize old messages.
+    // compactor.compress() to summarize old messages.
+
+    // Create a mock compactor with call recording
+    function createMockCompactor(result: CompactionResult): Compactor & { calls: Array<{ history: ReadonlyArray<ConversationMessage>; conversationId: string }> } {
+      const calls: Array<{ history: ReadonlyArray<ConversationMessage>; conversationId: string }> = [];
+      return {
+        calls,
+        async compress(history, conversationId) {
+          calls.push({ history: [...history], conversationId });
+          return result;
+        },
+      };
+    }
 
     const tightPersistence = createMockPersistenceProvider();
     const tightConfig: AgentConfig = {
@@ -306,33 +318,22 @@ describe('Agent loop', () => {
       context_budget: 0.01, // 1% budget (2000 tokens at 200k model window)
     };
 
-    // Track model.complete calls to detect summarization
-    let modelCalls: Array<ModelRequest> = [];
-
-    const mockModel: ModelProvider = {
-      async complete(request: ModelRequest): Promise<ModelResponse> {
-        modelCalls.push(request);
-
-        // Return a summary for summarization requests
-        const isSummarizationRequest = request.system?.includes('summarization');
-        if (isSummarizationRequest) {
-          return {
-            content: [{ type: 'text', text: '[Summary of prior conversation]' }],
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 100, output_tokens: 50 },
-          };
-        }
-
-        return {
-          content: [{ type: 'text', text: 'Response' }],
-          stop_reason: 'end_turn',
-          usage: { input_tokens: 100, output_tokens: 50 },
-        };
+    const mockModel = createMockModelProvider([
+      {
+        content: [{ type: 'text', text: 'Response' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 100, output_tokens: 50 },
       },
-      async *stream() {
-        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-      },
-    };
+    ]);
+
+    // Create a mock compactor that returns compressed history with 2 messages removed
+    const mockCompactor = createMockCompactor({
+      history: [], // After compression, history is reduced
+      batchesCreated: 1,
+      messagesCompressed: 2,
+      tokensEstimateBefore: 2100,
+      tokensEstimateAfter: 800,
+    });
 
     const deps: AgentDependencies = {
       model: mockModel,
@@ -341,6 +342,7 @@ describe('Agent loop', () => {
       runtime: mockRuntime,
       persistence: tightPersistence,
       config: tightConfig,
+      compactor: mockCompactor,
     };
 
     const agent = createAgent(deps);
@@ -348,22 +350,18 @@ describe('Agent loop', () => {
 
     // Send messages to exceed budget: 0.01 * 200000 = 2000 tokens
     await agent.processMessage(largeMsg); // ~1000 total
-    await agent.processMessage(largeMsg); // ~2000 total, at limit
+    await agent.processMessage(largeMsg); // ~2000 total, should trigger compression
+    await agent.processMessage(largeMsg); // Already over budget, should trigger compression again
 
-    modelCalls = []; // Reset to track compression call
-    await agent.processMessage(largeMsg); // Should trigger compression
+    // Verify compression was triggered: compactor.compress() should have been called
+    // at least once when budget exceeded
+    expect(mockCompactor.calls.length).toBeGreaterThanOrEqual(1);
 
-    // Verify compression was triggered: model should receive a summarization prompt
-    const hadSummarizationCall = modelCalls.some(
-      (call) => call.system?.includes('summarization') || call.system?.includes('assistant'),
-    );
-    expect(hadSummarizationCall).toBe(true);
-
-    // Verify that at least one model call included a summarization request
-    const summarizationCalls = modelCalls.filter(
-      (call) => call.system?.includes('summarization') || call.system?.includes('assistant'),
-    );
-    expect(summarizationCalls.length).toBeGreaterThan(0);
+    const firstCall = mockCompactor.calls[0];
+    if (firstCall) {
+      expect(firstCall.conversationId).toBe(agent.conversationId);
+      expect(firstCall.history.length).toBeGreaterThan(0);
+    }
 
     // Verify conversation ID persists
     expect(typeof agent.conversationId).toBe('string');

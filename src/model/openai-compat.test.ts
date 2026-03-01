@@ -1,10 +1,11 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from "bun:test";
-import { createOpenAICompatAdapter, normalizeMessage } from "./openai-compat.js";
+import { createOpenAICompatAdapter, normalizeMessages } from "./openai-compat.js";
 import { ModelError } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
 import type { Message } from "./types.js";
+import type OpenAI from "openai";
 
 describe("createOpenAICompatAdapter", () => {
   describe("initialization", () => {
@@ -25,14 +26,12 @@ describe("createOpenAICompatAdapter", () => {
       expect(() => createOpenAICompatAdapter(config)).not.toThrow();
     });
 
-    it("should accept api_key from environment variable", () => {
-      process.env["OPENAI_API_KEY"] = "sk-test-env-key";
+    it("should succeed without api_key (falls back to 'unused')", () => {
       const config: ModelConfig = {
         provider: "openai-compat",
         name: "gpt-4",
       };
       expect(() => createOpenAICompatAdapter(config)).not.toThrow();
-      delete process.env["OPENAI_API_KEY"];
     });
 
     it("should accept custom baseURL from config", () => {
@@ -263,72 +262,207 @@ describe("createOpenAICompatAdapter", () => {
     });
   });
 
-  describe("system-role message handling", () => {
+  describe("normalizeMessages", () => {
     it("should normalize system-role message with string content", () => {
-      const msg: Message = {
-        role: "system",
-        content: "You are a helpful assistant.",
-      };
+      const msgs: Array<Message> = [
+        { role: "system", content: "You are a helpful assistant." },
+      ];
 
-      const result = normalizeMessage(msg);
+      const result = normalizeMessages(msgs);
 
-      expect(result.role).toBe("system");
-      expect(result.content).toBe("You are a helpful assistant.");
+      expect(result).toHaveLength(1);
+      expect(result[0]!.role).toBe("system");
+      expect(result[0]!.content).toBe("You are a helpful assistant.");
     });
 
     it("should normalize system-role message with content blocks", () => {
-      const msg: Message = {
-        role: "system",
-        content: [
-          { type: "text", text: "You are helpful." },
-          { type: "text", text: "Be concise." },
-        ],
-      };
+      const msgs: Array<Message> = [
+        {
+          role: "system",
+          content: [
+            { type: "text", text: "You are helpful." },
+            { type: "text", text: "Be concise." },
+          ],
+        },
+      ];
 
-      const result = normalizeMessage(msg);
+      const result = normalizeMessages(msgs);
 
-      expect(result.role).toBe("system");
-      expect(result.content).toBe("You are helpful.\nBe concise.");
+      expect(result).toHaveLength(1);
+      expect(result[0]!.role).toBe("system");
+      expect(result[0]!.content).toBe("You are helpful.\nBe concise.");
     });
 
     it("should extract only text blocks from system-role message", () => {
-      const msg: Message = {
-        role: "system",
-        content: [
-          { type: "text", text: "System instruction" },
-          { type: "tool_use", id: "123", name: "test", input: {} },
-          { type: "text", text: "More instructions" },
-        ],
-      };
+      const msgs: Array<Message> = [
+        {
+          role: "system",
+          content: [
+            { type: "text", text: "System instruction" },
+            { type: "tool_use", id: "123", name: "test", input: {} },
+            { type: "text", text: "More instructions" },
+          ],
+        },
+      ];
 
-      const result = normalizeMessage(msg);
+      const result = normalizeMessages(msgs);
 
-      expect(result.role).toBe("system");
-      expect(result.content).toBe("System instruction\nMore instructions");
+      expect(result).toHaveLength(1);
+      expect(result[0]!.role).toBe("system");
+      expect(result[0]!.content).toBe("System instruction\nMore instructions");
     });
 
-    it("should normalize user-role message (backward compatibility)", () => {
-      const msg: Message = {
-        role: "user",
-        content: "Hello",
-      };
+    it("should normalize user-role string message", () => {
+      const result = normalizeMessages([{ role: "user", content: "Hello" }]);
 
-      const result = normalizeMessage(msg);
-
-      expect(result.role).toBe("user");
-      expect(result.content).toBe("Hello");
+      expect(result).toHaveLength(1);
+      expect(result[0]!.role).toBe("user");
+      expect(result[0]!.content).toBe("Hello");
     });
 
-    it("should normalize assistant-role message (backward compatibility)", () => {
-      const msg: Message = {
-        role: "assistant",
-        content: "Hi there",
-      };
+    it("should normalize assistant-role string message", () => {
+      const result = normalizeMessages([{ role: "assistant", content: "Hi there" }]);
 
-      const result = normalizeMessage(msg);
+      expect(result).toHaveLength(1);
+      expect(result[0]!.role).toBe("assistant");
+      expect(result[0]!.content).toBe("Hi there");
+    });
 
-      expect(result.role).toBe("assistant");
-      expect(result.content).toBe("Hi there");
+    it("should convert assistant tool_use blocks to OpenAI tool_calls", () => {
+      const msgs: Array<Message> = [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Let me search that." },
+            {
+              type: "tool_use",
+              id: "call_123",
+              name: "web_search",
+              input: { query: "test" },
+            },
+          ],
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(1);
+      const msg = result[0] as OpenAI.Chat.ChatCompletionAssistantMessageParam;
+      expect(msg.role).toBe("assistant");
+      expect(msg.content).toBe("Let me search that.");
+      expect(msg.tool_calls).toHaveLength(1);
+      expect(msg.tool_calls![0]!.id).toBe("call_123");
+      expect(msg.tool_calls![0]!.function.name).toBe("web_search");
+      expect(msg.tool_calls![0]!.function.arguments).toBe('{"query":"test"}');
+    });
+
+    it("should handle assistant with only tool_use blocks (no text)", () => {
+      const msgs: Array<Message> = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "call_456",
+              name: "memory_search",
+              input: { query: "bluesky" },
+            },
+          ],
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(1);
+      const msg = result[0] as OpenAI.Chat.ChatCompletionAssistantMessageParam;
+      expect(msg.role).toBe("assistant");
+      expect(msg.content).toBeNull();
+      expect(msg.tool_calls).toHaveLength(1);
+    });
+
+    it("should convert user tool_result blocks to OpenAI tool role messages", () => {
+      const msgs: Array<Message> = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "call_123",
+              content: "Search returned 5 results",
+            },
+          ],
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(1);
+      const msg = result[0] as OpenAI.Chat.ChatCompletionToolMessageParam;
+      expect(msg.role).toBe("tool");
+      expect(msg.tool_call_id).toBe("call_123");
+      expect(msg.content).toBe("Search returned 5 results");
+    });
+
+    it("should expand multiple tool_result blocks into separate messages", () => {
+      const msgs: Array<Message> = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "call_1",
+              content: "Result 1",
+            },
+            {
+              type: "tool_result",
+              tool_use_id: "call_2",
+              content: "Result 2",
+            },
+          ],
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(2);
+      expect((result[0] as OpenAI.Chat.ChatCompletionToolMessageParam).tool_call_id).toBe("call_1");
+      expect((result[1] as OpenAI.Chat.ChatCompletionToolMessageParam).tool_call_id).toBe("call_2");
+    });
+
+    it("should handle a full tool-use round trip", () => {
+      const msgs: Array<Message> = [
+        { role: "user", content: "Search for bluesky docs" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "call_abc",
+              name: "web_search",
+              input: { query: "bluesky atproto docs" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "call_abc",
+              content: "Found 3 results",
+            },
+          ],
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(3);
+      expect(result[0]!.role).toBe("user");
+      expect(result[1]!.role).toBe("assistant");
+      expect(result[2]!.role).toBe("tool");
+      expect((result[1] as OpenAI.Chat.ChatCompletionAssistantMessageParam).tool_calls).toHaveLength(1);
+      expect((result[2] as OpenAI.Chat.ChatCompletionToolMessageParam).tool_call_id).toBe("call_abc");
     });
   });
 });

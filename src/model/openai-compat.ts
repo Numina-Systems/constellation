@@ -10,6 +10,8 @@ import type {
   ModelResponse,
   StreamEvent,
   TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
   ToolDefinition,
   UsageStats,
 } from "./types.js";
@@ -101,50 +103,71 @@ function normalizeUsage(usage: OpenAI.Completions.CompletionUsage): UsageStats {
   };
 }
 
-export function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam {
-  if (msg.role === "system") {
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : msg.content
-          .filter((b): b is TextBlock => b.type === "text")
-          .map((b) => b.text)
-          .join("\n");
-    return {
-      role: "system",
-      content: text,
-    };
-  }
+export function normalizeMessages(msgs: ReadonlyArray<Message>): Array<OpenAI.Chat.ChatCompletionMessageParam> {
+  const result: Array<OpenAI.Chat.ChatCompletionMessageParam> = [];
 
-  if (typeof msg.content === "string") {
-    return {
-      role: msg.role,
-      content: msg.content,
-    };
-  }
+  for (const msg of msgs) {
+    if (msg.role === "system") {
+      const text = typeof msg.content === "string"
+        ? msg.content
+        : msg.content
+            .filter((b): b is TextBlock => b.type === "text")
+            .map((b) => b.text)
+            .join("\n");
+      result.push({ role: "system", content: text });
+      continue;
+    }
 
-  const contentArray: Array<OpenAI.Chat.ChatCompletionContentPart> = [];
+    if (typeof msg.content === "string") {
+      result.push({ role: msg.role, content: msg.content });
+      continue;
+    }
 
-  for (const block of msg.content) {
-    if (block.type === "text") {
-      contentArray.push({
-        type: "text",
-        text: block.text,
+    const textBlocks = msg.content.filter((b): b is TextBlock => b.type === "text");
+    const toolUseBlocks = msg.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+    const toolResultBlocks = msg.content.filter((b): b is ToolResultBlock => b.type === "tool_result");
+
+    if (msg.role === "assistant") {
+      const textContent = textBlocks.map((b) => b.text).join("") || null;
+      const toolCalls: Array<OpenAI.Chat.ChatCompletionMessageToolCall> = toolUseBlocks.map((b) => ({
+        id: b.id,
+        type: "function" as const,
+        function: {
+          name: b.name,
+          arguments: JSON.stringify(b.input),
+        },
+      }));
+
+      result.push({
+        role: "assistant",
+        content: textContent,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
       });
-    } else if (block.type === "tool_result") {
-      // Tool results are passed as separate message with tool_results role
-      // This is a limitation: OpenAI format separates tool results
-      // For now, we'll serialize it as text
-      contentArray.push({
-        type: "text",
-        text: `Tool result: ${typeof block.content === "string" ? block.content : JSON.stringify(block.content)}`,
-      });
+    } else if (msg.role === "user" && toolResultBlocks.length > 0) {
+      for (const block of toolResultBlocks) {
+        const content = typeof block.content === "string"
+          ? block.content
+          : JSON.stringify(block.content);
+        result.push({
+          role: "tool",
+          tool_call_id: block.tool_use_id,
+          content,
+        });
+      }
+    } else {
+      const contentParts: Array<OpenAI.Chat.ChatCompletionContentPart> = textBlocks.map((b) => ({
+        type: "text" as const,
+        text: b.text,
+      }));
+      if (contentParts.length > 0) {
+        result.push({ role: "user", content: contentParts });
+      } else {
+        result.push({ role: "user", content: "" });
+      }
     }
   }
 
-  return {
-    role: msg.role,
-    content: contentArray,
-  } as OpenAI.Chat.ChatCompletionMessageParam;
+  return result;
 }
 
 
@@ -169,7 +192,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
             });
           }
 
-          messages.push(...request.messages.map(normalizeMessage));
+          messages.push(...normalizeMessages(request.messages));
 
           return await client.chat.completions.create({
             model: request.model,
@@ -233,7 +256,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
             });
           }
 
-          messages.push(...request.messages.map(normalizeMessage));
+          messages.push(...normalizeMessages(request.messages));
 
           return await client.chat.completions.create({
             model: request.model,

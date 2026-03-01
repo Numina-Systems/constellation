@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'crypto';
 import type { ConversationMessage } from '../agent/types.js';
-import type { ModelProvider, ModelRequest, TextBlock } from '../model/types.js';
+import type { ModelProvider, TextBlock } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider } from '../persistence/types.js';
 import type {
@@ -19,8 +19,8 @@ import type {
   Compactor,
 } from './types.js';
 import {
-  DEFAULT_SUMMARIZATION_PROMPT,
-  interpolatePrompt,
+  buildSummarizationRequest,
+  buildResummarizationRequest,
 } from './prompt.js';
 
 export type CreateCompactorOptions = {
@@ -172,13 +172,6 @@ export function chunkMessages(
  * Convert messages to a string format for the summarization prompt.
  * Format: "role: content\n" for each message.
  */
-export function formatMessagesForPrompt(
-  messages: ReadonlyArray<ConversationMessage>,
-): string {
-  return messages
-    .map((msg) => `${msg.role}: ${msg.content}`)
-    .join('\n');
-}
 
 /**
  * Estimate tokens using the heuristic: 1 token ≈ 4 characters.
@@ -334,8 +327,7 @@ export type ResummarizeBatchesOptions = {
   readonly model: ModelProvider;
   readonly modelName: string;
   readonly config: CompactionConfig;
-  readonly persona: string;
-  readonly template: string;
+  readonly systemPrompt: string | null;
 };
 
 /**
@@ -345,7 +337,7 @@ export type ResummarizeBatchesOptions = {
  * Async function with side effects (memory writes/deletes, LLM calls).
  */
 export async function resummarizeBatches(options: ResummarizeBatchesOptions): Promise<void> {
-  const { batches, conversationId, memory, model, modelName, config, persona, template } = options;
+  const { batches, conversationId, memory, model, modelName, config, systemPrompt } = options;
   if (batches.length <= config.clipFirst + config.clipLast) {
     // Not enough batches to trigger re-summarization
     return;
@@ -357,11 +349,6 @@ export async function resummarizeBatches(options: ResummarizeBatchesOptions): Pr
   if (batchesToResummarize.length === 0) {
     return;
   }
-
-  // Concatenate content of all batches to re-summarize
-  const concatenatedContent = batchesToResummarize
-    .map((b) => b.batch.content)
-    .join('\n\n');
 
   // Calculate new batch metadata
   const firstBatch = batchesToResummarize[0]?.batch;
@@ -378,24 +365,14 @@ export async function resummarizeBatches(options: ResummarizeBatchesOptions): Pr
   );
 
   // Call summarization model to produce a condensed summary
-  const prompt = interpolatePrompt({
-    template,
-    persona,
-    existingSummary: '',
-    messages: concatenatedContent,
-  });
+  const batchContents = batchesToResummarize.map((b) => b.batch.content);
 
-  const request: ModelRequest = {
-    messages: [
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ],
-    model: modelName,
-    max_tokens: config.maxSummaryTokens,
-    temperature: 0,
-  };
+  const request = buildResummarizationRequest({
+    systemPrompt,
+    batchContents,
+    modelName,
+    maxTokens: config.maxSummaryTokens,
+  });
 
   const response = await model.complete(request);
   const resummarizedContent = response.content
@@ -434,33 +411,20 @@ export async function resummarizeBatches(options: ResummarizeBatchesOptions): Pr
 export function createCompactor(
   options: CreateCompactorOptions,
 ): Compactor {
-  const { model, memory, persistence, config, modelName, getPersona } = options;
+  const { model, memory, persistence, config, modelName } = options;
 
   async function summarizeChunk(
     chunk: ReadonlyArray<ConversationMessage>,
     existingSummary: string,
-    persona: string,
-    template: string,
+    systemPrompt: string | null,
   ): Promise<string> {
-    const messagesText = formatMessagesForPrompt(chunk);
-    const prompt = interpolatePrompt({
-      template,
-      persona,
-      existingSummary,
-      messages: messagesText,
+    const request = buildSummarizationRequest({
+      systemPrompt,
+      previousSummary: existingSummary || null,
+      messages: chunk,
+      modelName,
+      maxTokens: config.maxSummaryTokens,
     });
-
-    const request: ModelRequest = {
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      model: modelName,
-      max_tokens: config.maxSummaryTokens,
-      temperature: 0,
-    };
 
     const response = await model.complete(request);
     const summary = response.content
@@ -515,9 +479,8 @@ export function createCompactor(
         };
       }
 
-      // 3. Get persona for prompts
-      const persona = await getPersona();
-      const template = config.prompt || DEFAULT_SUMMARIZATION_PROMPT;
+      // 3. Get system prompt for summarization
+      const systemPrompt = config.prompt;
 
       // 4. Chunk messages
       const chunks = chunkMessages(toCompress, config.chunkSize);
@@ -530,8 +493,7 @@ export function createCompactor(
         const summaryText = await summarizeChunk(
           chunk,
           accumulatedSummary,
-          persona,
-          template,
+          systemPrompt,
         );
         accumulatedSummary = summaryText;
 
@@ -565,8 +527,7 @@ export function createCompactor(
           model,
           modelName,
           config,
-          persona,
-          template,
+          systemPrompt,
         });
       }
 

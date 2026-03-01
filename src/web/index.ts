@@ -7,3 +7,4 @@ export { createBraveAdapter } from "./providers/brave.ts";
 export { createTavilyAdapter } from "./providers/tavily.ts";
 export { createSearXNGAdapter } from "./providers/searxng.ts";
 export { createDuckDuckGoAdapter } from "./providers/duckduckgo.ts";
+export { createSearchChain } from "./chain.ts";

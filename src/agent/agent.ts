@@ -12,7 +12,7 @@ import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } fro
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
-const DEFAULT_MAX_TOKENS = 4096; // Default token limit per request
+const DEFAULT_MAX_TOKENS = 24576; // Default token limit per request
 
 /**
  * Format an external event as a structured user message with metadata header.

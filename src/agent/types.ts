@@ -18,7 +18,7 @@ export type AgentConfig = {
   context_budget: number;
   model_max_tokens?: number; // Model's context window size (default: 200000 for Claude 3 Sonnet)
   model_name?: string; // LLM model name (default: claude-3-sonnet-20250219)
-  max_tokens?: number; // Token limit per request (default: 4096)
+  max_tokens?: number; // Token limit per request (default: 24576)
 };
 
 export type ConversationMessage = {

@@ -174,7 +174,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           const systemParam = buildAnthropicSystemParam(request.system, request.messages);
           const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
 
-          return await client.messages.create({
+          const stream = client.messages.stream({
             model: request.model,
             max_tokens: request.max_tokens,
             system: systemParam,
@@ -182,6 +182,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             temperature: request.temperature,
             messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
           });
+          return await stream.finalMessage();
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(

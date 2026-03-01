@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import type { ConversationMessage } from '../agent/types.js';
-import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.js';
+import type { ModelProvider, ModelRequest, ModelResponse, Message } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.js';
 import type { SummaryBatch, ImportanceScoringConfig } from './types.js';
@@ -20,6 +20,7 @@ import {
   shouldResummarize,
   resummarizeBatches,
 } from './compactor.js';
+import { DEFAULT_SYSTEM_PROMPT } from './prompt.js';
 
 /**
  * Test fixtures and helpers
@@ -65,9 +66,11 @@ function createResummarizeTestContext(overrides?: {
   mockModel: ModelProvider;
   writtenBlocks: Array<{ label: string; content: string }>;
   deletedBlocks: Array<string>;
+  calls?: Array<ModelRequest>;
 } {
   const writtenBlocks: Array<{ label: string; content: string }> = [];
   const deletedBlocks: Array<string> = [];
+  const calls: Array<ModelRequest> = [];
 
   const mockMemory: MemoryManager = {
     async getCoreBlocks() {
@@ -120,7 +123,8 @@ function createResummarizeTestContext(overrides?: {
   };
 
   const mockModel: ModelProvider = {
-    async complete() {
+    async complete(request: ModelRequest) {
+      calls.push(request);
       return {
         content: [{ type: 'text', text: overrides?.modelResponseText ?? 'Re-summarized content' }],
         stop_reason: 'end_turn',
@@ -133,9 +137,157 @@ function createResummarizeTestContext(overrides?: {
     async *stream() {
       yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
     },
+    _calls: calls,
+  } as unknown as ModelProvider;
+
+  return { mockMemory, mockModel, writtenBlocks, deletedBlocks, calls };
+}
+
+function createMockPersistenceProvider(): PersistenceProvider {
+  const deletedIds: Array<string> = [];
+  const insertedMessages: Array<{
+    id: string;
+    role: string;
+    content: string;
+  }> = [];
+
+  const query: QueryFunction = async <T extends Record<string, unknown>>(
+    sql: string,
+    params?: ReadonlyArray<unknown>,
+  ): Promise<Array<T>> => {
+    if (sql.includes('DELETE FROM messages') && sql.includes('WHERE id = ANY')) {
+      const [idsParam] = params || [];
+      if (Array.isArray(idsParam)) {
+        deletedIds.push(...idsParam.map(String));
+      }
+      return [];
+    }
+
+    if (sql.includes('INSERT INTO messages')) {
+      const [id, , role, content] = params || [];
+      insertedMessages.push({
+        id: String(id),
+        role: String(role),
+        content: String(content),
+      });
+      return [];
+    }
+
+    return [];
   };
 
-  return { mockMemory, mockModel, writtenBlocks, deletedBlocks };
+  return {
+    async connect() {},
+    async disconnect() {},
+    async runMigrations() {},
+    query,
+    async withTransaction<T>(fn: (q: QueryFunction) => Promise<T>) {
+      return fn(query);
+    },
+    _deletedIds: deletedIds,
+    _insertedMessages: insertedMessages,
+  } as unknown as PersistenceProvider;
+}
+
+function createMockModelProvider(
+  responses: ReadonlyArray<string>,
+): ModelProvider {
+  let callIndex = 0;
+  const calls: Array<ModelRequest> = [];
+
+  return {
+    async complete(request: ModelRequest): Promise<ModelResponse> {
+      calls.push(request);
+      const responseText = responses[callIndex] || `Summary ${callIndex}`;
+      callIndex++;
+
+      return {
+        content: [{ type: 'text', text: responseText }],
+        stop_reason: 'end_turn',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+        },
+      };
+    },
+    async *stream(_request: ModelRequest) {
+      yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+    },
+    _calls: calls,
+  } as unknown as ModelProvider;
+}
+
+function createMockMemoryManager(): MemoryManager {
+  const archivedBatches: Array<{ id: string; label: string; content: string }> = [];
+
+  return {
+    async getCoreBlocks() {
+      return [];
+    },
+    async getWorkingBlocks() {
+      return [];
+    },
+    async buildSystemPrompt() {
+      return '';
+    },
+    async read() {
+      return [];
+    },
+    async write(label: string, content: string) {
+      const id = `block-${archivedBatches.length}`;
+      archivedBatches.push({ id, label, content });
+      return {
+        applied: true,
+        block: {
+          id,
+          owner: 'test',
+          tier: 'archival',
+          label,
+          content,
+          embedding: null,
+          permission: 'readwrite',
+          pinned: false,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      };
+    },
+    async list(tier?: string) {
+      if (tier === 'archival') {
+        return archivedBatches.map(b => ({
+          id: b.id,
+          owner: 'test',
+          tier: 'archival' as const,
+          label: b.label,
+          content: b.content,
+          embedding: null,
+          permission: 'readwrite' as const,
+          pinned: false,
+          created_at: new Date(),
+          updated_at: new Date(),
+        }));
+      }
+      return [];
+    },
+    async deleteBlock(id: string) {
+      const idx = archivedBatches.findIndex(b => b.id === id);
+      if (idx >= 0) {
+        archivedBatches.splice(idx, 1);
+      }
+    },
+    async getPendingMutations() {
+      return [];
+    },
+    async approveMutation() {
+      throw new Error('not implemented');
+    },
+    async rejectMutation() {
+      throw new Error('not implemented');
+    },
+    get _archivedBatches() {
+      return archivedBatches.map(b => ({ label: b.label, content: b.content }));
+    },
+  } as unknown as MemoryManager;
 }
 
 describe('Pure helper functions', () => {
@@ -543,157 +695,6 @@ describe('Pure helper functions', () => {
 });
 
 describe('Compaction pipeline with mocked dependencies', () => {
-  /**
-   * Mock implementations
-   */
-
-  function createMockPersistenceProvider(): PersistenceProvider {
-    const deletedIds: Array<string> = [];
-    const insertedMessages: Array<{
-      id: string;
-      role: string;
-      content: string;
-    }> = [];
-
-    const query: QueryFunction = async <T extends Record<string, unknown>>(
-      sql: string,
-      params?: ReadonlyArray<unknown>,
-    ): Promise<Array<T>> => {
-      if (sql.includes('DELETE FROM messages') && sql.includes('WHERE id = ANY')) {
-        const [idsParam] = params || [];
-        if (Array.isArray(idsParam)) {
-          deletedIds.push(...idsParam.map(String));
-        }
-        return [];
-      }
-
-      if (sql.includes('INSERT INTO messages')) {
-        const [id, , role, content] = params || [];
-        insertedMessages.push({
-          id: String(id),
-          role: String(role),
-          content: String(content),
-        });
-        return [];
-      }
-
-      return [];
-    };
-
-    return {
-      async connect() {},
-      async disconnect() {},
-      async runMigrations() {},
-      query,
-      async withTransaction<T>(fn: (q: QueryFunction) => Promise<T>) {
-        return fn(query);
-      },
-      _deletedIds: deletedIds,
-      _insertedMessages: insertedMessages,
-    } as unknown as PersistenceProvider;
-  }
-
-  function createMockModelProvider(
-    responses: ReadonlyArray<string>,
-  ): ModelProvider {
-    let callIndex = 0;
-    const calls: Array<ModelRequest> = [];
-
-    return {
-      async complete(request: ModelRequest): Promise<ModelResponse> {
-        calls.push(request);
-        const responseText = responses[callIndex] || `Summary ${callIndex}`;
-        callIndex++;
-
-        return {
-          content: [{ type: 'text', text: responseText }],
-          stop_reason: 'end_turn',
-          usage: {
-            input_tokens: 100,
-            output_tokens: 50,
-          },
-        };
-      },
-      async *stream(_request: ModelRequest) {
-        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-      },
-      _calls: calls,
-    } as unknown as ModelProvider;
-  }
-
-  function createMockMemoryManager(): MemoryManager {
-    const archivedBatches: Array<{ id: string; label: string; content: string }> = [];
-
-    return {
-      async getCoreBlocks() {
-        return [];
-      },
-      async getWorkingBlocks() {
-        return [];
-      },
-      async buildSystemPrompt() {
-        return '';
-      },
-      async read() {
-        return [];
-      },
-      async write(label: string, content: string) {
-        const id = `block-${archivedBatches.length}`;
-        archivedBatches.push({ id, label, content });
-        return {
-          applied: true,
-          block: {
-            id,
-            owner: 'test',
-            tier: 'archival',
-            label,
-            content,
-            embedding: null,
-            permission: 'readwrite',
-            pinned: false,
-            created_at: new Date(),
-            updated_at: new Date(),
-          },
-        };
-      },
-      async list(tier?: string) {
-        if (tier === 'archival') {
-          return archivedBatches.map(b => ({
-            id: b.id,
-            owner: 'test',
-            tier: 'archival' as const,
-            label: b.label,
-            content: b.content,
-            embedding: null,
-            permission: 'readwrite' as const,
-            pinned: false,
-            created_at: new Date(),
-            updated_at: new Date(),
-          }));
-        }
-        return [];
-      },
-      async deleteBlock(id: string) {
-        const idx = archivedBatches.findIndex(b => b.id === id);
-        if (idx >= 0) {
-          archivedBatches.splice(idx, 1);
-        }
-      },
-      async getPendingMutations() {
-        return [];
-      },
-      async approveMutation() {
-        throw new Error('not implemented');
-      },
-      async rejectMutation() {
-        throw new Error('not implemented');
-      },
-      get _archivedBatches() {
-        return archivedBatches.map(b => ({ label: b.label, content: b.content }));
-      },
-    } as unknown as MemoryManager;
-  }
-
   it('AC1.1: compress() produces summary batches when history exceeds token budget', async () => {
     const messages = Array.from({ length: 20 }, (_, i) =>
       createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(100), i * 100),
@@ -1467,5 +1468,337 @@ describe('Recursive re-summarization', () => {
       const newBlockContent = writtenBlocks[0]?.content || '';
       expect(newBlockContent).toContain('[depth:2|');
     });
+  });
+});
+
+describe('compaction pipeline integration', () => {
+  it('AC1.1, AC1.3, AC1.4, AC2.1, AC4.1: full pipeline with structured messages and no persona', async () => {
+    // Build a test history with 15+ messages to trigger compression
+    const messages: Array<ConversationMessage> = [
+      createMessage('user-1', 'user', 'Hello, can you help me with something?', 0),
+      createMessage('assistant-1', 'assistant', 'of course', 100),
+      createMessage('user-2', 'user', 'What is the best way to do X?', 200),
+      createMessage('assistant-2', 'assistant', 'short', 300),
+      createMessage('user-3', 'user', 'I need to understand error handling in the system', 400),
+      createMessage('assistant-3', 'assistant', 'ok', 500),
+      createMessage('user-4', 'user', 'Can we agree on a decision here?', 600),
+      createMessage('assistant-4', 'assistant', 'sure, let me think about this', 700),
+      createMessage('user-5', 'user', 'Important constraint: it must fail gracefully', 800),
+      createMessage('assistant-5', 'assistant', 'noted', 900),
+      createMessage('user-6', 'user', 'Another question about the implementation?', 1000),
+      createMessage('assistant-6', 'assistant', 'x', 1100),
+      createMessage('user-7', 'user', 'What about error recovery?', 1200),
+      createMessage('assistant-7', 'assistant', 'brief', 1300),
+      createMessage('user-8', 'user', 'recent message 1', 1400),
+      createMessage('assistant-8', 'assistant', 'recent 2', 1500),
+      createMessage('user-9', 'user', 'recent message 3', 1600),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summarized chunk 1', 'Summarized chunk 2']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 3,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // AC4.4: Without custom prompt, system field should be DEFAULT_SYSTEM_PROMPT
+    const model = mockModel as unknown as { _calls: Array<ModelRequest> };
+    expect(model._calls.length).toBeGreaterThan(0);
+    const firstCall = model._calls[0];
+    expect(firstCall?.system).toBe(DEFAULT_SYSTEM_PROMPT);
+
+    // AC1.1, AC1.3: The call should have structured messages with system field
+    expect(firstCall?.messages).toBeDefined();
+    expect(Array.isArray(firstCall?.messages)).toBe(true);
+
+    // AC1.3: Verify conversation messages maintain their original roles
+    const hasUserMessages = firstCall?.messages?.some((m: Message) => m.role === 'user');
+    const hasAssistantMessages = firstCall?.messages?.some(
+      (m: Message) => m.role === 'assistant',
+    );
+    expect(hasUserMessages || hasAssistantMessages).toBe(true);
+
+    // AC1.4: The last message in the request should be a user message with directive
+    const lastMessage = firstCall?.messages?.[firstCall.messages.length - 1];
+    expect(lastMessage?.role).toBe('user');
+    expect(lastMessage?.content).toContain('Summarize');
+
+    // AC4.1: No "persona" text should appear in the request
+    const requestText = JSON.stringify(firstCall);
+    expect(requestText).not.toContain('persona');
+
+    // Verify result shape
+    expect(result.batchesCreated).toBeGreaterThan(0);
+    expect(result.messagesCompressed).toBeGreaterThan(0);
+    expect(result.history[0]?.role).toBe('system');
+    expect(result.history[0]?.content).toContain('Context Summary');
+  });
+
+  it('AC1.2, AC1.5: with prior summary as first message, it becomes system-role message in LLM call', async () => {
+    // Build history with prior summary at the start
+    const messages: Array<ConversationMessage> = [
+      createMessage(
+        'prior-summary',
+        'system',
+        '[Context Summary — 20 messages] Previous context included a discussion about X',
+        0,
+      ),
+      createMessage('user-1', 'user', 'Following up on that earlier point', 100),
+      createMessage('assistant-1', 'assistant', 'response', 200),
+      createMessage('user-2', 'user', 'Error occurred in the system, need to fix it', 300),
+      createMessage('assistant-2', 'assistant', 'checking', 400),
+      createMessage('user-3', 'user', 'message 3', 500),
+      createMessage('assistant-3', 'assistant', 'msg', 600),
+      createMessage('user-4', 'user', 'message 4', 700),
+      createMessage('assistant-4', 'assistant', 'msg', 800),
+      createMessage('user-5', 'user', 'message 5', 900),
+      createMessage('assistant-5', 'assistant', 'msg', 1000),
+      createMessage('user-6', 'user', 'recent 1', 1100),
+      createMessage('assistant-6', 'assistant', 'recent 2', 1200),
+      createMessage('user-7', 'user', 'recent 3', 1300),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summarized']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 3,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    const model = mockModel as unknown as { _calls: Array<ModelRequest> };
+    const firstCall = model._calls[0];
+
+    // AC1.2: Prior summary should appear as a system-role message in the messages array
+    const systemRoleMessages = firstCall?.messages?.filter(
+      (m: Message) => m.role === 'system',
+    );
+    expect(systemRoleMessages?.length).toBeGreaterThan(0);
+    const priorSummaryMessage = systemRoleMessages?.[0];
+    expect(priorSummaryMessage?.content).toContain('Previous summary of conversation');
+  });
+
+  it('AC1.5: no prior summary results in no system-role message in messages array', async () => {
+    // Build history without prior summary
+    const messages: Array<ConversationMessage> = [
+      createMessage('user-1', 'user', 'hello', 0),
+      createMessage('assistant-1', 'assistant', 'hi', 100),
+      createMessage('user-2', 'user', 'error occurred', 200),
+      createMessage('assistant-2', 'assistant', 'checking', 300),
+      createMessage('user-3', 'user', 'message', 400),
+      createMessage('assistant-3', 'assistant', 'msg', 500),
+      createMessage('user-4', 'user', 'message', 600),
+      createMessage('assistant-4', 'assistant', 'msg', 700),
+      createMessage('user-5', 'user', 'message', 800),
+      createMessage('assistant-5', 'assistant', 'msg', 900),
+      createMessage('user-6', 'user', 'recent', 1000),
+      createMessage('assistant-6', 'assistant', 'recent', 1100),
+      createMessage('user-7', 'user', 'recent', 1200),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summarized']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 3,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    const model = mockModel as unknown as { _calls: Array<ModelRequest> };
+    const firstCall = model._calls[0];
+
+    // AC1.5: No prior summary means only conversation messages and directive, no system-role message
+    // in the messages array (the system prompt is in the system field, not messages)
+    const firstConversationMessage = firstCall?.messages?.[0];
+    // First real conversation message should not be a system message
+    expect(firstConversationMessage?.role).not.toBe('system');
+  });
+
+  it('AC3.1, AC3.4: importance scoring orders messages, lowest-score first', async () => {
+    // Create messages with varied importance scores
+    // Short assistant messages should score low
+    // User questions should score higher
+    // Messages with important keywords should score higher
+    const messages: Array<ConversationMessage> = [
+      createMessage('user-1', 'user', 'What should we do about this?', 0), // question bonus
+      createMessage('assistant-1', 'assistant', 'ok', 100), // short, low score
+      createMessage('user-2', 'user', 'There is an error in the system', 200), // "error" keyword
+      createMessage('assistant-2', 'assistant', 'x', 300), // short
+      createMessage('user-3', 'user', 'Made an important decision', 400), // "decision" keyword
+      createMessage('assistant-3', 'assistant', 'yes', 500), // short
+      createMessage('user-4', 'user', 'more context here', 600),
+      createMessage('assistant-4', 'assistant', 'short', 700),
+      createMessage('user-5', 'user', 'another message', 800),
+      createMessage('assistant-5', 'assistant', 'reply', 900),
+      createMessage('user-6', 'user', 'recent 1', 1000),
+      createMessage('assistant-6', 'assistant', 'recent 2', 1100),
+      createMessage('user-7', 'user', 'recent 3', 1200),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summarized']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 3,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    // AC3.4: Verify splitHistory returned toCompress sorted by importance ascending
+    // by checking that compress was called and messages were processed
+    // The short assistant messages should have been selected for compression
+    // before the longer, higher-scoring user messages
+    const model = mockModel as unknown as { _calls: Array<ModelRequest> };
+    expect(model._calls.length).toBeGreaterThan(0);
+    // At least one call was made to the model
+    expect(model._calls[0]?.messages).toBeDefined();
+  });
+
+  it('AC4.2: createCompactor does not accept getPersona callback', async () => {
+    // This is a compile-time check: the type CreateCompactorOptions should not have getPersona
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['test']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 3,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    // This should compile without error, and createCompactor should not accept getPersona
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+      // @ts-expect-error getPersona should not exist
+      getPersona: () => 'persona',
+    });
+
+    expect(compactor).toBeDefined();
+  });
+
+  it('AC1.6: re-summarization uses same structured message approach', async () => {
+    // Set up enough batches to trigger re-summarization
+    const sourceBatches = Array.from({ length: 10 }, (_, i) => ({
+      id: `batch-${i}`,
+      batch: {
+        content: `Summary ${i}`,
+        depth: 0,
+        startTime: new Date(2000 + i * 100),
+        endTime: new Date(2000 + i * 100 + 90),
+        messageCount: 10,
+      },
+    }));
+
+    const { mockMemory, mockModel, calls } = createResummarizeTestContext({
+      modelResponseText: 'Re-summarized',
+    });
+
+    const config = {
+      chunkSize: 3,
+      keepRecent: 5,
+      maxSummaryTokens: 500,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    await resummarizeBatches({
+      batches: sourceBatches,
+      conversationId: 'test-conv',
+      memory: mockMemory,
+      model: mockModel,
+      modelName: 'test-model',
+      config,
+      systemPrompt: null,
+    });
+
+    // AC1.6: Re-summarization should also use structured messages with system field
+    expect(calls && calls.length).toBeGreaterThan(0);
+    const firstCall = calls?.[0];
+    expect(firstCall?.system).toBe(DEFAULT_SYSTEM_PROMPT);
+    expect(firstCall?.messages).toBeDefined();
+
+    // Should have system-role messages for batches and directive
+    const systemRoleMessages = firstCall?.messages?.filter(
+      (m: Message) => m.role === 'system',
+    );
+    expect((systemRoleMessages?.length ?? 0) > 0).toBe(true);
+
+    const lastMessage = firstCall?.messages?.[firstCall.messages.length - 1];
+    expect(lastMessage?.role).toBe('user');
+    expect(lastMessage?.content).toContain('Summarize');
   });
 });

@@ -32,7 +32,7 @@ export function buildAnthropicSystemParam(
 ): string | undefined {
   const systemContents: Array<string> = [];
 
-  if (requestSystem) {
+  if (requestSystem !== undefined) {
     systemContents.push(requestSystem);
   }
 
@@ -109,7 +109,7 @@ function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "too
   }
 }
 
-function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
+export function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
   if (msg.role === "system") {
     throw new Error("system-role messages must be extracted before normalizeMessage");
   }

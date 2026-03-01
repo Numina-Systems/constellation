@@ -9,6 +9,7 @@ import type {
   ModelRequest,
   ModelResponse,
   StreamEvent,
+  TextBlock,
   ToolDefinition,
   UsageStats,
 } from "./types.js";
@@ -105,7 +106,7 @@ export function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessag
     const text = typeof msg.content === "string"
       ? msg.content
       : msg.content
-          .filter((b): b is { type: "text"; text: string } => b.type === "text")
+          .filter((b): b is TextBlock => b.type === "text")
           .map((b) => b.text)
           .join("\n");
     return {

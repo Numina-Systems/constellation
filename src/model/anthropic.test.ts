@@ -1,7 +1,7 @@
-// pattern: Imperative Shell
+// pattern: Functional Core
 
 import { describe, it, expect } from "bun:test";
-import { createAnthropicAdapter, buildAnthropicSystemParam } from "./anthropic.js";
+import { createAnthropicAdapter, buildAnthropicSystemParam, normalizeMessage } from "./anthropic.js";
 import { ModelError } from "./types.js";
 import type { Message } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
@@ -368,6 +368,29 @@ describe("createAnthropicAdapter", () => {
 
       // request.system comes first, then inline system messages
       expect(result).toBe("Request system\n\nInline system");
+    });
+
+    it("should handle empty string requestSystem explicitly (not drop it)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("", messages);
+
+      // Empty string should be preserved (not treated as falsy and dropped)
+      expect(result).toBe("");
+    });
+
+    it("should throw when normalizeMessage receives system-role message", () => {
+      const msg: Message = {
+        role: "system",
+        content: "test",
+      };
+
+      expect(() => normalizeMessage(msg)).toThrow("system-role messages must be extracted before normalizeMessage");
     });
   });
 });

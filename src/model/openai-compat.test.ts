@@ -1,4 +1,4 @@
-// pattern: Imperative Shell
+// pattern: Functional Core
 
 import { describe, it, expect } from "bun:test";
 import { createOpenAICompatAdapter, normalizeMessage } from "./openai-compat.js";

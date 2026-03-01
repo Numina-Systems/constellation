@@ -35,7 +35,7 @@ function createMockPersistenceProvider(): PersistenceProvider {
   ): Promise<Array<T>> => {
     // Support INSERT and SELECT queries
     if (sql.includes('INSERT INTO messages')) {
-      const [conversationId, role, content, toolCalls, toolCallId] = params || [];
+      const [conversationId, role, content, toolCalls, toolCallId, reasoningContent] = params || [];
       const id = String(nextId++);
       const message: ConversationMessage = {
         id,
@@ -44,6 +44,7 @@ function createMockPersistenceProvider(): PersistenceProvider {
         content: String(content),
         tool_calls: toolCalls,
         tool_call_id: toolCallId ? String(toolCallId) : undefined,
+        reasoning_content: reasoningContent ? String(reasoningContent) : undefined,
         created_at: new Date(),
       };
       const list = messages.get(String(conversationId)) || [];
@@ -844,6 +845,140 @@ describe('Agent loop', () => {
       expect(toolResult.tokensEstimateBefore).toBe(100);
       expect(toolResult.tokensEstimateAfter).toBe(100);
     });
+  });
+});
+
+describe('reasoning_content persistence', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+  let config: AgentConfig;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockMemory = createMockMemoryManager();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+    config = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+    };
+  });
+
+  it('persists reasoning_content from tool_use assistant messages', async () => {
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-r1',
+          name: 'test_tool',
+          input: { arg: 'value' },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+      reasoning_content: 'I should use the test tool to look this up.',
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Done thinking' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Think about this');
+
+    const history = await agent.getConversationHistory();
+    const assistantMsg = history.find(
+      (msg) => msg.role === 'assistant' && msg.reasoning_content,
+    );
+
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg?.reasoning_content).toBe(
+      'I should use the test tool to look this up.',
+    );
+  });
+
+  it('loads reasoning_content from history and includes it in model messages', async () => {
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-r2',
+          name: 'test_tool',
+          input: {},
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+      reasoning_content: 'Let me check this with the tool.',
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'First turn done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const tracker1 = { requests: [] as Array<ModelRequest> };
+    const mockModel1 = createMockModelProvider([toolUseResponse, finalResponse], tracker1);
+    const deps1: AgentDependencies = {
+      model: mockModel1,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent1 = createAgent(deps1);
+    await agent1.processMessage('First question');
+
+    // Create a second agent resuming the same conversation
+    const secondResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Resumed' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const tracker2 = { requests: [] as Array<ModelRequest> };
+    const mockModel2 = createMockModelProvider([secondResponse], tracker2);
+    const deps2: AgentDependencies = {
+      model: mockModel2,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent2 = createAgent(deps2, agent1.conversationId);
+    await agent2.processMessage('Follow up');
+
+    // The second model call should include the reasoning_content from history
+    expect(tracker2.requests.length).toBeGreaterThanOrEqual(1);
+    const request = tracker2.requests[0];
+    expect(request).toBeDefined();
+
+    const assistantMsgWithReasoning = request!.messages.find(
+      (msg) => msg.role === 'assistant' && msg.reasoning_content,
+    );
+    expect(assistantMsgWithReasoning).toBeDefined();
+    expect(assistantMsgWithReasoning?.reasoning_content).toBe(
+      'Let me check this with the tool.',
+    );
   });
 });
 

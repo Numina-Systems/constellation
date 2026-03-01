@@ -1,6 +1,6 @@
 # Agent
 
-Last verified: 2026-02-28
+Last verified: 2026-03-01
 
 ## Purpose
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency.
@@ -8,7 +8,7 @@ Implements the core agent loop: receives user messages, builds context from memo
 ## Contracts
 - **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `createAgent(deps, conversationId?)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `shouldCompress`)
 - **Guarantees**:
-  - Each message round persists user input, assistant response, and tool results to the `messages` table
+  - Each message round persists user input, assistant response (including `reasoning_content` for thinking-mode models), and tool results to the `messages` table
   - Tool dispatch loop runs up to `max_tool_rounds` before stopping
   - `execute_code` tool calls route to the Deno runtime (with optional `ExecutionContext` for credential injection); `compact_context` routes to the `Compactor`; all other tools route through the registry
   - `processEvent` formats external events as structured user messages (with expanded reply metadata and source-specific `[Instructions:]` blocks) and delegates to `processMessage`
@@ -29,7 +29,7 @@ Implements the core agent loop: receives user messages, builds context from memo
 - Token estimation heuristic (1 token ~ 4 chars): Good enough for budget checks without API calls
 
 ## Invariants
-- `processMessage` always persists at least the user message and final assistant response
+- `processMessage` always persists at least the user message and final assistant response (with `reasoning_content` when present)
 - Tool dispatch never exceeds `max_tool_rounds`
 - Compressed messages are archived to memory before deletion
 

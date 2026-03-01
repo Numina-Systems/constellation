@@ -92,6 +92,16 @@ const SummarizationConfigSchema = z.object({
   content_length_weight: z.number().nonnegative().default(1.0),
 });
 
+const WebConfigSchema = z.object({
+  brave_api_key: z.string().optional(),
+  tavily_api_key: z.string().optional(),
+  searxng_endpoint: z.string().url().optional(),
+  max_results: z.number().int().positive().default(10),
+  fetch_timeout: z.number().int().positive().default(30000),
+  max_fetch_size: z.number().int().positive().default(1048576),
+  cache_ttl: z.number().int().positive().default(300000),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -100,6 +110,7 @@ const AppConfigSchema = z.object({
   runtime: RuntimeConfigSchema.default({}),
   bluesky: BlueskyConfigSchema.default({}),
   summarization: SummarizationConfigSchema.optional(),
+  web: WebConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -110,5 +121,6 @@ export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
 export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
+export type WebConfig = z.infer<typeof WebConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema };

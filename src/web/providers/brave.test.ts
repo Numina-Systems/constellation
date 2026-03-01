@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createBraveAdapter } from "./brave.ts";
 
 describe("Brave Search adapter", () => {
-  let originalFetch: any;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -26,7 +26,7 @@ describe("Brave Search adapter", () => {
           ],
         },
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
     const response = await adapter.search("test query", 10);
@@ -55,12 +55,12 @@ describe("Brave Search adapter", () => {
       ok: false,
       status: 403,
       statusText: "Forbidden",
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow("403");
+    await expect(promise).rejects.toThrow("403");
   });
 
   it("AC1.6: throws error on unparseable JSON response", async () => {
@@ -69,23 +69,23 @@ describe("Brave Search adapter", () => {
       json: async () => {
         throw new SyntaxError("Unexpected token");
       },
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("AC1.7: error propagates on timeout (AbortError)", async () => {
     globalThis.fetch = (async () => {
       throw new Error("The operation was aborted");
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("handles empty results array gracefully", async () => {
@@ -94,7 +94,7 @@ describe("Brave Search adapter", () => {
       json: async () => ({
         web: { results: [] },
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
     const response = await adapter.search("test query", 10);
@@ -106,7 +106,7 @@ describe("Brave Search adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       json: async () => ({}),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
     const response = await adapter.search("test query", 10);
@@ -115,23 +115,24 @@ describe("Brave Search adapter", () => {
   });
 
   it("respects limit parameter (max 20)", async () => {
-    globalThis.fetch = (async () => ({
-      ok: true,
-      json: async () => ({
-        web: {
-          results: Array.from({ length: 30 }, (_, i) => ({
-            title: `Result ${i}`,
-            url: `https://example.com/${i}`,
-            description: `Description ${i}`,
-          })),
-        },
-      }),
-    })) as any;
+    let capturedUrl: string | null = null;
+
+    globalThis.fetch = (async (url: any) => {
+      capturedUrl = url instanceof URL ? url.toString() : (url as string);
+      return {
+        ok: true,
+        json: async () => ({
+          web: {
+            results: [],
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
 
     const adapter = createBraveAdapter("test-key");
-    const response = await adapter.search("test query", 5);
+    await adapter.search("test query", 25);
 
-    // The adapter should clamp the count parameter to 20 max
-    expect(response.results).toHaveLength(30); // returns all from mock
+    const url = new URL(capturedUrl!);
+    expect(url.searchParams.get("count")).toBe("20");
   });
 });

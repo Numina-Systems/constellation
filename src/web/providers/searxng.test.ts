@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createSearXNGAdapter } from "./searxng.ts";
 
 describe("SearXNG adapter", () => {
-  let originalFetch: any;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -24,7 +24,7 @@ describe("SearXNG adapter", () => {
           { title: "Result 3", url: "https://example.com/3", snippet: "Third result snippet" },
         ],
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const response = await adapter.search("test query", 10);
@@ -53,12 +53,12 @@ describe("SearXNG adapter", () => {
       ok: false,
       status: 403,
       statusText: "Forbidden",
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow("403");
+    await expect(promise).rejects.toThrow("403");
   });
 
   it("AC1.6: handles unparseable response body gracefully", async () => {
@@ -67,23 +67,23 @@ describe("SearXNG adapter", () => {
       json: async () => {
         throw new SyntaxError("Unexpected token");
       },
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("AC1.7: error propagates on timeout (AbortError)", async () => {
     globalThis.fetch = (async () => {
       throw new Error("The operation was aborted");
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("limit enforcement: slices results to requested limit", async () => {
@@ -96,7 +96,7 @@ describe("SearXNG adapter", () => {
           snippet: `Snippet ${i}`,
         })),
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const response = await adapter.search("test query", 5);
@@ -110,7 +110,7 @@ describe("SearXNG adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       json: async () => ({}),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const response = await adapter.search("test query", 10);
@@ -124,7 +124,7 @@ describe("SearXNG adapter", () => {
       json: async () => ({
         results: [],
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createSearXNGAdapter("http://searxng.example.com");
     const response = await adapter.search("test query", 10);

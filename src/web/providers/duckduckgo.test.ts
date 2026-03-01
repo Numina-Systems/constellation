@@ -26,7 +26,7 @@ const MOCK_DDG_HTML = `
 </body></html>`;
 
 describe("DuckDuckGo adapter", () => {
-  let originalFetch: any;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -40,7 +40,7 @@ describe("DuckDuckGo adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       text: async () => MOCK_DDG_HTML,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const response = await adapter.search("test query", 10);
@@ -81,7 +81,7 @@ describe("DuckDuckGo adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       text: async () => htmlWithRedirect,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const response = await adapter.search("test", 10);
@@ -95,12 +95,12 @@ describe("DuckDuckGo adapter", () => {
       ok: false,
       status: 403,
       statusText: "Forbidden",
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow("403");
+    await expect(promise).rejects.toThrow("403");
   });
 
   it("AC1.6: handles HTML response with no result elements (returns empty array)", async () => {
@@ -109,7 +109,7 @@ describe("DuckDuckGo adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       text: async () => emptyHtml,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const response = await adapter.search("test query", 10);
@@ -120,19 +120,19 @@ describe("DuckDuckGo adapter", () => {
   it("AC1.7: error propagates on timeout (AbortError)", async () => {
     globalThis.fetch = (async () => {
       throw new Error("The operation was aborted");
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("enforces limit parameter by slicing results", async () => {
     globalThis.fetch = (async () => ({
       ok: true,
       text: async () => MOCK_DDG_HTML,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const response = await adapter.search("test query", 2);
@@ -161,7 +161,7 @@ describe("DuckDuckGo adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       text: async () => htmlWithMissingAnchor,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const response = await adapter.search("test", 10);
@@ -182,7 +182,7 @@ describe("DuckDuckGo adapter", () => {
     globalThis.fetch = (async () => ({
       ok: true,
       text: async () => htmlMissingSnippet,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     const response = await adapter.search("test", 10);
@@ -204,7 +204,7 @@ describe("DuckDuckGo adapter", () => {
         ok: true,
         text: async () => "<html><body></body></html>",
       };
-    }) as any;
+    }) as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     await adapter.search("test query", 10);
@@ -225,7 +225,7 @@ describe("DuckDuckGo adapter", () => {
         ok: true,
         text: async () => "<html><body></body></html>",
       };
-    }) as any;
+    }) as typeof fetch;
 
     const adapter = createDuckDuckGoAdapter();
     await adapter.search("test & special chars", 10);

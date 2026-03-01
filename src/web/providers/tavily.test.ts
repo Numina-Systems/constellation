@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createTavilyAdapter } from "./tavily.ts";
 
 describe("Tavily Search adapter", () => {
-  let originalFetch: any;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -33,7 +33,7 @@ describe("Tavily Search adapter", () => {
           },
         ],
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createTavilyAdapter("test-key");
     const response = await adapter.search("test query", 10);
@@ -59,12 +59,12 @@ describe("Tavily Search adapter", () => {
       ok: false,
       status: 401,
       statusText: "Unauthorized",
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createTavilyAdapter("test-key");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow("401");
+    await expect(promise).rejects.toThrow("401");
   });
 
   it("AC1.6: throws error on unparseable JSON response", async () => {
@@ -73,23 +73,23 @@ describe("Tavily Search adapter", () => {
       json: async () => {
         throw new SyntaxError("Unexpected token");
       },
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createTavilyAdapter("test-key");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("AC1.7: error propagates on timeout (AbortError)", async () => {
     globalThis.fetch = (async () => {
       throw new Error("The operation was aborted");
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const adapter = createTavilyAdapter("test-key");
     const promise = adapter.search("test query", 10);
 
-    expect(promise).rejects.toThrow();
+    await expect(promise).rejects.toThrow();
   });
 
   it("handles empty results array gracefully", async () => {
@@ -98,7 +98,7 @@ describe("Tavily Search adapter", () => {
       json: async () => ({
         results: [],
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const adapter = createTavilyAdapter("test-key");
     const response = await adapter.search("test query", 10);
@@ -117,7 +117,7 @@ describe("Tavily Search adapter", () => {
           results: [],
         }),
       };
-    }) as any;
+    }) as typeof fetch;
 
     const adapter = createTavilyAdapter("test-key");
     await adapter.search("test query", 5);

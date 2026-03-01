@@ -17,7 +17,10 @@ import type {
   CompactionResult,
   CompactionConfig,
   Compactor,
+  ImportanceScoringConfig,
 } from './types.js';
+import { DEFAULT_SCORING_CONFIG } from './types.js';
+import { scoreMessage } from './scoring.js';
 import {
   buildSummarizationRequest,
   buildResummarizationRequest,
@@ -35,10 +38,12 @@ export type CreateCompactorOptions = {
  * Split history into two parts: messages to compress and messages to keep.
  * If the first message is a prior compaction summary (role='system' and content starts with '[Context Summary —'),
  * extract it separately to avoid re-summarizing it.
+ * Messages in toCompress are sorted by importance (lowest-scored first) using the provided scoring config.
  */
 export function splitHistory(
   history: ReadonlyArray<ConversationMessage>,
   keepRecent: number,
+  scoringConfig: ImportanceScoringConfig = DEFAULT_SCORING_CONFIG,
 ): {
   toCompress: ReadonlyArray<ConversationMessage>;
   toKeep: ReadonlyArray<ConversationMessage>;
@@ -71,8 +76,32 @@ export function splitHistory(
   const toKeepCount = Math.min(keepRecent, compressableCount);
   const splitIndex = compressStartIndex + compressableCount - toKeepCount;
 
+  // Score and sort compressible messages by importance (lowest first)
+  const compressSlice = history.slice(compressStartIndex, splitIndex);
+
+  if (compressSlice.length > 1) {
+    const scored = compressSlice.map((msg, idx) => ({
+      msg,
+      originalIndex: idx,
+      score: scoreMessage(msg, idx, compressSlice.length, scoringConfig),
+    }));
+
+    // Stable sort: equal scores maintain original chronological order (AC3.6)
+    scored.sort((a, b) => {
+      const scoreDiff = a.score - b.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.originalIndex - b.originalIndex;
+    });
+
+    return {
+      toCompress: scored.map((s) => s.msg),
+      toKeep: history.slice(splitIndex),
+      priorSummary,
+    };
+  }
+
   return {
-    toCompress: history.slice(compressStartIndex, splitIndex),
+    toCompress: compressSlice,
     toKeep: history.slice(splitIndex),
     priorSummary,
   };
@@ -456,6 +485,7 @@ export function createCompactor(
       const { toCompress, toKeep, priorSummary } = splitHistory(
         history,
         config.keepRecent,
+        config.scoring,
       );
 
       // 2. Check if there's anything to compress

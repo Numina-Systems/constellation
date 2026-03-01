@@ -12,7 +12,6 @@ import type { SummaryBatch } from './types.js';
 import {
   splitHistory,
   chunkMessages,
-  formatMessagesForPrompt,
   buildClipArchive,
   estimateTokens,
   createCompactor,
@@ -252,34 +251,6 @@ describe('Pure helper functions', () => {
       expect(chunks[0]?.length).toBe(1);
       expect(chunks[1]?.length).toBe(1);
       expect(chunks[2]?.length).toBe(1);
-    });
-  });
-
-  describe('formatMessagesForPrompt', () => {
-    it('converts messages to role: content format', () => {
-      const messages = [
-        createMessage('1', 'user', 'Hello'),
-        createMessage('2', 'assistant', 'Hi there'),
-        createMessage('3', 'user', 'How are you?'),
-      ];
-
-      const result = formatMessagesForPrompt(messages);
-      expect(result).toBe('user: Hello\nassistant: Hi there\nuser: How are you?');
-    });
-
-    it('handles empty message array', () => {
-      const result = formatMessagesForPrompt([]);
-      expect(result).toBe('');
-    });
-
-    it('preserves multiline content', () => {
-      const messages = [
-        createMessage('1', 'user', 'Line 1\nLine 2\nLine 3'),
-        createMessage('2', 'assistant', 'Response'),
-      ];
-
-      const result = formatMessagesForPrompt(messages);
-      expect(result.includes('Line 1\nLine 2\nLine 3')).toBe(true);
     });
   });
 
@@ -1230,8 +1201,7 @@ describe('Recursive re-summarization', () => {
         model: mockModel,
         modelName: 'test-model',
         config,
-        persona: 'Test persona',
-        template: 'Summarize: {messages}',
+        systemPrompt: null,
       });
 
       // Verify new batch has depth 1 (max 0 + 1)
@@ -1273,8 +1243,7 @@ describe('Recursive re-summarization', () => {
         model: mockModel,
         modelName: 'test-model',
         config,
-        persona: 'Test persona',
-        template: 'Summarize: {messages}',
+        systemPrompt: null,
       });
 
       // Verify source batches (0-4) were deleted (5 total to re-summarize, keeping last 2)
@@ -1385,8 +1354,7 @@ describe('Recursive re-summarization', () => {
         model: mockModel,
         modelName: 'test-model',
         config,
-        persona: 'Test persona',
-        template: 'Summarize: {messages}',
+        systemPrompt: null,
       });
 
       // Verify new batch has depth 2 (max depth 1 + 1)

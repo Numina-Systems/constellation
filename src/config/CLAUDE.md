@@ -6,8 +6,8 @@ Last verified: 2026-02-28
 Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.
 
 ## Contracts
-- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, etc.)
-- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`).
+- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, `SummarizationConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, `SummarizationConfig`, etc.)
+- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`). `summarization` section is optional; when absent, compaction uses defaults.
 - **Expects**: `config.toml` exists at project root (or path provided). TOML structure matches `AppConfigSchema`.
 
 ## Dependencies

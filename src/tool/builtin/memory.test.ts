@@ -14,6 +14,9 @@ describe('Built-in memory tools', () => {
       read: async () => [],
       write: async () => ({ applied: false, error: 'not implemented' }),
       list: async () => [],
+      deleteBlock: async () => {
+        // no-op for testing
+      },
       getPendingMutations: async () => [],
       approveMutation: async () => (
         { id: '', owner: '', tier: 'core', label: '', content: '', embedding: null, permission: 'readwrite', pinned: false, created_at: new Date(), updated_at: new Date() }

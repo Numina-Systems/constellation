@@ -59,6 +59,19 @@ const BlueskyConfigSchema = z
     }
   });
 
+const SummarizationConfigSchema = z.object({
+  provider: z.enum(["anthropic", "openai-compat"]),
+  name: z.string(),
+  api_key: z.string().optional(),
+  base_url: z.string().url().optional(),
+  chunk_size: z.number().int().positive().default(20),
+  keep_recent: z.number().int().nonnegative().default(5),
+  max_summary_tokens: z.number().int().positive().default(1024),
+  clip_first: z.number().int().nonnegative().default(2),
+  clip_last: z.number().int().nonnegative().default(2),
+  prompt: z.string().optional(),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -66,6 +79,7 @@ const AppConfigSchema = z.object({
   database: DatabaseConfigSchema,
   runtime: RuntimeConfigSchema.default({}),
   bluesky: BlueskyConfigSchema.default({}),
+  summarization: SummarizationConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -75,5 +89,6 @@ export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
+export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema };

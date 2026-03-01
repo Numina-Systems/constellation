@@ -11,6 +11,7 @@ import type { MemoryManager } from '../memory/manager.ts';
 import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime, ExecutionContext } from '../runtime/types.ts';
 import type { PersistenceProvider } from '../persistence/types.ts';
+import type { Compactor } from '../compaction/types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -45,6 +46,7 @@ export type AgentDependencies = {
   persistence: PersistenceProvider;
   config: AgentConfig;
   getExecutionContext?: () => ExecutionContext;
+  compactor?: Compactor;
 };
 
 export type Agent = {

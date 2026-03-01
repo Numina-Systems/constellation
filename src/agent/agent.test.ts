@@ -18,6 +18,7 @@ import type { MemoryManager } from '../memory/manager.ts';
 import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime } from '../runtime/types.ts';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.ts';
+import type { Compactor, CompactionResult } from '../compaction/types.ts';
 
 /**
  * Mock implementations for testing
@@ -118,6 +119,9 @@ function createMockMemoryManager(): MemoryManager {
     async list() {
       return [];
     },
+    async deleteBlock() {
+      // no-op for testing
+    },
     async getPendingMutations() {
       return [];
     },
@@ -167,14 +171,19 @@ function createMockCodeRuntime(): CodeRuntime {
   };
 }
 
-// Mock ModelProvider with configurable responses
+// Mock ModelProvider with configurable responses and tracking
 function createMockModelProvider(
   responses: ReadonlyArray<ModelResponse>,
+  tracker?: { requests: Array<ModelRequest> },
 ): ModelProvider {
   let callIndex = 0;
 
   return {
-    async complete(_request: ModelRequest): Promise<ModelResponse> {
+    async complete(request: ModelRequest): Promise<ModelResponse> {
+      if (tracker) {
+        tracker.requests.push(request);
+      }
+
       const response = responses[callIndex];
       callIndex++;
 
@@ -197,6 +206,27 @@ function createMockModelProvider(
       // Not implemented for tests
       yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
     },
+  };
+}
+
+// Helper to create AgentDependencies with optional compactor
+function createAgentDependencies(overrides?: {
+  model?: ModelProvider;
+  memory?: MemoryManager;
+  registry?: ToolRegistry;
+  runtime?: CodeRuntime;
+  persistence?: PersistenceProvider;
+  config?: AgentConfig;
+  compactor?: Compactor;
+}): AgentDependencies {
+  return {
+    model: overrides?.model ?? createMockModelProvider([]),
+    memory: overrides?.memory ?? createMockMemoryManager(),
+    registry: overrides?.registry ?? createMockToolRegistry(),
+    runtime: overrides?.runtime ?? createMockCodeRuntime(),
+    persistence: overrides?.persistence ?? createMockPersistenceProvider(),
+    config: overrides?.config ?? { max_tool_rounds: 5, context_budget: 0.8 },
+    compactor: overrides?.compactor,
   };
 }
 
@@ -290,7 +320,19 @@ describe('Agent loop', () => {
 
   it('AC1.12: compresses context when budget exceeded', async () => {
     // Verify that when history exceeds the context budget, the agent calls
-    // the model to summarize old messages.
+    // compactor.compress() to summarize old messages.
+
+    // Create a mock compactor with call recording
+    function createMockCompactor(result: CompactionResult): Compactor & { calls: Array<{ history: ReadonlyArray<ConversationMessage>; conversationId: string }> } {
+      const calls: Array<{ history: ReadonlyArray<ConversationMessage>; conversationId: string }> = [];
+      return {
+        calls,
+        async compress(history, conversationId) {
+          calls.push({ history: [...history], conversationId });
+          return result;
+        },
+      };
+    }
 
     const tightPersistence = createMockPersistenceProvider();
     const tightConfig: AgentConfig = {
@@ -298,33 +340,22 @@ describe('Agent loop', () => {
       context_budget: 0.01, // 1% budget (2000 tokens at 200k model window)
     };
 
-    // Track model.complete calls to detect summarization
-    let modelCalls: Array<ModelRequest> = [];
-
-    const mockModel: ModelProvider = {
-      async complete(request: ModelRequest): Promise<ModelResponse> {
-        modelCalls.push(request);
-
-        // Return a summary for summarization requests
-        const isSummarizationRequest = request.system?.includes('summarization');
-        if (isSummarizationRequest) {
-          return {
-            content: [{ type: 'text', text: '[Summary of prior conversation]' }],
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 100, output_tokens: 50 },
-          };
-        }
-
-        return {
-          content: [{ type: 'text', text: 'Response' }],
-          stop_reason: 'end_turn',
-          usage: { input_tokens: 100, output_tokens: 50 },
-        };
+    const mockModel = createMockModelProvider([
+      {
+        content: [{ type: 'text', text: 'Response' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 100, output_tokens: 50 },
       },
-      async *stream() {
-        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-      },
-    };
+    ]);
+
+    // Create a mock compactor that returns compressed history with 2 messages removed
+    const mockCompactor = createMockCompactor({
+      history: [], // After compression, history is reduced
+      batchesCreated: 1,
+      messagesCompressed: 2,
+      tokensEstimateBefore: 2100,
+      tokensEstimateAfter: 800,
+    });
 
     const deps: AgentDependencies = {
       model: mockModel,
@@ -333,6 +364,7 @@ describe('Agent loop', () => {
       runtime: mockRuntime,
       persistence: tightPersistence,
       config: tightConfig,
+      compactor: mockCompactor,
     };
 
     const agent = createAgent(deps);
@@ -340,22 +372,18 @@ describe('Agent loop', () => {
 
     // Send messages to exceed budget: 0.01 * 200000 = 2000 tokens
     await agent.processMessage(largeMsg); // ~1000 total
-    await agent.processMessage(largeMsg); // ~2000 total, at limit
+    await agent.processMessage(largeMsg); // ~2000 total, should trigger compression
+    await agent.processMessage(largeMsg); // Already over budget, should trigger compression again
 
-    modelCalls = []; // Reset to track compression call
-    await agent.processMessage(largeMsg); // Should trigger compression
+    // Verify compression was triggered: compactor.compress() should have been called
+    // at least once when budget exceeded
+    expect(mockCompactor.calls.length).toBeGreaterThanOrEqual(1);
 
-    // Verify compression was triggered: model should receive a summarization prompt
-    const hadSummarizationCall = modelCalls.some(
-      (call) => call.system?.includes('summarization') || call.system?.includes('assistant'),
-    );
-    expect(hadSummarizationCall).toBe(true);
-
-    // Verify that at least one model call included a summarization request
-    const summarizationCalls = modelCalls.filter(
-      (call) => call.system?.includes('summarization') || call.system?.includes('assistant'),
-    );
-    expect(summarizationCalls.length).toBeGreaterThan(0);
+    const firstCall = mockCompactor.calls[0];
+    if (firstCall) {
+      expect(firstCall.conversationId).toBe(agent.conversationId);
+      expect(firstCall.history.length).toBeGreaterThan(0);
+    }
 
     // Verify conversation ID persists
     expect(typeof agent.conversationId).toBe('string');
@@ -535,6 +563,287 @@ describe('Agent loop', () => {
     const response = await agent.processMessage('Long prompt');
 
     expect(response).toBe('Response cut off due to max tokens');
+  });
+
+  describe('AC5: compact_context tool dispatch', () => {
+    function createMockCompactor(result: CompactionResult): Compactor {
+      return {
+        async compress() {
+          return result;
+        },
+      };
+    }
+
+    it('AC5.2: tool result contains compression stats', async () => {
+      const compactionResult: CompactionResult = {
+        history: [
+          {
+            id: '1',
+            conversation_id: 'test-conv-1',
+            role: 'user',
+            content: 'Hello',
+            created_at: new Date(),
+          },
+          {
+            id: '2',
+            conversation_id: 'test-conv-1',
+            role: 'assistant',
+            content: 'Hi there',
+            created_at: new Date(),
+          },
+        ],
+        messagesCompressed: 10,
+        batchesCreated: 2,
+        tokensEstimateBefore: 5000,
+        tokensEstimateAfter: 2000,
+      };
+
+      const mockCompactor = createMockCompactor(compactionResult);
+
+      const toolUseResponse: ModelResponse = {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-use-1',
+            name: 'compact_context',
+            input: {},
+          },
+        ],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const finalResponse: ModelResponse = {
+        content: [{ type: 'text', text: 'Compaction complete' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+      const deps = createAgentDependencies({
+        model: mockModel,
+        memory: mockMemory,
+        registry: mockRegistry,
+        runtime: mockRuntime,
+        persistence: mockPersistence,
+        config,
+        compactor: mockCompactor,
+      });
+
+      const agent = createAgent(deps);
+      const response = await agent.processMessage('Compress context please');
+
+      // The response should be the final text from the assistant
+      expect(response).toBe('Compaction complete');
+
+      // Retrieve the tool result from persisted messages
+      const history = await agent.getConversationHistory();
+      expect(history.length).toBeGreaterThanOrEqual(2);
+
+      // Find the tool result message for compact_context
+      const toolResultMessage = history.find(
+        (msg) => msg.role === 'tool' && msg.tool_call_id === 'tool-use-1',
+      );
+      expect(toolResultMessage).toBeDefined();
+      expect(toolResultMessage?.content).toBeDefined();
+
+      // Parse the JSON tool result and verify compression stats
+      const toolResult = JSON.parse(toolResultMessage?.content || '{}') as {
+        messagesCompressed?: number;
+        batchesCreated?: number;
+        tokensEstimateBefore?: number;
+        tokensEstimateAfter?: number;
+      };
+
+      expect(toolResult.messagesCompressed).toBe(10);
+      expect(toolResult.batchesCreated).toBe(2);
+      expect(toolResult.tokensEstimateBefore).toBe(5000);
+      expect(toolResult.tokensEstimateAfter).toBe(2000);
+    });
+
+    it('AC5.3: history is replaced with compressed version for subsequent tool calls', async () => {
+      const compressedMessages: ReadonlyArray<ConversationMessage> = [
+        {
+          id: 'msg-1',
+          conversation_id: 'test-conv-2',
+          role: 'assistant',
+          content: '[Context Summary — 2 messages compressed]',
+          created_at: new Date(),
+        },
+        {
+          id: 'msg-3',
+          conversation_id: 'test-conv-2',
+          role: 'user',
+          content: 'Message 2',
+          created_at: new Date(),
+        },
+      ];
+
+      const compactionResult: CompactionResult = {
+        history: compressedMessages,
+        messagesCompressed: 2,
+        batchesCreated: 1,
+        tokensEstimateBefore: 3000,
+        tokensEstimateAfter: 1500,
+      };
+
+      const mockCompactor = createMockCompactor(compactionResult);
+
+      // First tool use: compact_context
+      const compactResponse: ModelResponse = {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-use-2',
+            name: 'compact_context',
+            input: {},
+          },
+        ],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      // Second tool use: a regular tool after compaction
+      const secondToolResponse: ModelResponse = {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-use-3',
+            name: 'memory_read',
+            input: { query: 'test' },
+          },
+        ],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const finalResponse: ModelResponse = {
+        content: [{ type: 'text', text: 'All done' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      // Track model requests to verify compressed history is used
+      const tracker = { requests: [] as Array<ModelRequest> };
+      const mockModel = createMockModelProvider([compactResponse, secondToolResponse, finalResponse], tracker);
+      const deps = createAgentDependencies({
+        model: mockModel,
+        memory: mockMemory,
+        registry: mockRegistry,
+        runtime: mockRuntime,
+        persistence: mockPersistence,
+        config,
+        compactor: mockCompactor,
+      });
+
+      const agent = createAgent(deps);
+      const response = await agent.processMessage('Start compaction round');
+
+      // Verify the agent handled the round with multiple tool calls
+      expect(response).toBe('All done');
+
+      // Verify we made at least 2 model calls (one before compact_context, one after)
+      expect(tracker.requests.length).toBeGreaterThanOrEqual(2);
+
+      // The second model call should include the compressed history
+      // The compressed history should contain messages from compressedMessages
+      const secondCall = tracker.requests[1];
+      if (!secondCall) {
+        throw new Error('Expected second model call');
+      }
+      expect(secondCall).toBeDefined();
+
+      // Verify that the second call's message history reflects compression
+      // The compressed history has 2 messages (summary + final user message)
+      // The second call should include these compressed messages
+      const secondCallMessages = secondCall.messages;
+      expect(secondCallMessages.length).toBeGreaterThanOrEqual(2);
+
+      // Verify the compressed message is present in the second call
+      const hasCompressedContent = secondCallMessages.some(
+        (msg) => msg.content && typeof msg.content === 'string' && msg.content.includes('Context Summary'),
+      );
+      expect(hasCompressedContent).toBe(true);
+    });
+
+    it('AC5.4: no-op when compactor returns 0 compression stats', async () => {
+      const noOpResult: CompactionResult = {
+        history: [
+          {
+            id: 'msg-1',
+            conversation_id: 'test-conv-3',
+            role: 'user',
+            content: 'Short',
+            created_at: new Date(),
+          },
+        ],
+        messagesCompressed: 0,
+        batchesCreated: 0,
+        tokensEstimateBefore: 100,
+        tokensEstimateAfter: 100,
+      };
+
+      const mockCompactor = createMockCompactor(noOpResult);
+
+      const toolUseResponse: ModelResponse = {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-use-4',
+            name: 'compact_context',
+            input: {},
+          },
+        ],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const finalResponse: ModelResponse = {
+        content: [{ type: 'text', text: 'No compression needed' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+      const deps = createAgentDependencies({
+        model: mockModel,
+        memory: mockMemory,
+        registry: mockRegistry,
+        runtime: mockRuntime,
+        persistence: mockPersistence,
+        config,
+        compactor: mockCompactor,
+      });
+
+      const agent = createAgent(deps);
+      const response = await agent.processMessage('Maybe compress');
+
+      expect(response).toBe('No compression needed');
+
+      // Retrieve the tool result from persisted messages
+      const history = await agent.getConversationHistory();
+      expect(history.length).toBeGreaterThanOrEqual(2);
+
+      // Find the tool result message for compact_context
+      const toolResultMessage = history.find(
+        (msg) => msg.role === 'tool' && msg.tool_call_id === 'tool-use-4',
+      );
+      expect(toolResultMessage).toBeDefined();
+      expect(toolResultMessage?.content).toBeDefined();
+
+      // Parse the JSON tool result and verify zero-compression stats
+      const toolResult = JSON.parse(toolResultMessage?.content || '{}') as {
+        messagesCompressed?: number;
+        batchesCreated?: number;
+        tokensEstimateBefore?: number;
+        tokensEstimateAfter?: number;
+      };
+
+      expect(toolResult.messagesCompressed).toBe(0);
+      expect(toolResult.batchesCreated).toBe(0);
+      expect(toolResult.tokensEstimateBefore).toBe(100);
+      expect(toolResult.tokensEstimateAfter).toBe(100);
+    });
   });
 });
 

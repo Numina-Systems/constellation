@@ -70,6 +70,26 @@ const SummarizationConfigSchema = z.object({
   clip_first: z.number().int().nonnegative().default(2),
   clip_last: z.number().int().nonnegative().default(2),
   prompt: z.string().optional(),
+
+  // Importance scoring weights
+  role_weight_system: z.number().nonnegative().default(10.0),
+  role_weight_user: z.number().nonnegative().default(5.0),
+  role_weight_assistant: z.number().nonnegative().default(3.0),
+  recency_decay: z.number().min(0).max(1).default(0.95),
+  question_bonus: z.number().nonnegative().default(2.0),
+  tool_call_bonus: z.number().nonnegative().default(4.0),
+  keyword_bonus: z.number().nonnegative().default(1.5),
+  important_keywords: z.array(z.string()).default([
+    "error",
+    "fail",
+    "bug",
+    "fix",
+    "decision",
+    "agreed",
+    "constraint",
+    "requirement",
+  ]),
+  content_length_weight: z.number().nonnegative().default(1.0),
 });
 
 const AppConfigSchema = z.object({

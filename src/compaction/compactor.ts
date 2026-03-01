@@ -29,7 +29,6 @@ export type CreateCompactorOptions = {
   readonly persistence: PersistenceProvider;
   readonly config: CompactionConfig;
   readonly modelName: string;
-  readonly getPersona: () => Promise<string>;
 };
 
 /**

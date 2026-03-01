@@ -9,6 +9,7 @@ import type {
   ModelRequest,
   ModelResponse,
   StreamEvent,
+  TextBlock,
   ToolDefinition,
   UsageStats,
 } from "./types.js";
@@ -23,6 +24,33 @@ function isRetryableError(error: unknown): boolean {
     return true;
   }
   return false;
+}
+
+export function buildAnthropicSystemParam(
+  requestSystem: string | undefined,
+  messages: ReadonlyArray<Message>,
+): string | undefined {
+  const systemContents: Array<string> = [];
+
+  if (requestSystem) {
+    systemContents.push(requestSystem);
+  }
+
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      const text = typeof msg.content === "string"
+        ? msg.content
+        : msg.content
+            .filter((b): b is TextBlock => b.type === "text")
+            .map((b) => b.text)
+            .join("\n");
+      if (text) {
+        systemContents.push(text);
+      }
+    }
+  }
+
+  return systemContents.length > 0 ? systemContents.join("\n\n") : undefined;
 }
 
 function normalizeToolDefinitions(
@@ -82,6 +110,10 @@ function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "too
 }
 
 function normalizeMessage(msg: Message): Anthropic.Messages.MessageParam {
+  if (msg.role === "system") {
+    throw new Error("system-role messages must be extracted before normalizeMessage");
+  }
+
   if (typeof msg.content === "string") {
     return {
       role: msg.role,
@@ -139,13 +171,16 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
     async complete(request: ModelRequest): Promise<ModelResponse> {
       const response = await callWithRetry(async () => {
         try {
+          const systemParam = buildAnthropicSystemParam(request.system, request.messages);
+          const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
+
           return await client.messages.create({
             model: request.model,
             max_tokens: request.max_tokens,
-            system: request.system,
+            system: systemParam,
             tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
             temperature: request.temperature,
-            messages: request.messages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
+            messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
           });
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
@@ -183,13 +218,16 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
       const stream = await callWithRetry(async () => {
         try {
+          const systemParam = buildAnthropicSystemParam(request.system, request.messages);
+          const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
+
           return await client.messages.stream({
             model: request.model,
             max_tokens: request.max_tokens,
-            system: request.system,
+            system: systemParam,
             tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
             temperature: request.temperature,
-            messages: request.messages.map(normalizeMessage),
+            messages: nonSystemMessages.map(normalizeMessage),
           });
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {

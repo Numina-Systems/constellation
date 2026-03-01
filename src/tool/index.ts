@@ -13,3 +13,4 @@ export type {
 export { createToolRegistry } from './registry.ts';
 export { createMemoryTools } from './builtin/memory.ts';
 export { createExecuteCodeTool } from './builtin/code.ts';
+export { createWebTools } from './builtin/web.ts';

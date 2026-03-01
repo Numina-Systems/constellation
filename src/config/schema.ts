@@ -59,6 +59,16 @@ const BlueskyConfigSchema = z
     }
   });
 
+const WebConfigSchema = z.object({
+  brave_api_key: z.string().optional(),
+  tavily_api_key: z.string().optional(),
+  searxng_endpoint: z.string().url().optional(),
+  max_results: z.number().int().positive().default(10),
+  fetch_timeout: z.number().int().positive().default(30000),
+  max_fetch_size: z.number().int().positive().default(1048576),
+  cache_ttl: z.number().int().positive().default(300000),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -66,6 +76,7 @@ const AppConfigSchema = z.object({
   database: DatabaseConfigSchema,
   runtime: RuntimeConfigSchema.default({}),
   bluesky: BlueskyConfigSchema.default({}),
+  web: WebConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -75,5 +86,6 @@ export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
+export type WebConfig = z.infer<typeof WebConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, WebConfigSchema };

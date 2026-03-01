@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-02-28
+Last verified: 2026-03-01
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -27,7 +27,8 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
-- `src/tool/` -- Tool registry, built-in tools (memory, code)
+- `src/tool/` -- Tool registry, built-in tools (memory, code, web)
+- `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/agent/` -- Agent loop, context building, compression
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
@@ -40,7 +41,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - **Barrel exports**: Each module has `index.ts` exporting public API
 - **Factory functions over classes**: `createFoo()` returns interface, no `new`
 - **Path aliases**: `@/*` maps to `./src/*` (tsconfig paths)
-- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `EMBEDDING_API_KEY` override config.toml values
+- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY` override config.toml values
 
 ## Boundaries
 - Safe to edit: `src/`

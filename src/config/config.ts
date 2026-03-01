@@ -37,8 +37,19 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["bluesky"] = blueskyObj;
   }
 
+  if (parsed["web"] && (process.env["BRAVE_API_KEY"] || process.env["TAVILY_API_KEY"])) {
+    const webObj = parsed["web"] as Record<string, unknown>;
+    if (process.env["BRAVE_API_KEY"]) {
+      webObj["brave_api_key"] = process.env["BRAVE_API_KEY"];
+    }
+    if (process.env["TAVILY_API_KEY"]) {
+      webObj["tavily_api_key"] = process.env["TAVILY_API_KEY"];
+    }
+    envOverrides["web"] = webObj;
+  }
+
   const merged = { ...parsed, ...envOverrides };
   return AppConfigSchema.parse(merged);
 }
 
-export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig } from "./schema.ts";
+export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, WebConfig } from "./schema.ts";

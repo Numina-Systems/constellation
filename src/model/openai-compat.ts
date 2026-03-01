@@ -9,6 +9,7 @@ import type {
   ModelRequest,
   ModelResponse,
   StreamEvent,
+  TextBlock,
   ToolDefinition,
   UsageStats,
 } from "./types.js";
@@ -100,7 +101,20 @@ function normalizeUsage(usage: OpenAI.Completions.CompletionUsage): UsageStats {
   };
 }
 
-function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam {
+export function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam {
+  if (msg.role === "system") {
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : msg.content
+          .filter((b): b is TextBlock => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+    return {
+      role: "system",
+      content: text,
+    };
+  }
+
   if (typeof msg.content === "string") {
     return {
       role: msg.role,
@@ -135,13 +149,7 @@ function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam 
 
 
 export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
-  const apiKey = config.api_key || process.env["OPENAI_API_KEY"];
-
-  if (!apiKey) {
-    throw new Error(
-      "OpenAI-compatible adapter requires api_key in config or OPENAI_API_KEY environment variable"
-    );
-  }
+  const apiKey = config.api_key || process.env["OPENAI_API_KEY"] || "unused";
 
   const client = new OpenAI({
     apiKey,

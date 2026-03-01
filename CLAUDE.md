@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-02-28
+Last verified: 2026-03-01
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -27,9 +27,10 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
-- `src/tool/` -- Tool registry, built-in tools (memory, code)
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/agent/` -- Agent loop, context building, compression
+- `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
 - `src/index.ts` -- Entry point, composition root, REPL

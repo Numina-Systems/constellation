@@ -162,3 +162,120 @@ describe("BlueskyConfigSchema", () => {
     });
   });
 });
+
+describe("SummarizationConfigSchema", () => {
+  describe("compaction-v2.AC3.5: Scoring config fields with defaults", () => {
+    it("should parse minimal summarization config and apply scoring defaults", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "openai-compat",
+          name: "test-model",
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.summarization).toBeDefined();
+      expect(result.summarization!.provider).toBe("openai-compat");
+      expect(result.summarization!.name).toBe("test-model");
+
+      // Verify scoring defaults are applied
+      expect(result.summarization!.role_weight_system).toBe(10.0);
+      expect(result.summarization!.role_weight_user).toBe(5.0);
+      expect(result.summarization!.role_weight_assistant).toBe(3.0);
+      expect(result.summarization!.recency_decay).toBe(0.95);
+      expect(result.summarization!.question_bonus).toBe(2.0);
+      expect(result.summarization!.tool_call_bonus).toBe(4.0);
+      expect(result.summarization!.keyword_bonus).toBe(1.5);
+      expect(result.summarization!.important_keywords).toEqual([
+        "error",
+        "fail",
+        "bug",
+        "fix",
+        "decision",
+        "agreed",
+        "constraint",
+        "requirement",
+      ]);
+      expect(result.summarization!.content_length_weight).toBe(1.0);
+    });
+
+    it("should accept custom scoring values", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "anthropic",
+          name: "claude-3-sonnet",
+          role_weight_system: 15.0,
+          role_weight_user: 8.0,
+          role_weight_assistant: 5.0,
+          recency_decay: 0.9,
+          question_bonus: 3.0,
+          tool_call_bonus: 5.0,
+          keyword_bonus: 2.0,
+          important_keywords: ["critical", "urgent"],
+          content_length_weight: 1.5,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.summarization!.role_weight_system).toBe(15.0);
+      expect(result.summarization!.role_weight_user).toBe(8.0);
+      expect(result.summarization!.role_weight_assistant).toBe(5.0);
+      expect(result.summarization!.recency_decay).toBe(0.9);
+      expect(result.summarization!.question_bonus).toBe(3.0);
+      expect(result.summarization!.tool_call_bonus).toBe(5.0);
+      expect(result.summarization!.keyword_bonus).toBe(2.0);
+      expect(result.summarization!.important_keywords).toEqual(["critical", "urgent"]);
+      expect(result.summarization!.content_length_weight).toBe(1.5);
+    });
+
+    it("should reject recency_decay > 1", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "openai-compat",
+          name: "test-model",
+          recency_decay: 1.5,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject negative weights", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "openai-compat",
+          name: "test-model",
+          role_weight_system: -5.0,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+  });
+});

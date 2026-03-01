@@ -1,8 +1,9 @@
-// pattern: Imperative Shell
+// pattern: Functional Core
 
 import { describe, it, expect } from "bun:test";
-import { createAnthropicAdapter } from "./anthropic.js";
+import { createAnthropicAdapter, buildAnthropicSystemParam, normalizeMessage } from "./anthropic.js";
 import { ModelError } from "./types.js";
+import type { Message } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
 
 describe("createAnthropicAdapter", () => {
@@ -235,6 +236,161 @@ describe("createAnthropicAdapter", () => {
         ],
       });
       expect(response2.content).toBeDefined();
+    });
+  });
+
+  describe("system-role message handling", () => {
+    it("should extract system-role messages from array and merge with request.system", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "system",
+          content: "You are a helpful assistant.",
+        },
+        {
+          role: "user",
+          content: "Hello",
+        },
+        {
+          role: "system",
+          content: "Always be concise.",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("Base system instruction", messages);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("Base system instruction");
+      expect(result).toContain("You are a helpful assistant.");
+      expect(result).toContain("Always be concise.");
+      // Verify they're joined with double newlines
+      const parts = result!.split("\n\n");
+      expect(parts.length).toBe(3);
+    });
+
+    it("should pass through request.system unchanged when no system-role messages exist", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "Hello",
+        },
+        {
+          role: "assistant",
+          content: "Hi there",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("My system instruction", messages);
+
+      expect(result).toBe("My system instruction");
+    });
+
+    it("should return undefined when no system param or messages exist", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam(undefined, messages);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("should handle system-role messages with content blocks (TextBlock)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "system",
+          content: [
+            {
+              type: "text",
+              text: "First instruction",
+            },
+            {
+              type: "text",
+              text: "Second instruction",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam(undefined, messages);
+
+      expect(result).toBeDefined();
+      expect(result).toContain("First instruction");
+      expect(result).toContain("Second instruction");
+      // Text blocks are joined with newlines within a message, then messages are joined with double newlines
+      expect(result).toContain("First instruction\nSecond instruction");
+    });
+
+    it("should concatenate multiple system-role messages with double newlines", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "system",
+          content: "System 1",
+        },
+        {
+          role: "user",
+          content: "User message",
+        },
+        {
+          role: "system",
+          content: "System 2",
+        },
+        {
+          role: "assistant",
+          content: "Assistant message",
+        },
+        {
+          role: "system",
+          content: "System 3",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam(undefined, messages);
+
+      expect(result).toBe("System 1\n\nSystem 2\n\nSystem 3");
+    });
+
+    it("should merge request.system with system-role messages in order", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "system",
+          content: "Inline system",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("Request system", messages);
+
+      // request.system comes first, then inline system messages
+      expect(result).toBe("Request system\n\nInline system");
+    });
+
+    it("should handle empty string requestSystem explicitly (not drop it)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("", messages);
+
+      // Empty string should be preserved (not treated as falsy and dropped)
+      expect(result).toBe("");
+    });
+
+    it("should throw when normalizeMessage receives system-role message", () => {
+      const msg: Message = {
+        role: "system",
+        content: "test",
+      };
+
+      expect(() => normalizeMessage(msg)).toThrow("system-role messages must be extracted before normalizeMessage");
     });
   });
 });

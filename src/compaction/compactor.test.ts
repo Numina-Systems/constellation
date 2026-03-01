@@ -156,7 +156,8 @@ describe('Pure helper functions', () => {
       const { toCompress, toKeep } = splitHistory(messages, 5);
       expect(toCompress.length).toBe(5);
       expect(toKeep.length).toBe(5);
-      expect(toCompress[0]?.id).toBe('1');
+      // With importance scoring, assistant messages score lower and should appear first
+      expect(toCompress[0]?.role).toBe('assistant');
       expect(toKeep[0]?.id).toBe('6');
       expect(toKeep[4]?.id).toBe('10');
     });
@@ -206,6 +207,115 @@ describe('Pure helper functions', () => {
 
       const { priorSummary } = splitHistory(messages, 2);
       expect(priorSummary).toBeNull();
+    });
+
+    it('AC3.4: sorts toCompress by importance ascending (lowest-scored first)', () => {
+      const messages = [
+        createMessage('sys', 'system', '[Context Summary — 50]', 0),
+        createMessage('1', 'assistant', 'short', 100),
+        createMessage('2', 'user', 'longer message with more content for scoring', 200),
+        createMessage('3', 'assistant', 'msg3', 300),
+        createMessage('4', 'user', 'recent user message', 400),
+        createMessage('5', 'assistant', 'kept recent', 500),
+      ];
+
+      const { toCompress, toKeep } = splitHistory(messages, 1);
+
+      // toCompress should be messages 1-4 (excluding prior summary at 0, and keeping recent at 5)
+      expect(toCompress.length).toBe(4);
+      expect(toKeep.length).toBe(1);
+      expect(toKeep[0]?.id).toBe('5');
+
+      // Within toCompress, messages should be sorted by importance ascending
+      // Message '1' (short assistant) should be first (lowest score)
+      // Message '2' (longer user) should be later (higher score)
+      expect(toCompress[0]?.id).toBe('1');
+      expect(toCompress[toCompress.length - 1]?.id).not.toBe('1');
+    });
+
+    it('AC3.6: maintains chronological order when messages have equal scores', () => {
+      const messages = [
+        createMessage('1', 'user', 'identical', 0),
+        createMessage('2', 'user', 'identical', 100),
+        createMessage('3', 'user', 'identical', 200),
+        createMessage('4', 'assistant', 'kept', 300),
+      ];
+
+      const { toCompress } = splitHistory(messages, 1);
+
+      // All toCompress messages have the same role and content, so same score
+      // They should maintain chronological order (1, 2, 3)
+      expect(toCompress.length).toBe(3);
+      expect(toCompress[0]?.id).toBe('1');
+      expect(toCompress[1]?.id).toBe('2');
+      expect(toCompress[2]?.id).toBe('3');
+    });
+
+    it('uses DEFAULT_SCORING_CONFIG when no config provided', () => {
+      const messages = [
+        createMessage('1', 'assistant', 'short', 0),
+        createMessage('2', 'user', 'longer message with content', 100),
+        createMessage('3', 'assistant', 'kept', 200),
+      ];
+
+      const { toCompress: toCompress1 } = splitHistory(messages, 1);
+
+      // Should use default config (user > assistant)
+      // So message '2' should score higher than '1', and '1' should be first
+      expect(toCompress1.length).toBe(2);
+      expect(toCompress1[0]?.id).toBe('1');
+    });
+
+    it('respects custom scoring config when provided', () => {
+      const customConfig = {
+        roleWeightSystem: 10.0,
+        roleWeightUser: 2.0,  // Lower than default (5.0)
+        roleWeightAssistant: 20.0,  // Much higher than default (3.0)
+        recencyDecay: 0.95,
+        questionBonus: 2.0,
+        toolCallBonus: 4.0,
+        keywordBonus: 1.5,
+        importantKeywords: ['error', 'fail', 'bug', 'fix', 'decision', 'agreed', 'constraint', 'requirement'],
+        contentLengthWeight: 1.0,
+      };
+
+      const messages = [
+        createMessage('1', 'user', 'short', 0),
+        createMessage('2', 'assistant', 'short', 100),
+        createMessage('3', 'assistant', 'kept', 200),
+      ];
+
+      const { toCompress } = splitHistory(messages, 1, customConfig);
+
+      // With custom config, assistant (20.0) weights more than user (2.0)
+      // So user message '1' should have lower score and appear first
+      expect(toCompress.length).toBe(2);
+      expect(toCompress[0]?.id).toBe('1');
+    });
+
+    it('handles single compressible message without sorting', () => {
+      const messages = [
+        createMessage('1', 'user', 'msg', 0),
+        createMessage('2', 'assistant', 'kept', 100),
+      ];
+
+      const { toCompress } = splitHistory(messages, 1);
+
+      // Only 1 message to compress, no sorting needed
+      expect(toCompress.length).toBe(1);
+      expect(toCompress[0]?.id).toBe('1');
+    });
+
+    it('handles empty compressible section (all kept)', () => {
+      const messages = [
+        createMessage('1', 'user', 'msg1', 0),
+        createMessage('2', 'user', 'msg2', 100),
+      ];
+
+      const { toCompress } = splitHistory(messages, 10);
+
+      // keepRecent is 10, but only 2 messages total, so nothing to compress
+      expect(toCompress.length).toBe(0);
     });
   });
 

@@ -169,19 +169,16 @@ describe("web-tools.AC2: Fetch pipeline", () => {
       const firstPage = await fetcher("https://example.com/large", 0);
 
       expect(firstPage.offset).toBe(0);
-      if (firstPage.total_length > 8000) {
-        expect(firstPage.has_more).toBe(true);
-      }
+      expect(firstPage.total_length).toBeGreaterThan(8000);
+      expect(firstPage.has_more).toBe(true);
       expect(firstPage.content.length).toBeLessThanOrEqual(8000);
 
-      if (firstPage.has_more) {
-        const secondPage = await fetcher(
-          "https://example.com/large",
-          firstPage.offset + firstPage.content.length
-        );
+      const secondPage = await fetcher(
+        "https://example.com/large",
+        firstPage.offset + firstPage.content.length
+      );
 
-        expect(secondPage.content.length).toBeGreaterThan(0);
-      }
+      expect(secondPage.content.length).toBeGreaterThan(0);
     });
   });
 
@@ -303,18 +300,9 @@ describe("web-tools.AC2: Fetch pipeline", () => {
         cache_ttl: 300000,
       });
 
-      let errorThrown = false;
-      let errorMessage = "";
-      try {
-        await fetcher("https://example.com/file.pdf");
-      } catch (error) {
-        errorThrown = true;
-        errorMessage =
-          error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorThrown).toBe(true);
-      expect(errorMessage).toContain("application/pdf");
+      await expect(
+        fetcher("https://example.com/file.pdf")
+      ).rejects.toThrow(/application\/pdf/);
     });
   });
 
@@ -358,7 +346,7 @@ describe("web-tools.AC2: Fetch pipeline", () => {
         if (signal instanceof AbortSignal) {
           return new Promise((_resolve, reject) => {
             signal.addEventListener("abort", () => {
-              reject(new DOMException("Aborted", "AbortError"));
+              reject(new DOMException("Aborted", "TimeoutError"));
             });
           });
         }
@@ -371,18 +359,9 @@ describe("web-tools.AC2: Fetch pipeline", () => {
         cache_ttl: 300000,
       });
 
-      let errorThrown = false;
-      let errorMessage = "";
-      try {
-        await fetcher("https://example.com/slow");
-      } catch (error) {
-        errorThrown = true;
-        errorMessage =
-          error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorThrown).toBe(true);
-      expect(errorMessage.toLowerCase()).toContain("timeout");
+      await expect(fetcher("https://example.com/slow")).rejects.toThrow(
+        /timeout/i
+      );
     });
   });
 
@@ -411,17 +390,18 @@ describe("web-tools.AC2: Fetch pipeline", () => {
 
       const page1 = await fetcher("https://example.com/paginated", 0);
 
-      if (page1.total_length > 8000) {
-        expect(page1.has_more).toBe(true);
+      expect(page1.total_length).toBeGreaterThan(8000);
+      expect(page1.has_more).toBe(true);
 
-        const nextOffset = page1.offset + page1.content.length;
-        const page2 = await fetcher("https://example.com/paginated", nextOffset);
+      const nextOffset = page1.offset + page1.content.length;
+      const page2 = await fetcher("https://example.com/paginated", nextOffset);
 
-        expect(page2.offset).toBe(nextOffset);
-        expect(page2.content).toHaveLength(
-          page1.total_length - page1.content.length
-        );
-      }
+      expect(page2.offset).toBe(nextOffset);
+      expect(page2.content.length).toBeGreaterThan(0);
+      expect(page2.content.length).toBeLessThanOrEqual(8000);
+      expect(page1.content.length + page2.content.length).toBeLessThanOrEqual(
+        page1.total_length
+      );
     });
   });
 

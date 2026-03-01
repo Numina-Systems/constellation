@@ -8,7 +8,8 @@ import type { ConversationMessage } from '../agent/types.js';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.js';
-import type { SummaryBatch } from './types.js';
+import type { SummaryBatch, ImportanceScoringConfig } from './types.js';
+import { DEFAULT_SCORING_CONFIG } from './types.js';
 import {
   splitHistory,
   chunkMessages,
@@ -241,10 +242,15 @@ describe('Pure helper functions', () => {
         createMessage('4', 'assistant', 'kept', 300),
       ];
 
-      const { toCompress } = splitHistory(messages, 1);
+      const noDecayConfig: Readonly<ImportanceScoringConfig> = {
+        ...DEFAULT_SCORING_CONFIG,
+        recencyDecay: 1.0,
+      };
 
-      // All toCompress messages have the same role and content, so same score
-      // They should maintain chronological order (1, 2, 3)
+      const { toCompress } = splitHistory(messages, 1, noDecayConfig);
+
+      // All toCompress messages have the same role, content, and recency (decay=1.0)
+      // They should maintain chronological order (1, 2, 3) due to stable sort
       expect(toCompress.length).toBe(3);
       expect(toCompress[0]?.id).toBe('1');
       expect(toCompress[1]?.id).toBe('2');

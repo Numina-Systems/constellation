@@ -6,12 +6,14 @@ Last verified: 2026-02-28
 Compresses conversation history to stay within context budget. Replaces old messages with LLM-generated summaries archived to memory, producing a "clip-archive" system message that preserves earliest and most recent context while keeping the middle searchable via memory.
 
 ## Contracts
-- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`), `createCompactor(options)`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
+- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`), `createCompactor(options)`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, `ImportanceScoringConfig`, `DEFAULT_SCORING_CONFIG`, `scoreMessage()`, prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
 - **Guarantees**:
   - `compress` never throws; pipeline failures return original history unchanged
   - Summary batches are archived to memory (archival tier) with metadata headers before messages are deleted
   - Clip-archive shows first N and last N batches; omitted middle is searchable via `memory_read`
   - Recursive re-summarization triggers when batch count exceeds clip window + buffer, producing higher-depth batches
+  - Messages to be compressed are sorted by importance (lowest-scored first) using configurable heuristic scoring
+  - Messages with identical importance scores maintain chronological order (stable sort)
   - Token estimation uses heuristic (1 token ~ 4 chars)
 - **Expects**: `ModelProvider` for LLM summarization, `MemoryManager` for archival writes/reads, `PersistenceProvider` for message deletion, valid `CompactionConfig`
 
@@ -34,7 +36,8 @@ Compresses conversation history to stay within context budget. Replaces old mess
 - Clip-archive system messages start with `[Context Summary`
 
 ## Key Files
-- `types.ts` -- `Compactor`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`
-- `compactor.ts` -- Pipeline implementation, pure helpers, `createCompactor` factory
+- `types.ts` -- `Compactor`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, `ImportanceScoringConfig`, `DEFAULT_SCORING_CONFIG`
+- `compactor.ts` -- Pipeline implementation, pure helpers, `splitHistory()` with importance-based sorting, `createCompactor` factory
+- `scoring.ts` -- Pure `scoreMessage()` function for importance-based message ranking (Functional Core)
 - `prompt.ts` -- Structured message builders for summarization and re-summarization LLM calls; exports `buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`
 - `index.ts` -- Barrel exports

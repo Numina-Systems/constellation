@@ -20,7 +20,7 @@ import { DEFAULT_SCORING_CONFIG } from './types.js';
  * @returns A numeric importance score
  */
 export function scoreMessage(
-  msg: ConversationMessage,
+  msg: Readonly<ConversationMessage>,
   index: number,
   total: number,
   config: ImportanceScoringConfig = DEFAULT_SCORING_CONFIG,

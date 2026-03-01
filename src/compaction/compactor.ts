@@ -43,7 +43,7 @@ export type CreateCompactorOptions = {
 export function splitHistory(
   history: ReadonlyArray<ConversationMessage>,
   keepRecent: number,
-  scoringConfig: ImportanceScoringConfig = DEFAULT_SCORING_CONFIG,
+  scoringConfig: Readonly<ImportanceScoringConfig> = DEFAULT_SCORING_CONFIG,
 ): {
   toCompress: ReadonlyArray<ConversationMessage>;
   toKeep: ReadonlyArray<ConversationMessage>;

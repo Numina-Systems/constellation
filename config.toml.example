@@ -25,6 +25,28 @@ url = "postgresql://constellation:constellation@localhost:5432/constellation"
 working_dir = "./workspace"
 allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 
+# [summarization]
+# provider = "openai-compat"
+# name = "olmo-3:7b-think"
+# base_url = "http://192.168.1.6:11434/v1"
+# chunk_size = 20
+# keep_recent = 5
+# max_summary_tokens = 1024
+# clip_first = 2
+# clip_last = 2
+# prompt = "Custom system prompt for the summarization model"
+#
+# # Importance scoring weights (all optional, defaults shown)
+# role_weight_system = 10.0
+# role_weight_user = 5.0
+# role_weight_assistant = 3.0
+# recency_decay = 0.95
+# question_bonus = 2.0
+# tool_call_bonus = 4.0
+# keyword_bonus = 1.5
+# important_keywords = ["error", "fail", "bug", "fix", "decision", "agreed", "constraint", "requirement"]
+# content_length_weight = 1.0
+
 # Bluesky integration. Requires handle, app_password, and did when enabled.
 # For production, use environment variables: BLUESKY_HANDLE, BLUESKY_APP_PASSWORD
 [bluesky]
@@ -34,3 +56,14 @@ app_password = "xxxx-xxxx-xxxx-xxxx"
 did = "did:plc:example"
 watched_dids = ["did:plc:friend1", "did:plc:friend2"]
 jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
+
+# Web search and fetch tools. Requires at least one search provider API key.
+# For production, use environment variables: BRAVE_API_KEY, TAVILY_API_KEY
+[web]
+# brave_api_key = "BSA..."
+# tavily_api_key = "tvly-..."
+# searxng_endpoint = "http://localhost:8080"
+# max_results = 10
+# fetch_timeout = 30000
+# max_fetch_size = 1048576
+# cache_ttl = 300000

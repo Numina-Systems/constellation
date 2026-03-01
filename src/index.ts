@@ -20,10 +20,15 @@ import { createMemoryManager } from '@/memory/manager';
 import { createToolRegistry } from '@/tool/registry';
 import { createMemoryTools } from '@/tool/builtin/memory';
 import { createExecuteCodeTool } from '@/tool/builtin/code';
+import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
+import { createCompactor } from '@/compaction';
+import { createWebTools } from '@/tool/builtin/web';
+import { createSearchChain, createFetcher } from '@/web';
 import type { MemoryManager } from '@/memory/manager';
+import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
 import type { ExecutionContext } from '@/runtime/types';
@@ -33,6 +38,7 @@ import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
+import type { ModelProvider } from '@/model/types';
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -283,6 +289,18 @@ async function main(): Promise<void> {
   const model = createModelProvider(config.model);
   const embedding = createEmbeddingProvider(config.embedding);
 
+  // Create summarization model provider
+  // If summarization config exists, create a dedicated provider from it
+  // Otherwise, reuse the main model provider
+  const summarizationModel: ModelProvider = config.summarization
+    ? createModelProvider({
+        provider: config.summarization.provider,
+        name: config.summarization.name,
+        api_key: config.summarization.api_key,
+        base_url: config.summarization.base_url,
+      })
+    : model;
+
   // Connect to database and run migrations
   await persistence.connect();
   console.log('connected to database');
@@ -306,6 +324,25 @@ async function main(): Promise<void> {
     registry.register(tool);
   }
   registry.register(createExecuteCodeTool());
+  registry.register(createCompactContextTool());
+
+  if (config.web) {
+    const searchChain = createSearchChain(config.web);
+    const fetcher = createFetcher({
+      fetch_timeout: config.web.fetch_timeout,
+      max_fetch_size: config.web.max_fetch_size,
+      cache_ttl: config.web.cache_ttl,
+    });
+    const webTools = createWebTools({
+      search: (query, limit) => searchChain.search(query, limit),
+      fetcher,
+      defaultMaxResults: config.web.max_results,
+    });
+    for (const tool of webTools) {
+      registry.register(tool);
+    }
+    console.log(`web tools registered (providers: ${searchChain.providers.join(', ')})`);
+  }
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
 
@@ -348,6 +385,35 @@ async function main(): Promise<void> {
       }
     : undefined;
 
+  // Create compactor with configuration from config.summarization
+  const compactionConfig: CompactionConfig = {
+    chunkSize: config.summarization?.chunk_size ?? 20,
+    keepRecent: config.summarization?.keep_recent ?? 5,
+    maxSummaryTokens: config.summarization?.max_summary_tokens ?? 1024,
+    clipFirst: config.summarization?.clip_first ?? 2,
+    clipLast: config.summarization?.clip_last ?? 2,
+    prompt: config.summarization?.prompt ?? null,
+    scoring: config.summarization ? {
+      roleWeightSystem: config.summarization.role_weight_system,
+      roleWeightUser: config.summarization.role_weight_user,
+      roleWeightAssistant: config.summarization.role_weight_assistant,
+      recencyDecay: config.summarization.recency_decay,
+      questionBonus: config.summarization.question_bonus,
+      toolCallBonus: config.summarization.tool_call_bonus,
+      keywordBonus: config.summarization.keyword_bonus,
+      importantKeywords: config.summarization.important_keywords,
+      contentLengthWeight: config.summarization.content_length_weight,
+    } : undefined,
+  };
+
+  const compactor = createCompactor({
+    model: summarizationModel,
+    memory,
+    persistence,
+    config: compactionConfig,
+    modelName: config.summarization?.name ?? config.model.name,
+  });
+
   const agent = createAgent({
     model,
     memory,
@@ -361,6 +427,7 @@ async function main(): Promise<void> {
       model_name: config.model.name,
     },
     getExecutionContext,
+    compactor,
   });
 
   if (blueskyConnected && blueskySource) {

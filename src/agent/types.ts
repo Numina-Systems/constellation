@@ -11,13 +11,14 @@ import type { MemoryManager } from '../memory/manager.ts';
 import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime, ExecutionContext } from '../runtime/types.ts';
 import type { PersistenceProvider } from '../persistence/types.ts';
+import type { Compactor } from '../compaction/types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
   context_budget: number;
   model_max_tokens?: number; // Model's context window size (default: 200000 for Claude 3 Sonnet)
   model_name?: string; // LLM model name (default: claude-3-sonnet-20250219)
-  max_tokens?: number; // Token limit per request (default: 4096)
+  max_tokens?: number; // Token limit per request (default: 24576)
 };
 
 export type ConversationMessage = {
@@ -45,6 +46,7 @@ export type AgentDependencies = {
   persistence: PersistenceProvider;
   config: AgentConfig;
   getExecutionContext?: () => ExecutionContext;
+  compactor?: Compactor;
 };
 
 export type Agent = {

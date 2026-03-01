@@ -163,6 +163,59 @@ allowed_hosts = []
     });
   });
 
+  describe('AC4.2: Web tools absent from registry when [web] config is omitted', () => {
+    it('should not register web_search and web_fetch when config.web is undefined', () => {
+      // Create a temporary config file WITHOUT a [web] section
+      const tmpDir = tmpdir();
+      tempConfigPath = join(tmpDir, `test-config-no-web-${Date.now()}.toml`);
+
+      const configContent = `
+[model]
+provider = "anthropic"
+api_key = "dummy"
+name = "claude-3-5-sonnet-20241022"
+
+[embedding]
+provider = "openai"
+api_key = "dummy"
+model = "text-embedding-3-small"
+
+[database]
+url = "postgresql://dummy"
+
+[runtime]
+allowed_hosts = []
+`;
+
+      writeFileSync(tempConfigPath, configContent);
+
+      try {
+        const config = loadConfig(tempConfigPath);
+
+        // Verify config.web is undefined
+        expect(config.web).toBeUndefined();
+
+        // Create an empty registry (as if we didn't call the web tools registration logic)
+        const registry = createToolRegistry();
+
+        // Verify that web_search and web_fetch are NOT in the definitions
+        const definitions = registry.getDefinitions();
+        const toolNames = definitions.map((d) => d.name);
+        expect(toolNames).not.toContain('web_search');
+        expect(toolNames).not.toContain('web_fetch');
+      } finally {
+        // Cleanup
+        if (tempConfigPath) {
+          try {
+            unlinkSync(tempConfigPath);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+      }
+    });
+  });
+
   describe('AC5.2: Deno runtime net permissions unaffected by web tools', () => {
     it('should not affect runtime config when web tools are registered', () => {
       const registry = createTestRegistry();

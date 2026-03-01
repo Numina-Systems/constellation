@@ -169,11 +169,6 @@ export function chunkMessages(
 }
 
 /**
- * Convert messages to a string format for the summarization prompt.
- * Format: "role: content\n" for each message.
- */
-
-/**
  * Estimate tokens using the heuristic: 1 token ≈ 4 characters.
  */
 export function estimateTokens(text: string): number {

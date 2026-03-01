@@ -199,7 +199,7 @@ allowed_hosts = []
         return {
           ok: true,
           status: 200,
-          headers: new Map([['content-type', 'application/json']]),
+          headers: new Headers({'content-type': 'application/json'}),
           json: async () => braveResponse,
         } as any;
       }) as any;
@@ -234,7 +234,7 @@ allowed_hosts = []
         return {
           ok: true,
           status: 200,
-          headers: new Map([['content-type', 'application/json']]),
+          headers: new Headers({'content-type': 'application/json'}),
           json: async () => braveResponse,
         } as any;
       }) as any;
@@ -280,7 +280,7 @@ allowed_hosts = []
         return {
           ok: true,
           status: 200,
-          headers: new Map([['content-type', 'text/html']]),
+          headers: new Headers({'content-type': 'text/html'}),
           text: async () => mockHtml,
         } as any;
       }) as any;
@@ -321,7 +321,7 @@ allowed_hosts = []
         return {
           ok: true,
           status: 200,
-          headers: new Map([['content-type', 'text/html']]),
+          headers: new Headers({'content-type': 'text/html'}),
           text: async () => longHtml,
         } as any;
       }) as any;
@@ -371,7 +371,7 @@ allowed_hosts = []
         return {
           ok: true,
           status: 200,
-          headers: new Map([['content-type', 'application/pdf']]),
+          headers: new Headers({'content-type': 'application/pdf'}),
           text: async () => '%PDF-1.4...',
         } as any;
       }) as any;

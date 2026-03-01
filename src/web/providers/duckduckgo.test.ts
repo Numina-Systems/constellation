@@ -196,7 +196,7 @@ describe("DuckDuckGo adapter", () => {
   });
 
   it("sends POST request with User-Agent and form-encoded body", async () => {
-    let capturedRequest: any = null;
+    let capturedRequest: { url: string; method: string; headers: Record<string, string>; body: string } | null = null;
 
     globalThis.fetch = (async (url: string, options: any) => {
       capturedRequest = { url, ...options };
@@ -209,15 +209,16 @@ describe("DuckDuckGo adapter", () => {
     const adapter = createDuckDuckGoAdapter();
     await adapter.search("test query", 10);
 
-    expect(capturedRequest.method).toBe("POST");
-    expect(capturedRequest.url).toBe("https://html.duckduckgo.com/html/");
-    expect(capturedRequest.headers["User-Agent"]).toBeDefined();
-    expect(capturedRequest.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
-    expect(capturedRequest.body).toContain("q=");
+    expect(capturedRequest).toBeDefined();
+    expect(capturedRequest!.method).toBe("POST");
+    expect(capturedRequest!.url).toBe("https://html.duckduckgo.com/html/");
+    expect(capturedRequest!.headers["User-Agent"]).toBeDefined();
+    expect(capturedRequest!.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(capturedRequest!.body).toContain("q=");
   });
 
   it("URL encodes query parameter properly", async () => {
-    let capturedRequest: any = null;
+    let capturedRequest: { url: string; method: string; headers: Record<string, string>; body: string } | null = null;
 
     globalThis.fetch = (async (url: string, options: any) => {
       capturedRequest = { url, ...options };
@@ -230,6 +231,7 @@ describe("DuckDuckGo adapter", () => {
     const adapter = createDuckDuckGoAdapter();
     await adapter.search("test & special chars", 10);
 
-    expect(capturedRequest.body).toBe(`q=${encodeURIComponent("test & special chars")}`);
+    expect(capturedRequest).toBeDefined();
+    expect(capturedRequest!.body).toBe(`q=${encodeURIComponent("test & special chars")}`);
   });
 });

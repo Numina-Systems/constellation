@@ -1,7 +1,7 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { createFetcher } from "./fetch.js";
+import { createFetcher } from "./fetch.ts";
 
 type MockResponse = {
   status: number;

@@ -4,7 +4,7 @@ import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import { gfm } from "@truto/turndown-plugin-gfm";
-import type { FetchResult, FetchCacheEntry } from "./types.js";
+import type { FetchResult, FetchCacheEntry } from "./types.ts";
 
 export function createFetcher(config: {
   readonly fetch_timeout: number;

@@ -10,7 +10,7 @@ function extractUrl(href: string): string {
     try {
       const parsed = new URL(href, "https://duckduckgo.com");
       const uddg = parsed.searchParams.get("uddg");
-      if (uddg) return decodeURIComponent(uddg);
+      if (uddg) return uddg;
     } catch {
       // fall through to raw href
     }
@@ -42,6 +42,9 @@ export function createDuckDuckGoAdapter(): SearchProvider {
       const resultElements = document.querySelectorAll(".result");
       const results: Array<{ title: string; url: string; snippet: string }> = [];
 
+      // linkedom's DOM implementation doesn't type querySelectorAll as NodeListOf<Element>,
+      // so we cast to ArrayLike to use Array.from(). This is safe because the elements
+      // are guaranteed to be DOM nodes from querySelectorAll.
       const resultArray = Array.from(resultElements as unknown as ArrayLike<any>);
       for (const el of resultArray.slice(0, limit)) {
         const anchor = el.querySelector(".result__a");

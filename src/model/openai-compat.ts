@@ -100,7 +100,20 @@ function normalizeUsage(usage: OpenAI.Completions.CompletionUsage): UsageStats {
   };
 }
 
-function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam {
+export function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam {
+  if (msg.role === "system") {
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : msg.content
+          .filter((b): b is { type: "text"; text: string } => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+    return {
+      role: "system",
+      content: text,
+    };
+  }
+
   if (typeof msg.content === "string") {
     return {
       role: msg.role,

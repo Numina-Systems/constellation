@@ -8,10 +8,10 @@
 import type { Tool } from '../types.ts';
 import type { SearchResponse, FetchResult } from '../../web/types.ts';
 
-type SearchFn = (query: string, limit: number) => Promise<SearchResponse>;
-type FetchFn = (url: string, offset?: number) => Promise<FetchResult>;
+export type SearchFn = (query: string, limit: number) => Promise<SearchResponse>;
+export type FetchFn = (url: string, offset?: number) => Promise<FetchResult>;
 
-type WebToolOptions = {
+export type WebToolOptions = {
   readonly search: SearchFn;
   readonly fetcher: FetchFn;
   readonly defaultMaxResults: number;

@@ -1,39 +1,36 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect } from 'bun:test';
-import type { SearchResponse, FetchResult } from '../../web/types.ts';
+import type { SearchFn, FetchFn, WebToolOptions } from './web.ts';
 import { createWebTools } from './web.ts';
-
-type SearchFn = (query: string, limit: number) => Promise<SearchResponse>;
-type FetchFn = (url: string, offset?: number) => Promise<FetchResult>;
-
-type WebToolOptions = {
-  readonly search: SearchFn;
-  readonly fetcher: FetchFn;
-  readonly defaultMaxResults: number;
-};
+import { createToolRegistry } from '../registry.ts';
 
 describe('Built-in web tools', () => {
-  describe('web_search and web_fetch tool creation', () => {
-    it('should create exactly 2 tools (web_search and web_fetch)', () => {
-      const mockSearch: SearchFn = async () => ({
+  function createMockOptions(overrides?: Partial<WebToolOptions>): WebToolOptions {
+    const defaultMocks: WebToolOptions = {
+      search: async () => ({
         results: [],
         provider: 'mock',
-      });
-      const mockFetcher: FetchFn = async () => ({
+      }),
+      fetcher: async () => ({
         url: 'https://example.com',
         title: 'Example',
         content: '# Example',
         total_length: 9,
         offset: 0,
         has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
+      }),
+      defaultMaxResults: 10,
+    };
 
+    return {
+      ...defaultMocks,
+      ...overrides,
+    };
+  }
+  describe('web_search and web_fetch tool creation', () => {
+    it('should create exactly 2 tools (web_search and web_fetch)', () => {
+      const options = createMockOptions();
       const tools = createWebTools(options);
 
       expect(tools.length).toBe(2);
@@ -43,24 +40,7 @@ describe('Built-in web tools', () => {
     });
 
     it('should define web_search with correct name and description', () => {
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
-
+      const options = createMockOptions();
       const tools = createWebTools(options);
       const webSearch = tools.find((t) => t.definition.name === 'web_search');
 
@@ -72,24 +52,7 @@ describe('Built-in web tools', () => {
     });
 
     it('should define web_fetch with correct name and description', () => {
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
-
+      const options = createMockOptions();
       const tools = createWebTools(options);
       const webFetch = tools.find((t) => t.definition.name === 'web_fetch');
 
@@ -101,24 +64,7 @@ describe('Built-in web tools', () => {
     });
 
     it('should define web_search with query (required) and limit (optional) parameters', () => {
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
-
+      const options = createMockOptions();
       const tools = createWebTools(options);
       const webSearch = tools.find((t) => t.definition.name === 'web_search');
 
@@ -141,24 +87,7 @@ describe('Built-in web tools', () => {
     });
 
     it('should define web_fetch with url (required) and continue_from (optional) parameters', () => {
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
-
+      const options = createMockOptions();
       const tools = createWebTools(options);
       const webFetch = tools.find((t) => t.definition.name === 'web_fetch');
 
@@ -200,20 +129,8 @@ describe('Built-in web tools', () => {
           provider: 'mock',
         };
       };
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ search: mockSearch });
       const tools = createWebTools(options);
       const webSearch = tools.find((t) => t.definition.name === 'web_search');
       expect(webSearch).toBeDefined();
@@ -235,20 +152,8 @@ describe('Built-in web tools', () => {
         capturedLimit = limit;
         return { results: [], provider: 'mock' };
       };
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 25,
-      };
 
+      const options = createMockOptions({ search: mockSearch, defaultMaxResults: 25 });
       const tools = createWebTools(options);
       const webSearch = tools.find((t) => t.definition.name === 'web_search');
       expect(webSearch).toBeDefined();
@@ -266,20 +171,8 @@ describe('Built-in web tools', () => {
         capturedLimit = limit;
         return { results: [], provider: 'mock' };
       };
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ search: mockSearch });
       const tools = createWebTools(options);
       const webSearch = tools.find((t) => t.definition.name === 'web_search');
       expect(webSearch).toBeDefined();
@@ -294,20 +187,8 @@ describe('Built-in web tools', () => {
       const mockSearch: SearchFn = async () => {
         throw new Error('Search provider error');
       };
-      const mockFetcher: FetchFn = async () => ({
-        url: 'https://example.com',
-        title: 'Example',
-        content: '# Example',
-        total_length: 9,
-        offset: 0,
-        has_more: false,
-      });
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ search: mockSearch });
       const tools = createWebTools(options);
       const webSearch = tools.find((t) => t.definition.name === 'web_search');
       expect(webSearch).toBeDefined();
@@ -327,10 +208,6 @@ describe('Built-in web tools', () => {
       let capturedUrl: string | null = null;
       let capturedOffset: number | null = null;
 
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
       const mockFetcher: FetchFn = async (url, offset) => {
         capturedUrl = url;
         capturedOffset = offset ?? 0;
@@ -343,12 +220,8 @@ describe('Built-in web tools', () => {
           has_more: false,
         };
       };
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ fetcher: mockFetcher });
       const tools = createWebTools(options);
       const webFetch = tools.find((t) => t.definition.name === 'web_fetch');
       expect(webFetch).toBeDefined();
@@ -366,10 +239,6 @@ describe('Built-in web tools', () => {
     it('should use offset 0 when continue_from is not provided', async () => {
       let capturedOffset: number | null = null;
 
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
       const mockFetcher: FetchFn = async (url, offset) => {
         capturedOffset = offset ?? 0;
         return {
@@ -381,12 +250,8 @@ describe('Built-in web tools', () => {
           has_more: false,
         };
       };
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ fetcher: mockFetcher });
       const tools = createWebTools(options);
       const webFetch = tools.find((t) => t.definition.name === 'web_fetch');
       expect(webFetch).toBeDefined();
@@ -400,10 +265,6 @@ describe('Built-in web tools', () => {
     it('should pass continue_from as offset when provided', async () => {
       let capturedOffset: number | null = null;
 
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
       const mockFetcher: FetchFn = async (url, offset) => {
         capturedOffset = offset ?? 0;
         return {
@@ -415,12 +276,8 @@ describe('Built-in web tools', () => {
           has_more: true,
         };
       };
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ fetcher: mockFetcher });
       const tools = createWebTools(options);
       const webFetch = tools.find((t) => t.definition.name === 'web_fetch');
       expect(webFetch).toBeDefined();
@@ -432,19 +289,11 @@ describe('Built-in web tools', () => {
     });
 
     it('should catch errors and return success: false with error message', async () => {
-      const mockSearch: SearchFn = async () => ({
-        results: [],
-        provider: 'mock',
-      });
       const mockFetcher: FetchFn = async () => {
         throw new Error('Network timeout');
       };
-      const options: WebToolOptions = {
-        search: mockSearch,
-        fetcher: mockFetcher,
-        defaultMaxResults: 10,
-      };
 
+      const options = createMockOptions({ fetcher: mockFetcher });
       const tools = createWebTools(options);
       const webFetch = tools.find((t) => t.definition.name === 'web_fetch');
       expect(webFetch).toBeDefined();
@@ -456,6 +305,96 @@ describe('Built-in web tools', () => {
       expect(result.output).toBe('');
       expect(result.error).toContain('web fetch failed');
       expect(result.error).toContain('Network timeout');
+    });
+  });
+
+  describe('AC4.1: Registry integration', () => {
+    it('should register web_search and web_fetch in createToolRegistry and appear in getDefinitions', () => {
+      const options = createMockOptions();
+      const tools = createWebTools(options);
+      const registry = createToolRegistry();
+
+      for (const tool of tools) {
+        registry.register(tool);
+      }
+
+      const definitions = registry.getDefinitions();
+      expect(definitions.length).toBe(2);
+
+      const names = definitions.map((d) => d.name);
+      expect(names).toContain('web_search');
+      expect(names).toContain('web_fetch');
+    });
+
+    it('should have correct descriptions and parameters in registry definitions', () => {
+      const options = createMockOptions();
+      const tools = createWebTools(options);
+      const registry = createToolRegistry();
+
+      for (const tool of tools) {
+        registry.register(tool);
+      }
+
+      const definitions = registry.getDefinitions();
+      const webSearchDef = definitions.find((d) => d.name === 'web_search');
+      const webFetchDef = definitions.find((d) => d.name === 'web_fetch');
+
+      expect(webSearchDef).toBeDefined();
+      expect(webSearchDef?.description).toContain('Search the web');
+      expect(webSearchDef?.parameters.length).toBe(2);
+
+      expect(webFetchDef).toBeDefined();
+      expect(webFetchDef?.description).toContain('Fetch a URL');
+      expect(webFetchDef?.parameters.length).toBe(2);
+    });
+  });
+
+  describe('AC4.3: IPC bridge stub generation', () => {
+    it('should generate stubs with correct function names and parameter signatures', () => {
+      const options = createMockOptions();
+      const tools = createWebTools(options);
+      const registry = createToolRegistry();
+
+      for (const tool of tools) {
+        registry.register(tool);
+      }
+
+      const stubs = registry.generateStubs();
+
+      expect(stubs).toContain('async function web_search');
+      expect(stubs).toContain('async function web_fetch');
+      expect(stubs).toContain('__callTool__("web_search"');
+      expect(stubs).toContain('__callTool__("web_fetch"');
+    });
+
+    it('should generate web_search stub with query (required) and limit (optional) parameters', () => {
+      const options = createMockOptions();
+      const tools = createWebTools(options);
+      const registry = createToolRegistry();
+
+      for (const tool of tools) {
+        registry.register(tool);
+      }
+
+      const stubs = registry.generateStubs();
+
+      expect(stubs).toContain('query: string');
+      expect(stubs).toContain('limit?: number');
+    });
+
+    it('should generate web_fetch stub with url (required) and continue_from (optional) parameters', () => {
+      const options = createMockOptions();
+      const tools = createWebTools(options);
+      const registry = createToolRegistry();
+
+      for (const tool of tools) {
+        registry.register(tool);
+      }
+
+      const stubs = registry.generateStubs();
+
+      expect(stubs).toContain('url: string');
+      expect(stubs).toContain('continue_from?: number');
     });
   });
 });

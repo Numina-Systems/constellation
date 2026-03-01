@@ -10,6 +10,29 @@ import { writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+function createTestRegistry(config?: { brave_api_key?: string }) {
+  const testConfig = config || { brave_api_key: 'test-key' };
+  const chain = createSearchChain(testConfig);
+  const fetcher = createFetcher({
+    fetch_timeout: 5000,
+    max_fetch_size: 1000000,
+    cache_ttl: 3600000,
+  });
+
+  const webTools = createWebTools({
+    search: (q, limit) => chain.search(q, limit),
+    fetcher,
+    defaultMaxResults: 10,
+  });
+
+  const registry = createToolRegistry();
+  for (const tool of webTools) {
+    registry.register(tool);
+  }
+
+  return registry;
+}
+
 describe('Web tools integration tests', () => {
   let originalFetch: typeof fetch;
   let tempConfigPath: string | null = null;
@@ -32,25 +55,7 @@ describe('Web tools integration tests', () => {
 
   describe('AC4.3: IPC bridge stub generation for web tools', () => {
     it('should generate typed stubs for web_search with correct signature', () => {
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const stubs = registry.generateStubs();
 
       expect(stubs).toContain('async function web_search');
@@ -59,25 +64,7 @@ describe('Web tools integration tests', () => {
     });
 
     it('should generate typed stubs for web_fetch with correct signature', () => {
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const stubs = registry.generateStubs();
 
       expect(stubs).toContain('async function web_fetch');
@@ -178,24 +165,7 @@ allowed_hosts = []
 
   describe('AC5.2: Deno runtime net permissions unaffected by web tools', () => {
     it('should not affect runtime config when web tools are registered', () => {
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
+      const registry = createTestRegistry();
 
       // Verify that registering web tools doesn't require changes to existing runtime config
       // Web tools execute on Bun host via tool handler path, not in Deno sandbox
@@ -234,25 +204,7 @@ allowed_hosts = []
         } as any;
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_search', { query: 'test' });
 
       expect(result.success).toBe(true);
@@ -287,34 +239,15 @@ allowed_hosts = []
         } as any;
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_search', {
         query: 'test',
         limit: 5,
       });
 
       expect(result.success).toBe(true);
-      if (capturedUrl) {
-        expect(String(capturedUrl)).toContain('count=5');
-      }
+      expect(capturedUrl).not.toBeNull();
+      expect(String(capturedUrl)).toContain('count=5');
     });
 
     it('should handle search errors gracefully', async () => {
@@ -322,25 +255,7 @@ allowed_hosts = []
         throw new Error('Network error');
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_search', { query: 'test' });
 
       expect(result.success).toBe(false);
@@ -370,25 +285,7 @@ allowed_hosts = []
         } as any;
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_fetch', {
         url: 'https://example.com',
       });
@@ -429,24 +326,7 @@ allowed_hosts = []
         } as any;
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
+      const registry = createTestRegistry();
 
       // First request to populate cache
       const result1 = await registry.dispatch('web_fetch', {
@@ -456,19 +336,19 @@ allowed_hosts = []
       const output1 = JSON.parse(result1.output);
       const totalLength = output1.total_length;
 
-      // Only test pagination if content is long enough
-      if (totalLength > 1000) {
-        // Second request with pagination offset (use a smaller offset within bounds)
-        const offsetToUse = Math.min(500, Math.max(0, totalLength - 100));
-        const result2 = await registry.dispatch('web_fetch', {
-          url: 'https://example.com/long',
-          continue_from: offsetToUse,
-        });
-        expect(result2.success).toBe(true);
-        const output2 = JSON.parse(result2.output);
-        expect(output2.offset).toBe(offsetToUse);
-        expect(output2.total_length).toBe(totalLength);
-      }
+      // Assert pagination conditions unconditionally
+      expect(totalLength).toBeGreaterThan(1000);
+
+      // Second request with pagination offset (use a smaller offset within bounds)
+      const offsetToUse = Math.min(500, Math.max(0, totalLength - 100));
+      const result2 = await registry.dispatch('web_fetch', {
+        url: 'https://example.com/long',
+        continue_from: offsetToUse,
+      });
+      expect(result2.success).toBe(true);
+      const output2 = JSON.parse(result2.output);
+      expect(output2.offset).toBe(offsetToUse);
+      expect(output2.total_length).toBe(totalLength);
     });
 
     it('should handle fetch errors gracefully', async () => {
@@ -476,25 +356,7 @@ allowed_hosts = []
         throw new Error('Connection timeout');
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_fetch', {
         url: 'https://example.com',
       });
@@ -514,25 +376,7 @@ allowed_hosts = []
         } as any;
       }) as any;
 
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_fetch', {
         url: 'https://example.com/document.pdf',
       });
@@ -544,25 +388,7 @@ allowed_hosts = []
 
   describe('Dispatch error handling', () => {
     it('should return error for missing required parameter', async () => {
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_search', {});
 
       expect(result.success).toBe(false);
@@ -571,25 +397,7 @@ allowed_hosts = []
     });
 
     it('should return error for invalid parameter type', async () => {
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('web_search', {
         query: 'test',
         limit: 'not a number',
@@ -601,25 +409,7 @@ allowed_hosts = []
     });
 
     it('should return error for unknown tool', async () => {
-      const config = { brave_api_key: 'test-key' };
-      const chain = createSearchChain(config);
-      const fetcher = createFetcher({
-        fetch_timeout: 5000,
-        max_fetch_size: 1000000,
-        cache_ttl: 3600000,
-      });
-
-      const webTools = createWebTools({
-        search: (q, limit) => chain.search(q, limit),
-        fetcher,
-        defaultMaxResults: 10,
-      });
-
-      const registry = createToolRegistry();
-      for (const tool of webTools) {
-        registry.register(tool);
-      }
-
+      const registry = createTestRegistry();
       const result = await registry.dispatch('nonexistent_tool', {});
 
       expect(result.success).toBe(false);

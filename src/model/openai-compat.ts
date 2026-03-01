@@ -119,7 +119,15 @@ export function normalizeMessages(msgs: ReadonlyArray<Message>): Array<OpenAI.Ch
     }
 
     if (typeof msg.content === "string") {
-      result.push({ role: msg.role, content: msg.content });
+      if (msg.role === "assistant" && msg.reasoning_content) {
+        result.push({
+          role: "assistant",
+          content: msg.content,
+          reasoning_content: msg.reasoning_content,
+        } as OpenAI.Chat.ChatCompletionMessageParam);
+      } else {
+        result.push({ role: msg.role, content: msg.content });
+      }
       continue;
     }
 
@@ -142,7 +150,8 @@ export function normalizeMessages(msgs: ReadonlyArray<Message>): Array<OpenAI.Ch
         role: "assistant",
         content: textContent,
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-      });
+        ...(msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}),
+      } as OpenAI.Chat.ChatCompletionMessageParam);
     } else if (msg.role === "user" && toolResultBlocks.length > 0) {
       for (const block of toolResultBlocks) {
         const content = typeof block.content === "string"
@@ -234,6 +243,8 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
 
       const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
+      const reasoningContent = (choice.message as unknown as Record<string, unknown>)["reasoning_content"] as string | null | undefined;
+
       return {
         content: normalizeContentBlocks(
           choice.message.content,
@@ -241,6 +252,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
         ),
         stop_reason: normalizeStopReason(choice.finish_reason),
         usage: normalizeUsage(usage as OpenAI.Completions.CompletionUsage),
+        reasoning_content: reasoningContent ?? null,
       };
     },
 

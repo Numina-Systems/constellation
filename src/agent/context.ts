@@ -65,11 +65,13 @@ export async function buildMessages(
         messages.push({
           role: 'assistant',
           content: contentBlocks,
+          reasoning_content: msg.reasoning_content,
         });
       } else {
         messages.push({
           role: 'assistant',
           content: msg.content,
+          reasoning_content: msg.reasoning_content,
         });
       }
     } else if (msg.role === 'tool') {

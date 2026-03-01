@@ -133,6 +133,7 @@ export function createAgent(
           role: 'assistant',
           content: assistantText || '[Tool calls]',
           tool_calls: toolUseBlocks,
+          reasoning_content: response.reasoning_content,
         });
 
         // Dispatch each tool use and collect results
@@ -203,6 +204,7 @@ export function createAgent(
           role: 'assistant',
           content: assistantText || '[Tool calls]',
           tool_calls: toolUseBlocks,
+          reasoning_content: response.reasoning_content,
           created_at: new Date(),
         });
 
@@ -257,6 +259,7 @@ export function createAgent(
     content: string;
     tool_calls?: Array<ToolUseBlock>;
     tool_call_id?: string;
+    reasoning_content?: string | null;
   }): Promise<string> {
     const result = await deps.persistence.query(
       `INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, created_at)

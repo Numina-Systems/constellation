@@ -28,6 +28,7 @@ export type ConversationMessage = {
   content: string;
   tool_calls?: unknown;
   tool_call_id?: string;
+  reasoning_content?: string | null;
   created_at: Date;
 };
 

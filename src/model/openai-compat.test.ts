@@ -464,5 +464,44 @@ describe("createOpenAICompatAdapter", () => {
       expect((result[1] as OpenAI.Chat.ChatCompletionAssistantMessageParam).tool_calls).toHaveLength(1);
       expect((result[2] as OpenAI.Chat.ChatCompletionToolMessageParam).tool_call_id).toBe("call_abc");
     });
+
+    it("should include reasoning_content on assistant messages when present", () => {
+      const msgs: Array<Message> = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "call_789",
+              name: "memory_search",
+              input: { query: "test" },
+            },
+          ],
+          reasoning_content: "I should search memory for this.",
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(1);
+      const msg = result[0] as unknown as Record<string, unknown>;
+      expect(msg["role"]).toBe("assistant");
+      expect(msg["reasoning_content"]).toBe("I should search memory for this.");
+    });
+
+    it("should omit reasoning_content when not present", () => {
+      const msgs: Array<Message> = [
+        {
+          role: "assistant",
+          content: "Just text, no reasoning.",
+        },
+      ];
+
+      const result = normalizeMessages(msgs);
+
+      expect(result).toHaveLength(1);
+      const msg = result[0] as unknown as Record<string, unknown>;
+      expect(msg["reasoning_content"]).toBeUndefined();
+    });
   });
 });

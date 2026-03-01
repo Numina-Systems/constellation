@@ -52,4 +52,4 @@ export function loadConfig(configPath?: string): AppConfig {
   return AppConfigSchema.parse(merged);
 }
 
-export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, WebConfig } from "./schema.ts";
+export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig } from "./schema.ts";

@@ -27,10 +27,11 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
-- `src/tool/` -- Tool registry, built-in tools (memory, code, web)
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/agent/` -- Agent loop, context building, compression
+- `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
 - `src/index.ts` -- Entry point, composition root, REPL

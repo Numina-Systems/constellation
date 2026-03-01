@@ -33,7 +33,7 @@ export type ToolDefinition = {
 };
 
 export type Message = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string | Array<ContentBlock>;
 };
 

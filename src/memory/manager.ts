@@ -35,6 +35,7 @@ export interface MemoryManager {
     reason?: string,
   ): Promise<MemoryWriteResult>;
   list(tier?: MemoryTier): Promise<Array<MemoryBlock>>;
+  deleteBlock(id: string): Promise<void>;
 
   // Mutation management
   getPendingMutations(): Promise<Array<PendingMutation>>;
@@ -186,6 +187,18 @@ export function createMemoryManager(
     return [...core, ...working, ...archival];
   }
 
+  async function deleteBlock(id: string): Promise<void> {
+    await store.deleteBlock(id);
+
+    // Log the delete event
+    await store.logEvent({
+      block_id: id,
+      event_type: 'delete',
+      old_content: null,
+      new_content: null,
+    });
+  }
+
   async function getPendingMutations(): Promise<Array<PendingMutation>> {
     return store.getPendingMutations(owner);
   }
@@ -258,6 +271,7 @@ export function createMemoryManager(
     read,
     write,
     list,
+    deleteBlock,
     getPendingMutations,
     approveMutation,
     rejectMutation,

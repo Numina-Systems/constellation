@@ -1,12 +1,12 @@
 # Memory
 
-Last verified: 2026-02-23
+Last verified: 2026-02-28
 
 ## Purpose
 Implements a three-tier memory system (core/working/archival) with permission-based write access, semantic search via pgvector, event sourcing, and a mutation approval flow for human-controlled blocks.
 
 ## Contracts
-- **Exposes**: `MemoryManager` interface (context building, read/write/list, mutation management), `MemoryStore` port interface, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, all memory types
+- **Exposes**: `MemoryManager` interface (context building, read/write/list/deleteBlock, mutation management), `MemoryStore` port interface, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, all memory types
 - **Guarantees**:
   - `readonly` blocks cannot be written to
   - `familiar`-permissioned blocks queue a `PendingMutation` instead of writing directly (requires human approval)
@@ -18,7 +18,7 @@ Implements a three-tier memory system (core/working/archival) with permission-ba
 
 ## Dependencies
 - **Uses**: `src/persistence/` (via `MemoryStore`), `src/embedding/` (via `EmbeddingProvider`)
-- **Used by**: `src/tool/builtin/memory.ts`, `src/agent/`, `src/index.ts`
+- **Used by**: `src/tool/builtin/memory.ts`, `src/agent/`, `src/compaction/`, `src/index.ts`
 - **Boundary**: Direct SQL access goes through `MemoryStore` only, never through `MemoryManager`.
 
 ## Key Decisions

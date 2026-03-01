@@ -6,8 +6,8 @@ Last verified: 2026-03-01
 Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.
 
 ## Contracts
-- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, `WebConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, `WebConfig`, etc.)
-- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`). `[web]` section is optional; when absent, web tools are not registered.
+- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, `SummarizationConfigSchema`, `WebConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, `SummarizationConfig`, `WebConfig`, etc.)
+- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`). `summarization` section is optional; when absent, compaction uses defaults. Importance scoring weights (`role_weight_*`, `recency_decay`, `*_bonus`, `important_keywords`, `content_length_weight`) are part of the summarization section with sensible defaults. `[web]` section is optional; when absent, web tools are not registered.
 - **Expects**: `config.toml` exists at project root (or path provided). TOML structure matches `AppConfigSchema`.
 
 ## Dependencies

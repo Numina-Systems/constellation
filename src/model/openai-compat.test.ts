@@ -8,12 +8,12 @@ import type { Message } from "./types.js";
 
 describe("createOpenAICompatAdapter", () => {
   describe("initialization", () => {
-    it("should throw if no api key is configured or in environment", () => {
+    it("should succeed without api key for local model endpoints", () => {
       const config: ModelConfig = {
         provider: "openai-compat",
         name: "gpt-4",
       };
-      expect(() => createOpenAICompatAdapter(config)).toThrow();
+      expect(() => createOpenAICompatAdapter(config)).not.toThrow();
     });
 
     it("should accept api_key from config", () => {

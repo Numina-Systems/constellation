@@ -381,11 +381,6 @@ async function main(): Promise<void> {
     persistence,
     config: compactionConfig,
     modelName: config.summarization?.name ?? config.model.name,
-    getPersona: async () => {
-      const blocks = await memory.list('core');
-      const persona = blocks.find(b => b.label === 'core:persona');
-      return persona?.content ?? '';
-    },
   });
 
   const agent = createAgent({

@@ -23,6 +23,20 @@ model = "text-embedding-3-small"
 url = "postgresql://localhost/test"
 `;
 
+const openaiCompatTomlContent = `
+[model]
+provider = "openai-compat"
+name = "kimi-k2.5"
+base_url = "https://api.moonshot.ai/v1"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+
+[database]
+url = "postgresql://localhost/test"
+`;
+
 describe("loadConfig env var overrides", () => {
   let tempPath: string;
 
@@ -33,6 +47,8 @@ describe("loadConfig env var overrides", () => {
   afterEach(() => {
     delete process.env["BLUESKY_HANDLE"];
     delete process.env["BLUESKY_APP_PASSWORD"];
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["OPENAI_COMPAT_API_KEY"];
     try {
       unlinkSync(tempPath);
     } catch {
@@ -113,6 +129,50 @@ did = "did:plc:example"
       const config = loadConfig(tempPath);
 
       expect(config.bluesky.app_password).toBe("env-password");
+    });
+  });
+
+  describe("model API key env overrides respect provider", () => {
+    it("should use ANTHROPIC_API_KEY for anthropic provider", () => {
+      writeFileSync(tempPath, baseTomlContent);
+      process.env["ANTHROPIC_API_KEY"] = "sk-ant-test";
+
+      const config = loadConfig(tempPath);
+      expect(config.model.api_key).toBe("sk-ant-test");
+    });
+
+    it("should use OPENAI_COMPAT_API_KEY for openai-compat provider", () => {
+      writeFileSync(tempPath, openaiCompatTomlContent);
+      process.env["OPENAI_COMPAT_API_KEY"] = "sk-moonshot-test";
+
+      const config = loadConfig(tempPath);
+      expect(config.model.api_key).toBe("sk-moonshot-test");
+    });
+
+    it("should not use ANTHROPIC_API_KEY for openai-compat provider", () => {
+      const toml = `${openaiCompatTomlContent}\n`;
+      writeFileSync(tempPath, toml);
+      process.env["ANTHROPIC_API_KEY"] = "sk-ant-wrong";
+
+      const config = loadConfig(tempPath);
+      expect(config.model.api_key).toBeUndefined();
+    });
+
+    it("should not use OPENAI_COMPAT_API_KEY for anthropic provider", () => {
+      writeFileSync(tempPath, baseTomlContent);
+      process.env["OPENAI_COMPAT_API_KEY"] = "sk-compat-wrong";
+
+      const config = loadConfig(tempPath);
+      expect(config.model.api_key).toBeUndefined();
+    });
+
+    it("should prefer env var over TOML api_key", () => {
+      const toml = openaiCompatTomlContent + 'api_key = "toml-key"\n';
+      writeFileSync(tempPath, toml);
+      process.env["OPENAI_COMPAT_API_KEY"] = "env-key";
+
+      const config = loadConfig(tempPath);
+      expect(config.model.api_key).toBe("env-key");
     });
   });
 

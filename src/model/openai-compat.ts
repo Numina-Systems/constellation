@@ -149,7 +149,7 @@ export function normalizeMessage(msg: Message): OpenAI.Chat.ChatCompletionMessag
 
 
 export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
-  const apiKey = config.api_key || process.env["OPENAI_API_KEY"] || "unused";
+  const apiKey = config.api_key || "unused";
 
   const client = new OpenAI({
     apiKey,

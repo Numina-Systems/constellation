@@ -11,12 +11,15 @@ export function loadConfig(configPath?: string): AppConfig {
 
   const envOverrides: Record<string, unknown> = {};
 
-  if (process.env["ANTHROPIC_API_KEY"] || process.env["OPENAI_COMPAT_API_KEY"]) {
-    const modelObj = (parsed["model"] as Record<string, unknown>) ?? {};
-    modelObj["api_key"] =
-      process.env["ANTHROPIC_API_KEY"] ??
-      process.env["OPENAI_COMPAT_API_KEY"] ??
-      modelObj["api_key"];
+  const modelObj = (parsed["model"] as Record<string, unknown>) ?? {};
+  const modelProvider = modelObj["provider"] as string | undefined;
+  const modelEnvKey =
+    modelProvider === "openai-compat"
+      ? process.env["OPENAI_COMPAT_API_KEY"]
+      : process.env["ANTHROPIC_API_KEY"];
+
+  if (modelEnvKey) {
+    modelObj["api_key"] = modelEnvKey;
     envOverrides["model"] = modelObj;
   }
 

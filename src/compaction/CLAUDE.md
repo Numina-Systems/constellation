@@ -6,7 +6,7 @@ Last verified: 2026-02-28
 Compresses conversation history to stay within context budget. Replaces old messages with LLM-generated summaries archived to memory, producing a "clip-archive" system message that preserves earliest and most recent context while keeping the middle searchable via memory.
 
 ## Contracts
-- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`), `createCompactor(options)`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, prompt utilities (`interpolatePrompt`, `DEFAULT_SUMMARIZATION_PROMPT`)
+- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`), `createCompactor(options)`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
 - **Guarantees**:
   - `compress` never throws; pipeline failures return original history unchanged
   - Summary batches are archived to memory (archival tier) with metadata headers before messages are deleted
@@ -22,6 +22,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
 
 ## Key Decisions
 - Chunk-and-fold summarization: Messages chunked, each chunk summarized with accumulated context from prior chunks
+- Structured summarization prompts: LLM calls use `ModelRequest.system` for system prompt and `ModelRequest.messages` with proper role context (system-role for prior summary, user/assistant for conversation, user for directive)
 - Clip-archive over full replay: Only earliest + most recent batches injected into context; middle omitted but searchable
 - Metadata headers in archival content: `[depth:N|start:ISO|end:ISO|count:M]` prefix enables batch reconstruction without extra DB columns
 - Graceful degradation: Pipeline errors return original history, never corrupt conversation state
@@ -35,5 +36,5 @@ Compresses conversation history to stay within context budget. Replaces old mess
 ## Key Files
 - `types.ts` -- `Compactor`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`
 - `compactor.ts` -- Pipeline implementation, pure helpers, `createCompactor` factory
-- `prompt.ts` -- Summarization prompt template and interpolation
+- `prompt.ts` -- Structured message builders for summarization and re-summarization LLM calls; exports `buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`
 - `index.ts` -- Barrel exports

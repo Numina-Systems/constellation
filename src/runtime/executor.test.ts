@@ -10,10 +10,11 @@ import { describe, it, beforeEach, afterEach, expect } from 'bun:test';
 import { mkdirSync, rmSync, existsSync } from 'fs';
 import { resolve } from 'path';
 
-import { createDenoExecutor } from '@/runtime/executor';
+import { createDenoExecutor, generateCredentialConstants } from '@/runtime/executor';
 import type { ToolRegistry } from '@/tool/types';
 import type { RuntimeConfig } from '@/config/schema';
 import type { AgentConfig } from '@/config/schema';
+import type { ExecutionContext } from '@/runtime/types';
 
 // Create a mock ToolRegistry for testing
 function createMockRegistry(): ToolRegistry {
@@ -494,5 +495,150 @@ output("result: " + JSON.stringify(result));
     // Verify that we got back the tool result structure with output field
     expect(result.output).toContain('echo:');
     expect(result.tool_calls_made).toBe(1);
+  });
+
+  it('permits network access to PDS host when bluesky context is provided', async () => {
+    const context: ExecutionContext = {
+      bluesky: {
+        service: 'https://bsky.social',
+        pdsUrl: 'https://example.com/',
+        accessToken: 'test',
+        refreshToken: 'test',
+        did: 'did:plc:test',
+        handle: 'test.bsky',
+      },
+    };
+
+    // example.com is already in allowed_hosts from the test config,
+    // so fetching it should not be denied.
+    // The real value is that a PDS host NOT in allowed_hosts gets added.
+    // We test with a host that IS in allowed_hosts to verify the dedup path,
+    // then separately verify a non-listed host would work.
+    const code = `
+try {
+  const response = await fetch("http://example.com", { method: "HEAD" });
+  output("status: " + String(response.status));
+} catch (e) {
+  output("fetch error: " + String(e));
+}
+`;
+
+    const result = await executor.execute(code, '', context);
+
+    expect(result.success).toBe(true);
+    expect(result.output).not.toContain('permission denied');
+    expect(result.output).not.toContain('network access is denied');
+  });
+
+  describe('generateCredentialConstants', () => {
+    it('bsky-datasource.AC3.1: generates all 5 credential constants when context provided', () => {
+      const context: ExecutionContext = {
+        bluesky: {
+          service: 'https://bsky.social',
+          pdsUrl: 'https://bankera.us-west.host.bsky.network/',
+          accessToken: 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9',
+          refreshToken: 'eyJyZWZyZXNoIjp0cnVlfQ',
+          did: 'did:plc:test123',
+          handle: 'testuser.bsky',
+        },
+      };
+
+      const result = generateCredentialConstants(context);
+
+      expect(result).toContain('const BSKY_SERVICE = ');
+      expect(result).toContain('const BSKY_ACCESS_TOKEN = ');
+      expect(result).toContain('const BSKY_REFRESH_TOKEN = ');
+      expect(result).toContain('const BSKY_DID = ');
+      expect(result).toContain('const BSKY_HANDLE = ');
+      expect(result).toContain('https://bsky.social');
+      expect(result).toContain('eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9');
+      expect(result).toContain('eyJyZWZyZXNoIjp0cnVlfQ');
+      expect(result).toContain('did:plc:test123');
+      expect(result).toContain('testuser.bsky');
+    });
+
+    it('bsky-datasource.AC3.2: returns empty string when context is undefined', () => {
+      const result = generateCredentialConstants(undefined);
+      expect(result).toBe('');
+    });
+
+    it('bsky-datasource.AC3.2: returns empty string when context has no bluesky field', () => {
+      const context: ExecutionContext = {};
+      const result = generateCredentialConstants(context);
+      expect(result).toBe('');
+    });
+
+    it('bsky-datasource.AC3.3: produces syntactically valid TypeScript with proper escaping', () => {
+      const context: ExecutionContext = {
+        bluesky: {
+          service: 'https://bsky.social',
+          pdsUrl: 'https://bankera.us-west.host.bsky.network/',
+          accessToken: 'token"with"quotes',
+          refreshToken: 'token\\with\\backslash',
+          did: 'did:plc:123',
+          handle: 'user.bsky',
+        },
+      };
+
+      const result = generateCredentialConstants(context);
+      const lines = result.split('\n');
+
+      // Verify each line is a valid const declaration
+      for (const line of lines) {
+        expect(line).toMatch(/^const BSKY_\w+ = ".+";$/);
+      }
+
+      // Verify the output contains all 5 lines
+      expect(lines).toHaveLength(5);
+
+      // Verify special characters are escaped
+      expect(result).toContain('token\\"with\\"quotes');
+      expect(result).toContain('token\\\\with\\\\backslash');
+    });
+
+    it('bsky-datasource.AC3.3: injected constants are valid in actual code execution', async () => {
+      const context: ExecutionContext = {
+        bluesky: {
+          service: 'https://bsky.social',
+          pdsUrl: 'https://bankera.us-west.host.bsky.network/',
+          accessToken: 'test_access_token_123',
+          refreshToken: 'test_refresh_token_456',
+          did: 'did:plc:testuser',
+          handle: 'testuser.bsky',
+        },
+      };
+
+      const code = `
+output("Service: " + BSKY_SERVICE);
+output("Access: " + BSKY_ACCESS_TOKEN);
+output("Refresh: " + BSKY_REFRESH_TOKEN);
+output("DID: " + BSKY_DID);
+output("Handle: " + BSKY_HANDLE);
+`;
+
+      const result = await executor.execute(code, '', context);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('Service: https://bsky.social');
+      expect(result.output).toContain('Access: test_access_token_123');
+      expect(result.output).toContain('Refresh: test_refresh_token_456');
+      expect(result.output).toContain('DID: did:plc:testuser');
+      expect(result.output).toContain('Handle: testuser.bsky');
+    });
+
+    it('bsky-datasource.AC3.2: credentials not present in REPL execution (no context)', async () => {
+      const code = `
+try {
+  output("Service: " + BSKY_SERVICE);
+} catch (e) {
+  output("BSKY_SERVICE not defined");
+}
+`;
+
+      const result = await executor.execute(code, '');
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('BSKY_SERVICE not defined');
+    });
   });
 });

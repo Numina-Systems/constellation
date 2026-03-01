@@ -1,18 +1,18 @@
 # Config
 
-Last verified: 2026-02-23
+Last verified: 2026-02-28
 
 ## Purpose
 Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.
 
 ## Contracts
-- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas, config type aliases
-- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets.
+- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, etc.)
+- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`).
 - **Expects**: `config.toml` exists at project root (or path provided). TOML structure matches `AppConfigSchema`.
 
 ## Dependencies
 - **Uses**: `@iarna/toml`, `zod`, `node:fs`
-- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`
+- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`, `src/extensions/bluesky/` (BlueskyConfig)
 - **Boundary**: Config is read-only after load. No module should mutate config at runtime.
 
 ## Key Decisions

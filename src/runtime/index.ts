@@ -3,6 +3,7 @@
 export type {
   CodeRuntime,
   ExecutionResult,
+  ExecutionContext,
   IpcDebug,
   IpcMessage,
   IpcOutput,

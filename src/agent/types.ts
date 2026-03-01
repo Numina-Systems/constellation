@@ -9,7 +9,7 @@
 import type { ModelProvider } from '../model/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ToolRegistry } from '../tool/types.ts';
-import type { CodeRuntime } from '../runtime/types.ts';
+import type { CodeRuntime, ExecutionContext } from '../runtime/types.ts';
 import type { PersistenceProvider } from '../persistence/types.ts';
 
 export type AgentConfig = {
@@ -30,6 +30,13 @@ export type ConversationMessage = {
   created_at: Date;
 };
 
+export type ExternalEvent = {
+  readonly source: string;
+  readonly content: string;
+  readonly metadata: Record<string, unknown>;
+  readonly timestamp: Date;
+};
+
 export type AgentDependencies = {
   model: ModelProvider;
   memory: MemoryManager;
@@ -37,10 +44,12 @@ export type AgentDependencies = {
   runtime: CodeRuntime;
   persistence: PersistenceProvider;
   config: AgentConfig;
+  getExecutionContext?: () => ExecutionContext;
 };
 
 export type Agent = {
   processMessage(userMessage: string): Promise<string>;
+  processEvent(event: ExternalEvent): Promise<string>;
   getConversationHistory(): Promise<Array<ConversationMessage>>;
   conversationId: string;
 };

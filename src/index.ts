@@ -10,6 +10,7 @@ const DEFAULT_MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
 import * as readline from 'readline';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
 import { createPostgresProvider } from '@/persistence/postgres';
 import { createModelProvider } from '@/model/factory';
@@ -21,8 +22,13 @@ import { createMemoryTools } from '@/tool/builtin/memory';
 import { createExecuteCodeTool } from '@/tool/builtin/code';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
+import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
 import type { MemoryManager } from '@/memory/manager';
 import type { Agent } from '@/agent/types';
+import type { BlueskyDataSource } from '@/extensions/bluesky';
+import type { ExecutionContext } from '@/runtime/types';
+import type { IncomingMessage } from '@/extensions/data-source';
+import type { EventQueue } from '@/extensions/bluesky';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
@@ -65,7 +71,6 @@ export async function performShutdown(
   rl: readline.Interface,
   persistence: PersistenceProvider,
 ): Promise<void> {
-  console.log('\nShutting down...');
   rl.close();
   await persistence.disconnect();
 }
@@ -77,8 +82,18 @@ export async function performShutdown(
 export function createShutdownHandler(
   rl: readline.Interface,
   persistence: PersistenceProvider,
+  blueskySource?: BlueskyDataSource | null,
 ): () => Promise<void> {
   return async (): Promise<void> => {
+    console.log('\nShutting down...');
+    if (blueskySource) {
+      try {
+        await blueskySource.disconnect();
+        console.log('bluesky datasource disconnected');
+      } catch (error) {
+        console.error('error disconnecting bluesky:', error);
+      }
+    }
     await performShutdown(rl, persistence);
     process.exit(0);
   };
@@ -94,6 +109,32 @@ function promptForLine(rl: readline.Interface, prompt: string): Promise<string> 
       resolve(answer.trim());
     });
   });
+}
+
+/**
+ * Process events from a queue, catching errors so one failed event doesn't crash the loop.
+ * Extracted for testability (AC6.5: processEvent errors don't crash listener).
+ * Caller provides the event queue and agent; this function drains the queue
+ * and ensures errors are logged but don't prevent subsequent events from processing.
+ */
+export async function processEventQueue(
+  eventQueue: EventQueue,
+  agent: Agent,
+): Promise<void> {
+  let event = eventQueue.shift();
+  while (event) {
+    try {
+      const result = await agent.processEvent(event);
+      if (result) {
+        console.log(`[bluesky] agent response: ${result}`);
+      }
+    } catch (error) {
+      // AC6.5: Log error but don't crash
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`bluesky processEvent error: ${errorMsg}`);
+    }
+    event = eventQueue.shift();
+  }
 }
 
 /**
@@ -252,6 +293,10 @@ async function main(): Promise<void> {
   const memoryStore = createPostgresMemoryStore(persistence);
   await seedCoreMemory(memoryStore, embedding, 'persona.md');
 
+  if (config.bluesky?.enabled) {
+    await seedBlueskyTemplates(memoryStore, embedding);
+  }
+
   // Create domain modules
   const memory = createMemoryManager(memoryStore, embedding, 'spirit');
 
@@ -263,6 +308,46 @@ async function main(): Promise<void> {
   registry.register(createExecuteCodeTool());
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
+
+  // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
+  let blueskySource: BlueskyDataSource | null = null;
+  let blueskyConnected = false;
+
+  if (config.bluesky?.enabled) {
+    try {
+      const bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
+      blueskySource = createBlueskySource(config.bluesky, bskyAgent);
+      await blueskySource.connect();
+      blueskyConnected = true;
+    } catch (error) {
+      // AC6.3: Jetstream failure doesn't block REPL
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`bluesky datasource failed to connect: ${errorMsg}`);
+      console.error('continuing without bluesky integration');
+      blueskySource = null;
+    }
+  }
+
+  // Getter reads fresh tokens from the DataSource at execution time.
+  // Shared by both REPL and Bluesky agents so either can post to Bluesky.
+  // Returns undefined when bluesky is not connected, so the sandbox
+  // simply won't have BSKY_* constants available.
+  const getExecutionContext = blueskyConnected && blueskySource
+    ? (): ExecutionContext => {
+        const src = blueskySource!;
+        return {
+          bluesky: {
+            service: "https://bsky.social",
+            pdsUrl: src.getPdsUrl(),
+            accessToken: src.getAccessToken(),
+            refreshToken: src.getRefreshToken(),
+            did: config.bluesky.did!,
+            handle: config.bluesky.handle!,
+          },
+        };
+      }
+    : undefined;
+
   const agent = createAgent({
     model,
     memory,
@@ -275,7 +360,61 @@ async function main(): Promise<void> {
       model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
       model_name: config.model.name,
     },
+    getExecutionContext,
   });
+
+  if (blueskyConnected && blueskySource) {
+      // Create dedicated Bluesky agent with deterministic conversation ID
+      // Zod validates that did is present when enabled, but TypeScript doesn't know it
+      const blueskyConversationId = `bluesky-${config.bluesky.did!}`;
+
+      const blueskyAgent = createAgent({
+        model,
+        memory,
+        registry,
+        runtime,
+        persistence,
+        config: {
+          max_tool_rounds: config.agent.max_tool_rounds,
+          context_budget: config.agent.context_budget,
+          model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+          model_name: config.model.name,
+        },
+        getExecutionContext,
+      }, blueskyConversationId);
+
+      // Set up event queue and processing loop
+      const eventQueue = createEventQueue(50);
+      let processing = false;
+
+      async function processNextEvent(): Promise<void> {
+        if (processing) return;
+        processing = true;
+
+        try {
+          // AC6.4: Drain the queue in a loop. Events that arrive while we're processing
+          // the current batch will be processed in the same call (not dropped). The queue
+          // is bounded to prevent unbounded growth. Subsequent calls to processNextEvent()
+          // are no-ops (guarded by the processing flag) until this one completes.
+          await processEventQueue(eventQueue, blueskyAgent);
+        } finally {
+          processing = false;
+        }
+      }
+
+      blueskySource.onMessage((message: IncomingMessage) => {
+        // IncomingMessage (from DataSource) and ExternalEvent (agent input type) are
+        // structurally identical: { source, content, metadata, timestamp }. Both are
+        // passed as-is to processEvent without conversion; TypeScript confirms structural
+        // compatibility across module boundaries.
+        eventQueue.push(message);
+        processNextEvent().catch((error) => {
+          console.error('bluesky event processing error:', error);
+        });
+      });
+
+      console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
+  }
 
   // Set up readline interface for REPL
   const rl = readline.createInterface({
@@ -291,7 +430,7 @@ async function main(): Promise<void> {
   });
 
   // Set up graceful shutdown
-  const shutdownHandler = createShutdownHandler(rl, persistence);
+  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

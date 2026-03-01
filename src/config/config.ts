@@ -30,8 +30,15 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["database"] = { url: process.env["DATABASE_URL"] };
   }
 
+  if (process.env["BLUESKY_HANDLE"] || process.env["BLUESKY_APP_PASSWORD"]) {
+    const blueskyObj = (parsed["bluesky"] as Record<string, unknown>) ?? {};
+    blueskyObj["handle"] = process.env["BLUESKY_HANDLE"] ?? blueskyObj["handle"];
+    blueskyObj["app_password"] = process.env["BLUESKY_APP_PASSWORD"] ?? blueskyObj["app_password"];
+    envOverrides["bluesky"] = blueskyObj;
+  }
+
   const merged = { ...parsed, ...envOverrides };
   return AppConfigSchema.parse(merged);
 }
 
-export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig } from "./schema.ts";
+export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig } from "./schema.ts";

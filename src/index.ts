@@ -373,6 +373,17 @@ async function main(): Promise<void> {
     clipFirst: config.summarization?.clip_first ?? 2,
     clipLast: config.summarization?.clip_last ?? 2,
     prompt: config.summarization?.prompt ?? null,
+    scoring: config.summarization ? {
+      roleWeightSystem: config.summarization.role_weight_system,
+      roleWeightUser: config.summarization.role_weight_user,
+      roleWeightAssistant: config.summarization.role_weight_assistant,
+      recencyDecay: config.summarization.recency_decay,
+      questionBonus: config.summarization.question_bonus,
+      toolCallBonus: config.summarization.tool_call_bonus,
+      keywordBonus: config.summarization.keyword_bonus,
+      importantKeywords: config.summarization.important_keywords,
+      contentLengthWeight: config.summarization.content_length_weight,
+    } : undefined,
   };
 
   const compactor = createCompactor({

@@ -1,9 +1,10 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect } from "bun:test";
-import { createOpenAICompatAdapter } from "./openai-compat.js";
+import { createOpenAICompatAdapter, normalizeMessage } from "./openai-compat.js";
 import { ModelError } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
+import type { Message } from "./types.js";
 
 describe("createOpenAICompatAdapter", () => {
   describe("initialization", () => {
@@ -259,6 +260,75 @@ describe("createOpenAICompatAdapter", () => {
         ],
       });
       expect(response2.content).toBeDefined();
+    });
+  });
+
+  describe("system-role message handling", () => {
+    it("should normalize system-role message with string content", () => {
+      const msg: Message = {
+        role: "system",
+        content: "You are a helpful assistant.",
+      };
+
+      const result = normalizeMessage(msg);
+
+      expect(result.role).toBe("system");
+      expect(result.content).toBe("You are a helpful assistant.");
+    });
+
+    it("should normalize system-role message with content blocks", () => {
+      const msg: Message = {
+        role: "system",
+        content: [
+          { type: "text", text: "You are helpful." },
+          { type: "text", text: "Be concise." },
+        ],
+      };
+
+      const result = normalizeMessage(msg);
+
+      expect(result.role).toBe("system");
+      expect(result.content).toBe("You are helpful.\nBe concise.");
+    });
+
+    it("should extract only text blocks from system-role message", () => {
+      const msg: Message = {
+        role: "system",
+        content: [
+          { type: "text", text: "System instruction" },
+          { type: "tool_use", id: "123", name: "test", input: {} },
+          { type: "text", text: "More instructions" },
+        ],
+      };
+
+      const result = normalizeMessage(msg);
+
+      expect(result.role).toBe("system");
+      expect(result.content).toBe("System instruction\nMore instructions");
+    });
+
+    it("should normalize user-role message (backward compatibility)", () => {
+      const msg: Message = {
+        role: "user",
+        content: "Hello",
+      };
+
+      const result = normalizeMessage(msg);
+
+      expect(result.role).toBe("user");
+      expect(result.content).toBe("Hello");
+    });
+
+    it("should normalize assistant-role message (backward compatibility)", () => {
+      const msg: Message = {
+        role: "assistant",
+        content: "Hi there",
+      };
+
+      const result = normalizeMessage(msg);
+
+      expect(result.role).toBe("assistant");
+      expect(result.content).toBe("Hi there");
     });
   });
 });

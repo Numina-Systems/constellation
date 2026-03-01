@@ -127,8 +127,6 @@ async function createTestCompactor(): Promise<{
       prompt: null,
     },
     modelName: getOllamaModel(),
-    getPersona: async () =>
-      'You are a helpful assistant analyzing conversation history. Summarize key decisions and events.',
   });
 
   return { compactor, store, memory };

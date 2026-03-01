@@ -602,7 +602,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     const result = await compactor.compress(messages, 'test-conv');
@@ -636,7 +635,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     await compactor.compress(messages, 'test-conv');
@@ -679,7 +677,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     const result = await compactor.compress(messages, 'test-conv');
@@ -735,7 +732,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     await compactor.compress(messages, 'test-conv');
@@ -779,7 +775,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     const result = await compactor.compress(messages, 'test-conv');
@@ -815,7 +810,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     const result = await compactor.compress(messages, 'test-conv');
@@ -850,7 +844,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     await compactor.compress(messages, 'test-conv');
@@ -886,7 +879,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     await compactor.compress(messages, 'test-conv-123');
@@ -929,7 +921,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     const compResult = await compactor.compress(messages, 'test-conv');
@@ -1064,7 +1055,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence1,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     await compactor1.compress(initialMessages, 'test-conv');
@@ -1096,7 +1086,6 @@ describe('Compaction pipeline with mocked dependencies', () => {
       persistence: mockPersistence1,
       config,
       modelName: 'test-model',
-      getPersona: async () => 'Test persona',
     });
 
     // Combine previous history with new messages (but keep old ones compacted)

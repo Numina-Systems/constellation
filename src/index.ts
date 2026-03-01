@@ -23,6 +23,8 @@ import { createExecuteCodeTool } from '@/tool/builtin/code';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
+import { createWebTools } from '@/tool/builtin/web';
+import { createSearchChain, createFetcher } from '@/web';
 import type { MemoryManager } from '@/memory/manager';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
@@ -306,6 +308,24 @@ async function main(): Promise<void> {
     registry.register(tool);
   }
   registry.register(createExecuteCodeTool());
+
+  if (config.web) {
+    const searchChain = createSearchChain(config.web);
+    const fetcher = createFetcher({
+      fetch_timeout: config.web.fetch_timeout,
+      max_fetch_size: config.web.max_fetch_size,
+      cache_ttl: config.web.cache_ttl,
+    });
+    const webTools = createWebTools({
+      search: (query, limit) => searchChain.search(query, limit),
+      fetcher,
+      defaultMaxResults: config.web.max_results,
+    });
+    for (const tool of webTools) {
+      registry.register(tool);
+    }
+    console.log(`web tools registered (providers: ${searchChain.providers.join(', ')})`);
+  }
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
 

@@ -1,6 +1,6 @@
 # Compaction
 
-Last verified: 2026-02-28
+Last verified: 2026-03-01
 
 ## Purpose
 Compresses conversation history to stay within context budget. Replaces old messages with LLM-generated summaries archived to memory, producing a "clip-archive" system message that preserves earliest and most recent context while keeping the middle searchable via memory.

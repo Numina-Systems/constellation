@@ -40,6 +40,8 @@ export type ExternalEvent = {
   readonly timestamp: Date;
 };
 
+export type ContextProvider = () => string | undefined;
+
 export type AgentDependencies = {
   model: ModelProvider;
   memory: MemoryManager;
@@ -51,6 +53,7 @@ export type AgentDependencies = {
   compactor?: Compactor;
   traceRecorder?: TraceRecorder;
   owner?: string;
+  contextProviders?: ReadonlyArray<ContextProvider>;
 };
 
 export type Agent = {

@@ -1,6 +1,6 @@
 # Config
 
-Last verified: 2026-03-01
+Last verified: 2026-03-02
 
 ## Purpose
 Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.

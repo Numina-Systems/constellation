@@ -80,6 +80,7 @@ describe('DenoExecutor Integration Tests', () => {
       working_dir: testWorkdir,
       allowed_hosts: ['example.com', 'localhost:8000'],
       allowed_read_paths: [],
+      allowed_write_paths: [],
       allowed_run: [],
       max_code_size: 51200,
       max_output_size: 1048576,
@@ -528,6 +529,93 @@ try {
     expect(result.success).toBe(true);
     expect(result.output).not.toContain('permission denied');
     expect(result.output).not.toContain('network access is denied');
+  });
+
+  it('allows writing to allowed_write_paths outside working_dir', async () => {
+    const extraWriteDir = resolve(process.cwd(), 'workspace', 'test-extra-write');
+    mkdirSync(extraWriteDir, { recursive: true });
+
+    try {
+      const writeConfig = {
+        ...config,
+        allowed_write_paths: [extraWriteDir],
+      };
+      const writeExecutor = createDenoExecutor(writeConfig, createMockRegistry());
+
+      const code = `
+await Deno.mkdir("${extraWriteDir.replace(/\\/g, '\\\\')}/subdir", { recursive: true });
+await Deno.writeTextFile("${extraWriteDir.replace(/\\/g, '\\\\')}/subdir/test.txt", "hello from sandbox");
+const content = await Deno.readTextFile("${extraWriteDir.replace(/\\/g, '\\\\')}/subdir/test.txt");
+output("wrote: " + content);
+`;
+
+      const result = await writeExecutor.execute(code, '');
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('wrote: hello from sandbox');
+
+      // Verify file was actually created on the host filesystem
+      const fs = await import('fs');
+      expect(fs.existsSync(resolve(extraWriteDir, 'subdir', 'test.txt'))).toBe(true);
+      const fileContent = fs.readFileSync(resolve(extraWriteDir, 'subdir', 'test.txt'), 'utf-8');
+      expect(fileContent).toBe('hello from sandbox');
+    } finally {
+      rmSync(extraWriteDir, { recursive: true, force: true });
+    }
+  });
+
+  it('denies writing outside working_dir and allowed_write_paths', async () => {
+    const forbiddenDir = resolve(process.cwd(), 'workspace', 'test-forbidden');
+    mkdirSync(forbiddenDir, { recursive: true });
+
+    try {
+      // Config has no allowed_write_paths including forbiddenDir
+      const code = `
+try {
+  await Deno.writeTextFile("${forbiddenDir.replace(/\\/g, '\\\\')}/nope.txt", "should fail");
+  output("unexpected success");
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+      const result = await executor.execute(code, '');
+
+      expect(result.success).toBe(true);
+      expect(result.output.toLowerCase()).toMatch(/permission|denied|not allowed|notcapable/);
+    } finally {
+      rmSync(forbiddenDir, { recursive: true, force: true });
+    }
+  });
+
+  it('auto-includes allowed_write_paths in read permissions', async () => {
+    const writeOnlyDir = resolve(process.cwd(), 'workspace', 'test-write-read');
+    mkdirSync(writeOnlyDir, { recursive: true });
+
+    try {
+      // Write a file from host side, then read it from sandbox
+      const fs = await import('fs');
+      fs.writeFileSync(resolve(writeOnlyDir, 'preexisting.txt'), 'already here');
+
+      const writeConfig = {
+        ...config,
+        allowed_write_paths: [writeOnlyDir],
+        // NOT adding to allowed_read_paths — should auto-include
+      };
+      const writeExecutor = createDenoExecutor(writeConfig, createMockRegistry());
+
+      const code = `
+const content = await Deno.readTextFile("${writeOnlyDir.replace(/\\/g, '\\\\')}/preexisting.txt");
+output("read: " + content);
+`;
+
+      const result = await writeExecutor.execute(code, '');
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('read: already here');
+    } finally {
+      rmSync(writeOnlyDir, { recursive: true, force: true });
+    }
   });
 
   describe('generateCredentialConstants', () => {

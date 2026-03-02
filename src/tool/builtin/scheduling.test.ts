@@ -280,9 +280,12 @@ describe('createSchedulingTools — cancel_task', () => {
   } {
     const queries: Array<{ sql: string; params: ReadonlyArray<unknown> }> = [];
 
-    const mockQuery: QueryFunction = async (sql: string, params?: ReadonlyArray<unknown>) => {
+    const mockQuery: QueryFunction = async <T extends Record<string, unknown>>(
+      sql: string,
+      params?: ReadonlyArray<unknown>,
+    ): Promise<Array<T>> => {
       queries.push({ sql, params: params || [] });
-      return queryResults;
+      return queryResults as Array<T>;
     };
 
     return {
@@ -395,9 +398,12 @@ describe('createSchedulingTools — list_tasks', () => {
   } {
     const queries: Array<{ sql: string; params: ReadonlyArray<unknown> }> = [];
 
-    const mockQuery: QueryFunction = async (sql: string, params?: ReadonlyArray<unknown>) => {
+    const mockQuery: QueryFunction = async <T extends Record<string, unknown>>(
+      sql: string,
+      params?: ReadonlyArray<unknown>,
+    ): Promise<Array<T>> => {
       queries.push({ sql, params: params || [] });
-      return queryResults;
+      return queryResults as Array<T>;
     };
 
     return {

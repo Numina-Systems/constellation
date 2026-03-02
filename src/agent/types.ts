@@ -12,6 +12,7 @@ import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime, ExecutionContext } from '../runtime/types.ts';
 import type { PersistenceProvider } from '../persistence/types.ts';
 import type { Compactor } from '../compaction/types.ts';
+import type { TraceRecorder } from '../reflexion/types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -48,6 +49,8 @@ export type AgentDependencies = {
   config: AgentConfig;
   getExecutionContext?: () => ExecutionContext;
   compactor?: Compactor;
+  traceRecorder?: TraceRecorder;
+  owner?: string;
 };
 
 export type Agent = {

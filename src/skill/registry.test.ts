@@ -53,6 +53,52 @@ Test content`,
       expect(relevant[0]).toBeDefined();
       expect(relevant[0]?.metadata.name).toBe('test-skill');
     });
+
+    it('should exclude results below threshold with mixed scores', async () => {
+      const skill1Dir = join(builtinDir, 'high-score-skill');
+      mkdirSync(skill1Dir);
+      writeFileSync(
+        join(skill1Dir, 'SKILL.md'),
+        `---
+name: high-score-skill
+description: A skill with high relevance
+---
+# Body
+
+Highly relevant content`,
+      );
+
+      const skill2Dir = join(builtinDir, 'low-score-skill');
+      mkdirSync(skill2Dir);
+      writeFileSync(
+        join(skill2Dir, 'SKILL.md'),
+        `---
+name: low-score-skill
+description: A skill with low relevance
+---
+# Body
+
+Weakly relevant content`,
+      );
+
+      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      await registry.load();
+
+      // Set specific scores: high above threshold, low below
+      store.setScores(
+        new Map([
+          ['skill:builtin:high-score-skill', 0.8],
+          ['skill:builtin:low-score-skill', 0.2],
+        ]),
+      );
+
+      const threshold = 0.5;
+      const relevant = await registry.getRelevant('some context', 10, threshold);
+
+      expect(relevant).toHaveLength(1);
+      expect(relevant[0]).toBeDefined();
+      expect(relevant[0]?.metadata.name).toBe('high-score-skill');
+    });
   });
 
   describe('skills.AC5.2: getRelevant respects limit parameter', () => {
@@ -204,6 +250,33 @@ This is a test skill with searchable content`,
       const fileExists = await Bun.file(skillFilePath).exists();
       expect(fileExists).toBe(true);
     });
+
+    it('should safely handle descriptions with YAML special characters', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+
+      // Description with colon-space (YAML injection risk)
+      const unsafeDesc = 'Skill for: handling errors and special cases';
+      const created = await registry.createUserSkill(
+        'safe-skill',
+        unsafeDesc,
+        'This skill handles edge cases',
+        ['safe', 'secure'],
+      );
+
+      expect(created).toBeDefined();
+      expect(created.metadata.description).toBe(unsafeDesc);
+
+      // Retrieve and verify it round-trips correctly
+      const retrieved = registry.getByName('safe-skill');
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.metadata.description).toBe(unsafeDesc);
+
+      // Verify file content is valid YAML
+      const skillFilePath = join(userDir, 'safe-skill', 'SKILL.md');
+      const content = await Bun.file(skillFilePath).text();
+      expect(content).toContain('---');
+      // The file should parse without error (verified by registry loading)
+    });
   });
 
   describe('skills.AC5.7: updateUserSkill updates existing user skill', () => {
@@ -266,7 +339,7 @@ Builtin content`,
         expect.unreachable('Expected error to be thrown');
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        expect(message).toContain('Cannot update builtin skill');
+        expect(message).toContain('cannot update builtin skill');
         expect(message).toContain('user skills only');
       }
     });

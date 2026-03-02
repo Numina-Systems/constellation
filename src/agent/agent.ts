@@ -103,7 +103,7 @@ export function createAgent(
           }
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
-          console.error(`Warning: Failed to retrieve relevant skills: ${errorMsg}`);
+          console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
           // Continue with base system prompt if skill retrieval fails
         }
       }

@@ -370,6 +370,10 @@ async function main(): Promise<void> {
     }
 
     // Register skill-defined tools
+    // These tools are defined declaratively in skill frontmatter but executed as static skill content.
+    // The parameters are part of the tool definition (for agent context) but ignored by the handler,
+    // which simply returns the skill body. This design allows skills to declare tool affordances
+    // (what they can do) while keeping execution simple: tool invocation triggers skill retrieval.
     for (const skill of skillRegistry.getAll()) {
       if (skill.metadata.tools) {
         for (const toolDef of skill.metadata.tools) {

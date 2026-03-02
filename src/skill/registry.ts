@@ -2,6 +2,7 @@
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { stringify as stringifyYaml } from 'yaml';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { SkillStore } from './store.ts';
 import type { SkillDefinition, SkillRegistry, SkillSearchResult } from './types.ts';
@@ -33,14 +34,11 @@ function buildSkillMarkdown(
   body: string,
   tags?: ReadonlyArray<string>,
 ): string {
-  const yamlParts: Array<string> = [
-    `name: ${name}`,
-    `description: ${description}`,
-  ];
+  const frontmatter: Record<string, unknown> = { name, description };
   if (tags && tags.length > 0) {
-    yamlParts.push(`tags: [${tags.map((t) => `"${t}"`).join(', ')}]`);
+    frontmatter['tags'] = [...tags];
   }
-  return `---\n${yamlParts.join('\n')}\n---\n\n${body}`;
+  return `---\n${stringifyYaml(frontmatter)}---\n\n${body}`;
 }
 
 export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillRegistry {
@@ -125,7 +123,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
     ): Promise<SkillDefinition> {
       const nameValidation = validateSkillName(name);
       if (!nameValidation.valid) {
-        throw new Error(`Invalid skill name: ${nameValidation.error}`);
+        throw new Error(`invalid skill name: ${nameValidation.error}`);
       }
 
       const skillDir = join(userDir, name);
@@ -137,7 +135,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
 
       const parseResult = parseSkillFile(content);
       if (!parseResult.success) {
-        throw new Error(`Failed to parse created skill: ${parseResult.error}`);
+        throw new Error(`failed to parse created skill: ${parseResult.error}`);
       }
 
       const contentHash = computeContentHash(content);
@@ -173,10 +171,10 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
     ): Promise<SkillDefinition> {
       const existing = skillsByName.get(name);
       if (!existing) {
-        throw new Error(`Skill "${name}" not found`);
+        throw new Error(`skill "${name}" not found`);
       }
       if (existing.source !== 'user') {
-        throw new Error(`Cannot update builtin skill "${name}" — user skills only`);
+        throw new Error(`cannot update builtin skill "${name}" — user skills only`);
       }
 
       const skillDir = join(userDir, name);
@@ -186,7 +184,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
 
       const parseResult = parseSkillFile(content);
       if (!parseResult.success) {
-        throw new Error(`Failed to parse updated skill: ${parseResult.error}`);
+        throw new Error(`failed to parse updated skill: ${parseResult.error}`);
       }
 
       const contentHash = computeContentHash(content);

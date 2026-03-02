@@ -36,6 +36,7 @@ import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { createPostgresScheduler } from '@/scheduler';
+import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -687,6 +688,16 @@ async function main(): Promise<void> {
   // Set up scheduler for periodic tasks
   const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER);
   const systemScheduler = createPostgresScheduler(persistence, 'system');
+
+  // Register scheduling tools
+  const schedulingTools = createSchedulingTools({
+    scheduler: agentScheduler,
+    owner: AGENT_OWNER,
+    persistence,
+  });
+  for (const tool of schedulingTools) {
+    registry.register(tool);
+  }
 
   // Create event queue and processing function for scheduler events
   const schedulerEventQueue = createEventQueue(10);

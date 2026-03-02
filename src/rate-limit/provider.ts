@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.js';
+import type { ModelProvider, ModelRequest, ModelResponse, StreamEvent } from '../model/types.js';
 import type { RateLimiterConfig, RateLimitStatus } from './types.js';
 import { createTokenBucket, tryConsume, recordConsumption, getStatus } from './bucket.js';
 import { estimateInputTokens } from './estimate.js';
@@ -80,13 +80,7 @@ export function createRateLimitedProvider(
           otpmBucketState = otpmResult.bucket;
 
           if (rpmResult.allowed && itpmResult.allowed && otpmResult.allowed) {
-            // All buckets have capacity
-            rpmBucketState = { ...rpmBucketState, tokens: rpmBucketState.tokens - 1 };
-            itpmBucketState = {
-              ...itpmBucketState,
-              tokens: itpmBucketState.tokens - estimatedInputTokens,
-            };
-            otpmBucketState = { ...otpmBucketState, tokens: otpmBucketState.tokens - minOutputReserve };
+            // All buckets have capacity - tokens already deducted by tryConsume
             break;
           }
 
@@ -120,7 +114,7 @@ export function createRateLimitedProvider(
     });
   }
 
-  function stream(request: ModelRequest): AsyncIterable<any> {
+  function stream(request: ModelRequest): AsyncIterable<StreamEvent> {
     // Stream does not go through rate limiting
     return provider.stream(request);
   }

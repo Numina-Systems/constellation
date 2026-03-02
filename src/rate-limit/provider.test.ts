@@ -53,6 +53,44 @@ describe('createRateLimitedProvider', () => {
       // Should complete quickly without waiting
       expect(elapsed).toBeLessThan(100);
     });
+
+    it('only deducts tokens once per successful request (regression test for double-deduction bug)', async () => {
+      const provider = createMockProvider({
+        usage: { input_tokens: 50, output_tokens: 25 },
+      });
+
+      const testConfig: RateLimiterConfig = {
+        requestsPerMinute: 100,
+        inputTokensPerMinute: 1000,
+        outputTokensPerMinute: 1000,
+        minOutputReserve: 100,
+      };
+
+      const rateLimited = createRateLimitedProvider(provider, testConfig);
+
+      // Get initial status
+      const initialStatus = rateLimited.getStatus();
+      const initialRpm = initialStatus.rpm.remaining;
+      const initialInputTokens = initialStatus.inputTokens.remaining;
+      const initialOutputTokens = initialStatus.outputTokens.remaining;
+
+      // Make one request
+      await rateLimited.complete(createRequest());
+
+      // Get status after request
+      const afterStatus = rateLimited.getStatus();
+      const afterRpm = afterStatus.rpm.remaining;
+      const afterInputTokens = afterStatus.inputTokens.remaining;
+      const afterOutputTokens = afterStatus.outputTokens.remaining;
+
+      // Verify tokens deducted exactly once:
+      // RPM: deducted 1 request
+      expect(afterRpm).toBe(initialRpm - 1);
+      // Input tokens: deducted actual 50 (from response.usage)
+      expect(afterInputTokens).toBe(initialInputTokens - 50);
+      // Output tokens: deducted actual 25 (from response.usage, not minOutputReserve 100)
+      expect(afterOutputTokens).toBe(initialOutputTokens - 25);
+    });
   });
 
   describe('AC1.2: Input token budget exhaustion', () => {
@@ -388,39 +426,6 @@ describe('createRateLimitedProvider', () => {
       }
 
       expect(streamCalled).toBe(true);
-    });
-  });
-
-  describe('logging long waits', () => {
-    it('includes logging code for long waits (5000ms threshold)', async () => {
-      const provider: ModelProvider = {
-        complete: async () => ({
-          content: [{ type: 'text' as const, text: 'response' }],
-          stop_reason: 'end_turn' as const,
-          usage: { input_tokens: 10, output_tokens: 50 },
-        }),
-        stream: async function* () {
-          /* no-op */
-        },
-      };
-
-      // Normal limits - won't trigger 5000ms+ waits
-      const limitedConfig: RateLimiterConfig = {
-        requestsPerMinute: 100,
-        inputTokensPerMinute: 10000,
-        outputTokensPerMinute: 10000,
-        minOutputReserve: 1,
-      };
-
-      const rateLimited = createRateLimitedProvider(provider, limitedConfig);
-
-      // Request should complete normally
-      const result = await rateLimited.complete(createRequest());
-      expect(result).toBeDefined();
-
-      // The logging code path is present in the implementation
-      // (verified by code inspection - testing the timing is impractical)
-      expect(true).toBe(true);
     });
   });
 

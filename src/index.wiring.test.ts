@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, mock } from 'bun:test';
-import { createShutdownHandler, processEventQueue, buildReviewEvent } from '@/index';
+import { createShutdownHandler, processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
 import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider } from '@/reflexion';
 import type { PersistenceProvider } from '@/persistence/types';
@@ -269,6 +269,131 @@ describe('composition root wiring: zero-predictions guidance (AC3.6)', () => {
     const zeroIndex = event.content.indexOf(zeroGuide);
 
     expect(mainIndex).toBeLessThan(zeroIndex);
+  });
+});
+
+// ============================================================================
+// AC4.1 & AC4.2 (agent-scheduled event format):
+// Verify buildAgentScheduledEvent creates correct event shape with prompt content
+// ============================================================================
+
+describe('composition root wiring: agent-scheduled event format (buildAgentScheduledEvent)', () => {
+  it('builds agent-scheduled event with correct source and metadata structure', () => {
+    const mockTask = {
+      id: 'agent-task-123',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'do something' },
+    };
+
+    const agentEvent = buildAgentScheduledEvent(mockTask);
+
+    expect(agentEvent.source).toBe('self-scheduled');
+    expect(typeof agentEvent.content).toBe('string');
+    expect(typeof agentEvent.metadata).toBe('object');
+    expect(agentEvent.timestamp instanceof Date).toBe(true);
+  });
+
+  it('includes taskId in metadata matching task.id', () => {
+    const mockTask = {
+      id: 'agent-task-456',
+      name: 'scheduled-prompt',
+      schedule: '*/30 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'check status' },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.metadata['taskId']).toBe('agent-task-456');
+    expect(event.metadata['taskName']).toBe('scheduled-prompt');
+    expect(event.metadata['schedule']).toBe('*/30 * * * *');
+  });
+
+  it('includes content from task.payload.prompt (AC4.2)', () => {
+    const mockTask = {
+      id: 'agent-task-789',
+      name: 'scheduled-prompt',
+      schedule: '0 12 * * *',
+      payload: { type: 'agent-scheduled', prompt: 'review recent conversations' },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.content).toBe('review recent conversations');
+  });
+
+  it('defaults to empty string when prompt is missing', () => {
+    const mockTask = {
+      id: 'agent-task-no-prompt',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled' },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.content).toBe('');
+  });
+
+  it('defaults to empty string when payload is missing', () => {
+    const mockTask = {
+      id: 'agent-task-no-payload',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.content).toBe('');
+  });
+
+  it('includes full task.payload in metadata spread', () => {
+    const mockTask = {
+      id: 'agent-task-payload',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: {
+        type: 'agent-scheduled',
+        prompt: 'do work',
+        customField: 'custom-value',
+        anotherField: 42,
+      },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.metadata['type']).toBe('agent-scheduled');
+    expect(event.metadata['prompt']).toBe('do work');
+    expect(event.metadata['customField']).toBe('custom-value');
+    expect(event.metadata['anotherField']).toBe(42);
+  });
+
+  it('creates timestamp as Date instance', () => {
+    const mockTask = {
+      id: 'agent-task-timestamp',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'test' },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+    const timeDifference = Math.abs(Date.now() - event.timestamp.getTime());
+
+    expect(event.timestamp instanceof Date).toBe(true);
+    expect(timeDifference).toBeLessThan(1000); // Within 1 second
+  });
+
+  it('produces source "self-scheduled" (AC4.1)', () => {
+    const mockTask = {
+      id: 'agent-task-source',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'test' },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.source).toBe('self-scheduled');
   });
 });
 

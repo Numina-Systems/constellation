@@ -2,7 +2,7 @@
 
 import type { ModelProvider, ModelRequest, ModelResponse, StreamEvent } from '../model/types.js';
 import type { RateLimiterConfig, RateLimitStatus } from './types.js';
-import { createTokenBucket, tryConsume, recordConsumption, getStatus } from './bucket.js';
+import { createTokenBucket, tryConsume, recordConsumption, getStatus, refill } from './bucket.js';
 import { estimateInputTokens } from './estimate.js';
 
 const DEFAULT_MIN_OUTPUT_RESERVE = 1024;
@@ -74,15 +74,19 @@ export function createRateLimitedProvider(
           const itpmResult = tryConsume(itpmBucketState, estimatedInputTokens, now);
           const otpmResult = tryConsume(otpmBucketState, minOutputReserve, now);
 
-          // Update buckets after consumption attempts
-          rpmBucketState = rpmResult.bucket;
-          itpmBucketState = itpmResult.bucket;
-          otpmBucketState = otpmResult.bucket;
-
           if (rpmResult.allowed && itpmResult.allowed && otpmResult.allowed) {
-            // All buckets have capacity - tokens already deducted by tryConsume
+            // All buckets have capacity - commit deducted state
+            rpmBucketState = rpmResult.bucket;
+            itpmBucketState = itpmResult.bucket;
+            otpmBucketState = otpmResult.bucket;
             break;
           }
+
+          // At least one bucket failed - refill without deducting
+          // (use fresh refill, not the result buckets which contain deductions from passed checks)
+          rpmBucketState = refill(rpmBucketState, now);
+          itpmBucketState = refill(itpmBucketState, now);
+          otpmBucketState = refill(otpmBucketState, now);
 
           // Calculate max wait across all buckets
           const maxWaitMs = Math.max(rpmResult.waitMs, itpmResult.waitMs, otpmResult.waitMs);

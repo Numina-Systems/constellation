@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import { describe, it, expect } from 'bun:test';
 import { estimateInputTokens } from './estimate.js';
 import type { ModelRequest, TextBlock, ToolUseBlock, ToolResultBlock } from '../model/types.js';

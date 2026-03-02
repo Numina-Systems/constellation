@@ -43,8 +43,8 @@ export function createRateLimitContextProvider(
     const status = getStatus();
     return [
       '## Resource Budget',
-      `Input tokens: ${status.inputTokens.remaining}/${status.inputTokens.capacity} remaining this minute`,
-      `Output tokens: ${status.outputTokens.remaining}/${status.outputTokens.capacity} remaining this minute`,
+      `Input tokens: ${Math.round(status.inputTokens.remaining)}/${status.inputTokens.capacity} remaining this minute`,
+      `Output tokens: ${Math.round(status.outputTokens.remaining)}/${status.outputTokens.capacity} remaining this minute`,
       `Queued requests: ${status.queueDepth}`,
     ].join('\n');
   };

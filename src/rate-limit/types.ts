@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 export type TokenBucketConfig = {
   readonly capacity: number;
   readonly refillRate: number; // tokens per millisecond

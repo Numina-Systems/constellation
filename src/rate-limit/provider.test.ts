@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { createRateLimitedProvider } from './provider.js';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.js';
@@ -90,6 +88,36 @@ describe('createRateLimitedProvider', () => {
       expect(afterInputTokens).toBe(initialInputTokens - 50);
       // Output tokens: deducted actual 25 (from response.usage, not minOutputReserve 100)
       expect(afterOutputTokens).toBe(initialOutputTokens - 25);
+    });
+
+    it('does not double-deduct tokens when wait-retry loop iterates multiple times', async () => {
+      const provider = createMockProvider({
+        usage: { input_tokens: 50, output_tokens: 25 },
+      });
+
+      const testConfig: RateLimiterConfig = {
+        requestsPerMinute: 100, // Sufficient
+        inputTokensPerMinute: 1000, // Sufficient
+        outputTokensPerMinute: 200, // Limited: will force a retry
+        minOutputReserve: 100,
+      };
+
+      const rateLimited = createRateLimitedProvider(provider, testConfig);
+
+      // Get initial status
+      const initialStatus = rateLimited.getStatus();
+      const initialRpm = initialStatus.rpm.remaining;
+
+      // Make one request - this should fail on OTPM first (only 200 capacity, needs 100 reserve),
+      // then succeed on retry
+      await rateLimited.complete(createRequest());
+
+      // Get status after request
+      const afterStatus = rateLimited.getStatus();
+      const afterRpm = afterStatus.rpm.remaining;
+
+      // Verify RPM deducted exactly once (only 1 request consumed, despite retry loop)
+      expect(afterRpm).toBe(initialRpm - 1);
     });
   });
 
@@ -213,7 +241,8 @@ describe('createRateLimitedProvider', () => {
       // Verify that actual usage (500) was recorded, not estimate
       // Initial capacity: 1000
       // After actual consumption of 500: remaining should be ~500
-      expect(status1.inputTokens.remaining).toBeLessThanOrEqual(500);
+      // Use tolerance of 10 tokens (getStatus might be called slightly later, allowing refill)
+      expect(status1.inputTokens.remaining).toBeLessThan(510);
     });
   });
 

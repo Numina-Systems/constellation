@@ -11,11 +11,12 @@ import {
 import type { TokenBucket, TokenBucketConfig } from './types.js';
 
 function createTestBucket(overrides?: Partial<TokenBucketConfig> & { now?: number }): TokenBucket {
-  const now = overrides?.now ?? 1000;
+  const { now: overrideNow, ...configOverrides } = overrides ?? {};
+  const now = overrideNow ?? 1000;
   const config: TokenBucketConfig = {
-    capacity: overrides?.capacity ?? 100,
-    refillRate: overrides?.refillRate ?? 0.001, // 1 token per millisecond
-    ...overrides,
+    capacity: configOverrides.capacity ?? 100,
+    refillRate: configOverrides.refillRate ?? 0.001, // 1 token per second
+    ...configOverrides,
   };
   return createTokenBucket(config, now);
 }
@@ -244,20 +245,8 @@ describe('token bucket pure functions', () => {
       expect(corrected.tokens).toBe(70);
     });
 
-    it('should cap credits at capacity', () => {
+    it('should not cap correction at capacity (design allows temporary overcapacity)', () => {
       const bucket = createTestBucket({ capacity: 100, refillRate: 1, now: 1000 });
-      // Start with 100 tokens, estimate 50, actual is 10
-      // recordConsumption: refill (no time, stays 100), then 100 + (50 - 10) = 140
-      // But refill caps at capacity, so it should be 100
-
-      // Actually, the refill is called in recordConsumption, which caps at capacity
-      // But we're starting at capacity already, so refill returns same bucket
-      // Then we add correction: 100 + 40 = 140
-      // The refill only happens in recordConsumption, not after
-      // So the result can exceed capacity if credits add more than the capacity
-      // This test is checking that it shouldn't exceed capacity
-
-      // Let's test with a consumed bucket instead
       const consumed = { ...bucket, tokens: 50, lastRefill: 1000 };
       const corrected = recordConsumption(consumed, 50, 10, 1000);
 
@@ -265,6 +254,12 @@ describe('token bucket pure functions', () => {
       // correction = 50 - 10 = 40
       // tokens = 50 + 40 = 90
       expect(corrected.tokens).toBe(90);
+
+      // Verify that tokens CAN temporarily exceed capacity when credits are added
+      const consumed2 = { ...bucket, tokens: 95, lastRefill: 1000 };
+      const corrected2 = recordConsumption(consumed2, 50, 10, 1000);
+      // tokens = 95 + (50 - 10) = 135, which exceeds capacity of 100
+      expect(corrected2.tokens).toBeGreaterThan(corrected2.capacity);
     });
   });
 

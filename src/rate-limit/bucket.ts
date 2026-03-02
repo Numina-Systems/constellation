@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import type { TokenBucket, TokenBucketConfig, ConsumeResult } from './types.js';
+import type { TokenBucket, TokenBucketConfig, ConsumeResult, BucketStatus } from './types.js';
 
 export function createTokenBucket(config: TokenBucketConfig, now: number): TokenBucket {
   return {
@@ -53,10 +53,7 @@ export function recordConsumption(
   return { ...refilled, tokens: refilled.tokens + correction };
 }
 
-export function getStatus(
-  bucket: TokenBucket,
-  now: number,
-): { readonly remaining: number; readonly capacity: number; readonly refillRate: number } {
+export function getStatus(bucket: TokenBucket, now: number): BucketStatus {
   const refilled = refill(bucket, now);
   return { remaining: refilled.tokens, capacity: refilled.capacity, refillRate: refilled.refillRate };
 }

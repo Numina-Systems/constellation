@@ -264,6 +264,7 @@ describe("shouldAcceptEvent", () => {
         app_password: "test-password",
         did: "did:plc:agent",
         watched_dids: [],
+        schedule_dids: [],
         jetstream_url: "wss://jetstream2.us-east.bsky.network/subscribe",
       };
 
@@ -295,6 +296,7 @@ describe("shouldAcceptEvent", () => {
         app_password: "test-password",
         did: "did:plc:agent",
         watched_dids: [],
+        schedule_dids: [],
         jetstream_url: "wss://jetstream2.us-east.bsky.network/subscribe",
       };
 

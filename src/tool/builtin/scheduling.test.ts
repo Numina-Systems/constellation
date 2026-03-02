@@ -234,17 +234,20 @@ describe('createSchedulingTools — schedule_task', () => {
 
     const scheduleTaskTool = tools.find((t) => t.definition.name === 'schedule_task');
 
-    await scheduleTaskTool!.handler({
+    const result = await scheduleTaskTool!.handler({
       name: 'Owned task',
       schedule: '0 */2 * * *',
       prompt: 'Task prompt',
     });
 
+    expect(result.success).toBe(true);
+
     const calls = mockScheduler.getCalls();
     expect(calls.length).toBe(1);
-    // The owner is passed via deps to the Scheduler, which handles it internally
-    // The tool itself doesn't directly insert the owner, but the factory deps contain it
-    expect(deps.owner).toBe('custom-owner-id');
+    // Verify scheduler.schedule() was called
+    expect(calls[0]!.task.name).toBe('Owned task');
+    expect(calls[0]!.task.payload['type']).toBe('agent-scheduled');
+    expect(calls[0]!.task.payload['prompt']).toBe('Task prompt');
   });
 });
 

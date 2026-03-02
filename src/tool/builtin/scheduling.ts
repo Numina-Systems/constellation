@@ -1,7 +1,6 @@
 // pattern: Imperative Shell (tool handlers have side effects; validation is pure but co-located)
 
 import { Cron } from 'croner';
-import { randomUUID } from 'node:crypto';
 import type { Scheduler, ScheduledTask } from '../../extensions/scheduler.ts';
 import type { PersistenceProvider } from '../../persistence/types.ts';
 import type { Tool } from '../types.ts';
@@ -100,9 +99,8 @@ export function createSchedulingTools(deps: SchedulingToolDeps): Array<Tool> {
         }
 
         // Create the scheduled task
-        const id = randomUUID();
         const task: ScheduledTask = {
-          id,
+          id: '', // ignored by scheduler, it generates its own
           name,
           schedule,
           payload: { type: 'agent-scheduled', prompt },
@@ -151,9 +149,9 @@ export function createSchedulingTools(deps: SchedulingToolDeps): Array<Tool> {
       try {
         const taskId = params['task_id'] as string;
 
-        // Verify the task exists and belongs to this owner
+        // Verify the task exists, belongs to this owner, and is not already cancelled
         const rows = await deps.persistence.query(
-          'SELECT id FROM scheduled_tasks WHERE id = $1 AND owner = $2',
+          'SELECT id FROM scheduled_tasks WHERE id = $1 AND owner = $2 AND cancelled = FALSE',
           [taskId, deps.owner],
         );
 
@@ -210,7 +208,7 @@ export function createSchedulingTools(deps: SchedulingToolDeps): Array<Tool> {
 
         let sql =
           'SELECT id, name, schedule, payload, next_run_at, last_run_at, cancelled FROM scheduled_tasks WHERE owner = $1';
-        const queryParams: readonly unknown[] = [deps.owner];
+        const queryParams = [deps.owner] as const;
 
         if (!showCancelled) {
           sql += ' AND cancelled = FALSE';

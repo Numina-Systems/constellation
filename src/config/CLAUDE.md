@@ -6,13 +6,13 @@ Last verified: 2026-03-01
 Loads and validates application configuration from TOML with environment variable overrides, providing a single typed `AppConfig` consumed by all other modules.
 
 ## Contracts
-- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, `SummarizationConfigSchema`, `WebConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, `SummarizationConfig`, `WebConfig`, etc.)
-- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets — **provider-aware**: `ANTHROPIC_API_KEY` only applies when `provider = "anthropic"`, `OPENAI_COMPAT_API_KEY` only when `provider = "openai-compat"`. Bun auto-loads `.env` at startup; use `.env.example` as template. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`). `summarization` section is optional; when absent, compaction uses defaults. Importance scoring weights (`role_weight_*`, `recency_decay`, `*_bonus`, `important_keywords`, `content_length_weight`) are part of the summarization section with sensible defaults. `[web]` section is optional; when absent, web tools are not registered.
+- **Exposes**: `loadConfig(path?) -> AppConfig`, Zod schemas (`AppConfigSchema`, `BlueskyConfigSchema`, `SummarizationConfigSchema`, `WebConfigSchema`, `SkillConfigSchema`, etc.), config type aliases (`AppConfig`, `BlueskyConfig`, `SummarizationConfig`, `WebConfig`, `SkillConfig`, etc.)
+- **Guarantees**: Returned config is fully validated. Missing optional fields have defaults. Environment variables override TOML values for secrets — **provider-aware**: `ANTHROPIC_API_KEY` only applies when `provider = "anthropic"`, `OPENAI_COMPAT_API_KEY` only when `provider = "openai-compat"`. Bun auto-loads `.env` at startup; use `.env.example` as template. `BlueskyConfig` conditionally requires `handle`, `app_password`, `did` only when `enabled: true` (via Zod `superRefine`). `summarization` section is optional; when absent, compaction uses defaults. Importance scoring weights (`role_weight_*`, `recency_decay`, `*_bonus`, `important_keywords`, `content_length_weight`) are part of the summarization section with sensible defaults. `[web]` section is optional; when absent, web tools are not registered. `[skills]` section is optional; when absent, skill retrieval is not available. SkillConfig fields: `builtin_dir` (default `./skills`), `user_dir` (default `./user-skills`), `max_per_turn` (default `3`), `similarity_threshold` (default `0.3`).
 - **Expects**: `config.toml` exists at project root (or path provided). TOML structure matches `AppConfigSchema`.
 
 ## Dependencies
 - **Uses**: `@iarna/toml`, `zod`, `node:fs`
-- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`, `src/extensions/bluesky/` (BlueskyConfig), `src/web/` (WebConfig)
+- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`, `src/extensions/bluesky/` (BlueskyConfig), `src/web/` (WebConfig), `src/skill/` (SkillConfig)
 - **Boundary**: Config is read-only after load. No module should mutate config at runtime.
 
 ## Key Decisions

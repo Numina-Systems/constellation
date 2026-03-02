@@ -216,3 +216,87 @@ did = "did:plc:example"
     });
   });
 });
+
+describe("skills.AC3: Skill configuration", () => {
+  let tempPath: string;
+
+  beforeEach(() => {
+    tempPath = getTempConfigPath();
+  });
+
+  afterEach(() => {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // file might not exist
+    }
+  });
+
+  describe("skills.AC3.1: Config parses [skills] section with all fields", () => {
+    it("should parse [skills] section with all four fields", () => {
+      const tomlContent = `
+${baseTomlContent}
+[skills]
+builtin_dir = "/opt/skills"
+user_dir = "/home/user/skills"
+max_per_turn = 5
+similarity_threshold = 0.7
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.skills).toBeDefined();
+      expect(config.skills?.builtin_dir).toBe("/opt/skills");
+      expect(config.skills?.user_dir).toBe("/home/user/skills");
+      expect(config.skills?.max_per_turn).toBe(5);
+      expect(config.skills?.similarity_threshold).toBe(0.7);
+    });
+  });
+
+  describe("skills.AC3.2: Config defaults are applied when [skills] section is present but fields are omitted", () => {
+    it("should apply defaults when [skills] section exists with no fields", () => {
+      const tomlContent = `
+${baseTomlContent}
+[skills]
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.skills).toBeDefined();
+      expect(config.skills?.builtin_dir).toBe("./skills");
+      expect(config.skills?.user_dir).toBe("./user-skills");
+      expect(config.skills?.max_per_turn).toBe(3);
+      expect(config.skills?.similarity_threshold).toBe(0.3);
+    });
+
+    it("should apply defaults for omitted fields when some fields are specified", () => {
+      const tomlContent = `
+${baseTomlContent}
+[skills]
+builtin_dir = "/custom/skills"
+max_per_turn = 7
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.skills).toBeDefined();
+      expect(config.skills?.builtin_dir).toBe("/custom/skills");
+      expect(config.skills?.user_dir).toBe("./user-skills");
+      expect(config.skills?.max_per_turn).toBe(7);
+      expect(config.skills?.similarity_threshold).toBe(0.3);
+    });
+  });
+
+  describe("skills.AC3.3: Config is fully optional — absence of [skills] section results in undefined", () => {
+    it("should result in undefined when [skills] section is absent", () => {
+      writeFileSync(tempPath, baseTomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.skills).toBeUndefined();
+    });
+  });
+});

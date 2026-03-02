@@ -63,6 +63,7 @@ handle = "spirit.bsky.social"
 app_password = "xxxx-xxxx-xxxx-xxxx"
 did = "did:plc:example"
 watched_dids = ["did:plc:friend1", "did:plc:friend2"]
+schedule_dids = ["did:plc:scheduler1"]
 jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
 
 # Skill retrieval system. Skills are SKILL.md files with YAML frontmatter,

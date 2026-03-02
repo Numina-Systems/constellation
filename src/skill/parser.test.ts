@@ -1,6 +1,8 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseSkillFile } from './parser.ts';
 
 describe('parseSkillFile', () => {
@@ -480,11 +482,8 @@ Body`;
 
   describe('agent-scheduling.AC7.1: Scheduling skill loads via parser', () => {
     it('should parse skills/scheduling/SKILL.md successfully', async () => {
-      const fs = require('fs');
-      const path = require('path');
-
-      const skillPath = path.join(process.cwd(), 'skills', 'scheduling', 'SKILL.md');
-      const content = fs.readFileSync(skillPath, 'utf-8');
+      const skillPath = join(process.cwd(), 'skills', 'scheduling', 'SKILL.md');
+      const content = readFileSync(skillPath, 'utf-8');
 
       const result = parseSkillFile(content);
 

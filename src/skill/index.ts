@@ -15,3 +15,5 @@ export type { SkillStore } from './store.ts';
 
 export { parseSkillFile } from './parser.ts';
 export { createPostgresSkillStore } from './postgres-store.ts';
+export { loadSkills } from './loader.ts';
+export { createSkillRegistry } from './registry.ts';

@@ -15,6 +15,10 @@ const ModelConfigSchema = z.object({
   name: z.string(),
   api_key: z.string().optional(),
   base_url: z.string().url().optional(),
+  requests_per_minute: z.number().int().positive().optional(),
+  input_tokens_per_minute: z.number().int().positive().optional(),
+  output_tokens_per_minute: z.number().int().positive().optional(),
+  min_output_reserve: z.number().int().positive().optional(),
 });
 
 const EmbeddingConfigSchema = z.object({
@@ -64,6 +68,10 @@ const SummarizationConfigSchema = z.object({
   name: z.string(),
   api_key: z.string().optional(),
   base_url: z.string().url().optional(),
+  requests_per_minute: z.number().int().positive().optional(),
+  input_tokens_per_minute: z.number().int().positive().optional(),
+  output_tokens_per_minute: z.number().int().positive().optional(),
+  min_output_reserve: z.number().int().positive().optional(),
   chunk_size: z.number().int().positive().default(20),
   keep_recent: z.number().int().nonnegative().default(5),
   max_summary_tokens: z.number().int().positive().default(1024),

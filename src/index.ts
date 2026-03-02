@@ -727,6 +727,21 @@ async function main(): Promise<void> {
     })();
   });
 
+  // Register onDue handler for agent-scheduled tasks
+  agentScheduler.onDue((task) => {
+    (async () => {
+      try {
+        const event = buildAgentScheduledEvent(task);
+        schedulerEventQueue.push(event);
+        processSchedulerEvent().catch((error) => {
+          console.error('agent scheduler event processing error:', error);
+        });
+      } catch (error) {
+        console.error('agent scheduler onDue error:', error);
+      }
+    })();
+  });
+
   // Register hourly review job if not already scheduled
   const existingTasks = await persistence.query<{ id: string }>(
     `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,

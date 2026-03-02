@@ -27,6 +27,8 @@ import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/e
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
+import { createRateLimitedProvider } from '@/rate-limit/provider.js';
+import { hasRateLimitConfig, buildRateLimiterConfig, createRateLimitContextProvider } from '@/rate-limit/context.js';
 import type { MemoryManager } from '@/memory/manager';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
@@ -39,6 +41,7 @@ import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
+import type { ContextProvider } from '@/agent/types';
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -286,19 +289,44 @@ async function main(): Promise<void> {
 
   // Create providers
   const persistence = createPostgresProvider(config.database);
-  const model = createModelProvider(config.model);
+  const rawModel = createModelProvider(config.model);
+  const contextProviders: Array<ContextProvider> = [];
+
+  const model = hasRateLimitConfig(config.model)
+    ? (() => {
+        const rateLimitedModel = createRateLimitedProvider(
+          rawModel,
+          buildRateLimiterConfig(config.model),
+        );
+        contextProviders.push(createRateLimitContextProvider(() => rateLimitedModel.getStatus()));
+        console.log(`rate limiting active for model ${config.model.name} (${config.model.requests_per_minute} RPM, ${config.model.input_tokens_per_minute} ITPM, ${config.model.output_tokens_per_minute} OTPM)`);
+        return rateLimitedModel;
+      })()
+    : rawModel;
+
   const embedding = createEmbeddingProvider(config.embedding);
 
   // Create summarization model provider
   // If summarization config exists, create a dedicated provider from it
   // Otherwise, reuse the main model provider
   const summarizationModel: ModelProvider = config.summarization
-    ? createModelProvider({
-        provider: config.summarization.provider,
-        name: config.summarization.name,
-        api_key: config.summarization.api_key,
-        base_url: config.summarization.base_url,
-      })
+    ? (() => {
+        const rawSummarizationModel = createModelProvider({
+          provider: config.summarization.provider,
+          name: config.summarization.name,
+          api_key: config.summarization.api_key,
+          base_url: config.summarization.base_url,
+        });
+        if (hasRateLimitConfig(config.summarization)) {
+          const rateLimited = createRateLimitedProvider(
+            rawSummarizationModel,
+            buildRateLimiterConfig(config.summarization),
+          );
+          console.log(`rate limiting active for summarization model ${config.summarization.name}`);
+          return rateLimited;
+        }
+        return rawSummarizationModel;
+      })()
     : model;
 
   // Connect to database and run migrations
@@ -428,6 +456,7 @@ async function main(): Promise<void> {
     },
     getExecutionContext,
     compactor,
+    contextProviders: contextProviders.length > 0 ? contextProviders : undefined,
   });
 
   if (blueskyConnected && blueskySource) {
@@ -448,6 +477,7 @@ async function main(): Promise<void> {
           model_name: config.model.name,
         },
         getExecutionContext,
+        contextProviders: contextProviders.length > 0 ? contextProviders : undefined,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop

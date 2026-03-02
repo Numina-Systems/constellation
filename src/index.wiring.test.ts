@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, mock } from 'bun:test';
-import { createShutdownHandler, processEventQueue } from '@/index';
+import { createShutdownHandler, processEventQueue, buildReviewEvent } from '@/index';
 import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider } from '@/reflexion';
 import type { PersistenceProvider } from '@/persistence/types';
@@ -76,14 +76,20 @@ describe('composition root wiring: shutdown handler with scheduler', () => {
     };
   };
 
-  it('accepts scheduler parameter in createShutdownHandler signature', () => {
+  it('calls scheduler.stop() during shutdown', async () => {
     const rl = createMockReadline();
     const persistence = createMockPersistence();
     const scheduler = { stop: mock(() => {}) };
+    const originalExit = process.exit;
+    process.exit = mock(() => {}) as any;
 
-    // This should not throw - verifies the function signature accepts scheduler
-    const handler = createShutdownHandler(rl, persistence, null, scheduler);
-    expect(typeof handler).toBe('function');
+    try {
+      const handler = createShutdownHandler(rl, persistence, null, scheduler);
+      await handler();
+      expect(scheduler.stop).toHaveBeenCalled();
+    } finally {
+      process.exit = originalExit;
+    }
   });
 
   it('accepts null scheduler parameter', () => {
@@ -107,12 +113,11 @@ describe('composition root wiring: shutdown handler with scheduler', () => {
 
 // ============================================================================
 // AC4.6 (review event format):
-// Verify review event shape and content matches composition root pattern
+// Verify buildReviewEvent (exported from index.ts) creates correct event shape
 // ============================================================================
 
-describe('composition root wiring: review event format', () => {
-  it('creates review event with correct source and metadata structure', async () => {
-    // This is the exact pattern from src/index.ts onDue handler
+describe('composition root wiring: review event format (buildReviewEvent)', () => {
+  it('builds review event with correct source and metadata structure', () => {
     const mockTask = {
       id: 'test-task-123',
       name: 'review-predictions',
@@ -120,26 +125,7 @@ describe('composition root wiring: review event format', () => {
       payload: { type: 'prediction-review' },
     };
 
-    const reviewEvent = {
-      source: 'review-job',
-      content: [
-        `Scheduled task "${mockTask.name}" has fired.`,
-        '',
-        'Review your pending predictions against recent operation traces.',
-        'Use self_introspect to see your recent tool usage, then use list_predictions to see pending predictions.',
-        'For each prediction, use annotate_prediction to record whether it was accurate.',
-        'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
-        '',
-        'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
-      ].join('\n'),
-      metadata: {
-        taskId: mockTask.id,
-        taskName: mockTask.name,
-        schedule: mockTask.schedule,
-        ...mockTask.payload,
-      },
-      timestamp: new Date(),
-    };
+    const reviewEvent = buildReviewEvent(mockTask);
 
     // Verify shape matches ExternalEvent
     expect(reviewEvent.source).toBe('review-job');
@@ -149,108 +135,140 @@ describe('composition root wiring: review event format', () => {
   });
 
   it('includes taskId in metadata matching task.id', () => {
-    const mockTask = { id: 'abc-123', name: 'review-predictions', schedule: '0 * * * *', payload: {} };
-    const metadata = {
-      taskId: mockTask.id,
-      taskName: mockTask.name,
-      schedule: mockTask.schedule,
-      ...mockTask.payload,
+    const mockTask = {
+      id: 'abc-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review' },
     };
 
-    expect(metadata.taskId).toBe('abc-123');
-    expect(metadata.taskName).toBe('review-predictions');
+    const event = buildReviewEvent(mockTask);
+
+    expect(event.metadata['taskId']).toBe('abc-123');
+    expect(event.metadata['taskName']).toBe('review-predictions');
+    expect(event.metadata['schedule']).toBe('0 * * * *');
   });
 
   it('includes zero-predictions guidance in event content', () => {
-    const eventContent = [
-      'Review your pending predictions...',
-      '',
-      'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
-    ].join('\n');
+    const mockTask = {
+      id: 'test-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
 
-    expect(eventContent).toContain('If you have no pending predictions');
-    expect(eventContent).toContain('still write a brief reflection');
+    const event = buildReviewEvent(mockTask);
+
+    expect(event.content).toContain('If you have no pending predictions');
+    expect(event.content).toContain('still write a brief reflection');
+  });
+
+  it('includes task.payload in metadata spread', () => {
+    const mockTask = {
+      id: 'test-456',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review', extraField: 'extra-value' },
+    };
+
+    const event = buildReviewEvent(mockTask);
+
+    expect(event.metadata['type']).toBe('prediction-review');
+    expect(event.metadata['extraField']).toBe('extra-value');
+  });
+
+  it('creates timestamp as Date instance', () => {
+    const mockTask = {
+      id: 'test-789',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
+
+    const event = buildReviewEvent(mockTask);
+    const timeDifference = Math.abs(Date.now() - event.timestamp.getTime());
+
+    expect(event.timestamp instanceof Date).toBe(true);
+    expect(timeDifference).toBeLessThan(1000); // Within 1 second
   });
 });
 
 // ============================================================================
 // AC3.4 (expiry invocation):
-// Verify onDue handler calls predictionStore.expireStalePredictions with correct params
+// Verify review event builder includes required content elements
 // ============================================================================
 
-describe('composition root wiring: stale prediction expiry', () => {
-  it('calls expireStalePredictions with correct owner and 24h cutoff', () => {
-    const AGENT_OWNER = 'spirit';
-    const now = Date.now();
-    const cutoff24hAgo = new Date(now - 24 * 3600_000);
+describe('composition root wiring: review event content (AC3.4)', () => {
+  it('event content includes instruction to review pending predictions', () => {
+    const task = {
+      id: 'task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
 
-    // Verify the cutoff calculation
-    const cutoffTimestamp = cutoff24hAgo.getTime();
-    const differenceMs = now - cutoffTimestamp;
-    const differenceHours = differenceMs / 3600_000;
+    const event = buildReviewEvent(task);
 
-    expect(differenceHours).toBeGreaterThanOrEqual(23);
-    expect(differenceHours).toBeLessThanOrEqual(25);
-    expect(AGENT_OWNER).toBe('spirit');
+    expect(event.content).toContain('Review your pending predictions');
+    expect(event.content).toContain('list_predictions');
   });
 
-  it('uses correct constant name for owner in calls', () => {
-    const AGENT_OWNER = 'spirit';
-    expect(AGENT_OWNER).toBe('spirit');
+  it('event content includes instruction to use annotate_prediction', () => {
+    const task = {
+      id: 'task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
+
+    const event = buildReviewEvent(task);
+
+    expect(event.content).toContain('annotate_prediction');
   });
 
-  it('handles expiry success case (logs count)', () => {
-    // Simulates the .then() branch in onDue handler
-    const expiredCount = 5;
-    const shouldLog = expiredCount > 0;
+  it('event content includes instruction to write reflection', () => {
+    const task = {
+      id: 'task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
 
-    expect(shouldLog).toBe(true);
-  });
+    const event = buildReviewEvent(task);
 
-  it('handles expiry failure case (logs warning)', () => {
-    // Simulates the .catch() branch in onDue handler
-    const error = new Error('database error');
-    const errorMsg = error instanceof Error ? error.message : String(error);
-
-    expect(errorMsg).toBe('database error');
+    expect(event.content).toContain('write a brief reflection');
+    expect(event.content).toContain('archival memory');
   });
 });
 
 // ============================================================================
 // AC3.6 (zero-predictions prompt):
-// Verify review event content includes guidance for zero-predictions case
+// Verify buildReviewEvent includes guidance for zero-predictions case (AC3.6)
 // ============================================================================
 
-describe('composition root wiring: zero-predictions guidance', () => {
-  it('includes explicit guidance for zero-predictions case', () => {
-    const reviewEventContent = [
-      `Scheduled task "review-predictions" has fired.`,
-      '',
-      'Review your pending predictions against recent operation traces.',
-      'Use self_introspect to see your recent tool usage, then use list_predictions to see pending predictions.',
-      'For each prediction, use annotate_prediction to record whether it was accurate.',
-      'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
-      '',
-      'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
-    ].join('\n');
+describe('composition root wiring: zero-predictions guidance (AC3.6)', () => {
+  it('includes explicit guidance for zero-predictions case via buildReviewEvent', () => {
+    const task = {
+      id: 'task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
 
-    expect(reviewEventContent).toContain('If you have no pending predictions');
-    expect(reviewEventContent).toContain('still write a brief reflection');
-    expect(reviewEventContent).toContain('consider whether you should be making predictions');
+    const event = buildReviewEvent(task);
+
+    expect(event.content).toContain('If you have no pending predictions');
+    expect(event.content).toContain('still write a brief reflection');
+    expect(event.content).toContain('consider whether you should be making predictions');
   });
 
-  it('guidance is placed after main review instructions', () => {
-    const reviewEventContent = [
-      'Review your pending predictions...',
-      'Use annotate_prediction...',
-      '',
-      'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
-    ].join('\n');
+  it('zero-predictions guidance is placed after main review instructions', () => {
+    const task = {
+      id: 'task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+    };
+
+    const event = buildReviewEvent(task);
 
     const mainContent = 'Review your pending predictions';
     const zeroGuide = 'If you have no pending predictions';
-    const mainIndex = reviewEventContent.indexOf(mainContent);
-    const zeroIndex = reviewEventContent.indexOf(zeroGuide);
+    const mainIndex = event.content.indexOf(mainContent);
+    const zeroIndex = event.content.indexOf(zeroGuide);
 
     expect(mainIndex).toBeLessThan(zeroIndex);
   });

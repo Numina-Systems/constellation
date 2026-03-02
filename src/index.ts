@@ -89,6 +89,44 @@ export async function performShutdown(
 }
 
 /**
+ * Build a review event from a scheduled task.
+ * Extracted for testability - allows tests to verify the exact event shape
+ * that the scheduler's onDue handler produces.
+ */
+export function buildReviewEvent(task: {
+  id: string;
+  name: string;
+  schedule: string;
+  payload?: Record<string, unknown>;
+}): {
+  source: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  timestamp: Date;
+} {
+  return {
+    source: 'review-job',
+    content: [
+      `Scheduled task "${task.name}" has fired.`,
+      '',
+      'Review your pending predictions against recent operation traces.',
+      'Use self_introspect to see your recent tool usage, then use list_predictions to see pending predictions.',
+      'For each prediction, use annotate_prediction to record whether it was accurate.',
+      'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
+      '',
+      'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
+    ].join('\n'),
+    metadata: {
+      taskId: task.id,
+      taskName: task.name,
+      schedule: task.schedule,
+      ...task.payload,
+    },
+    timestamp: new Date(),
+  };
+}
+
+/**
  * Create a graceful shutdown handler that closes readline and disconnects persistence.
  * Extracted for testability.
  */
@@ -561,26 +599,7 @@ async function main(): Promise<void> {
         console.warn('review job: failed to expire stale predictions', error);
       });
 
-    const reviewEvent = {
-      source: 'review-job',
-      content: [
-        `Scheduled task "${task.name}" has fired.`,
-        '',
-        'Review your pending predictions against recent operation traces.',
-        'Use self_introspect to see your recent tool usage, then use list_predictions to see pending predictions.',
-        'For each prediction, use annotate_prediction to record whether it was accurate.',
-        'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
-        '',
-        'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
-      ].join('\n'),
-      metadata: {
-        taskId: task.id,
-        taskName: task.name,
-        schedule: task.schedule,
-        ...task.payload,
-      },
-      timestamp: new Date(),
-    };
+    const reviewEvent = buildReviewEvent(task);
 
     schedulerEventQueue.push(reviewEvent);
     processSchedulerEvent().catch((error) => {

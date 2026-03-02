@@ -14,6 +14,8 @@ import { describe, it, expect, mock } from 'bun:test';
 import { createShutdownHandler, processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
 import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider } from '@/reflexion';
+import { createSchedulingTools } from '@/tool/builtin/scheduling';
+import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { Cron } from 'croner';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { Interface as ReadlineInterface } from 'readline';
@@ -45,6 +47,14 @@ describe('composition root wiring: import compatibility', () => {
 
   it('exports createPostgresScheduler from scheduler', () => {
     expect(typeof createPostgresScheduler).toBe('function');
+  });
+
+  it('exports createSchedulingTools from tool/builtin/scheduling', () => {
+    expect(typeof createSchedulingTools).toBe('function');
+  });
+
+  it('exports createSchedulingContextProvider from agent/scheduling-context', () => {
+    expect(typeof createSchedulingContextProvider).toBe('function');
   });
 });
 

@@ -134,6 +134,37 @@ export function buildReviewEvent(task: {
 }
 
 /**
+ * Build an agent-scheduled event from a scheduled task.
+ * Extracted for testability - allows tests to verify the exact event shape
+ * that the scheduler's onDue handler produces.
+ */
+export function buildAgentScheduledEvent(task: {
+  id: string;
+  name: string;
+  schedule: string;
+  payload?: Record<string, unknown>;
+}): {
+  source: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  timestamp: Date;
+} {
+  const prompt = (task.payload?.['prompt'] as string | undefined) ?? '';
+
+  return {
+    source: 'self-scheduled',
+    content: prompt,
+    metadata: {
+      taskId: task.id,
+      taskName: task.name,
+      schedule: task.schedule,
+      ...task.payload,
+    },
+    timestamp: new Date(),
+  };
+}
+
+/**
  * Create a graceful shutdown handler that closes readline and disconnects persistence.
  * Extracted for testability.
  */

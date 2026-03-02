@@ -6,7 +6,7 @@ Last verified: 2026-03-01
 Embedding-based skill retrieval system. Skills are structured markdown files (SKILL.md) with YAML frontmatter that teach the agent how to approach specific situations. Retrieved per-turn via semantic similarity.
 
 ## Contracts
-- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
+- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, `createSkillTools(registry)`, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
 - **SkillStore interface methods**:
   - `upsertEmbedding()` — Write or update skill embedding
   - `deleteEmbedding()` — Remove skill embedding
@@ -40,5 +40,6 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
 - `loader.ts` — Filesystem skill loader with change detection (phase 3)
 - `registry.ts` — SkillRegistry implementation (phase 3)
 - `context.ts` — `formatSkillsSection(skills)` for system prompt injection (phase 4)
+- `tools.ts` — Agent-facing skill management tools: `skill_list`, `skill_read`, `skill_create`, `skill_update` (phase 5)
 - `test-helpers.ts` — Shared test utilities (mock skill store, embedding provider, skill factories)
 - `index.ts` — Barrel exports

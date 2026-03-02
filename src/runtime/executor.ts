@@ -153,12 +153,14 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
           permissionFlags.push('--deny-net');
         }
 
-        // Filesystem permissions: working_dir always readable + any extra read-only paths
-        // Resolve allowed_read_paths from project root, not subprocess cwd
+        // Filesystem permissions: working_dir always readable/writable + extras
+        // Resolve paths from project root, not subprocess cwd
         const resolvedReadPaths = config.allowed_read_paths.map(p => resolve(p));
-        const readPaths = [config.working_dir, ...resolvedReadPaths];
+        const resolvedWritePaths = config.allowed_write_paths.map(p => resolve(p));
+        const readPaths = [config.working_dir, ...resolvedReadPaths, ...resolvedWritePaths];
+        const writePaths = [config.working_dir, ...resolvedWritePaths];
         permissionFlags.push(`--allow-read=${readPaths.join(',')}`);
-        permissionFlags.push(`--allow-write=${config.working_dir}`);
+        permissionFlags.push(`--allow-write=${writePaths.join(',')}`);
 
         // Subprocess permissions: allowlist if configured, deny otherwise
         if (config.allowed_run.length > 0) {

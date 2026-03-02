@@ -1,6 +1,6 @@
 # Runtime
 
-Last verified: 2026-02-28
+Last verified: 2026-03-02
 
 ## Purpose
 Executes agent-generated TypeScript code in a Deno subprocess sandbox with controlled permissions and an IPC bridge for tool calls back to the host.
@@ -12,7 +12,7 @@ Executes agent-generated TypeScript code in a Deno subprocess sandbox with contr
   - Output size capped at `max_output_size`
   - Execution times out after `code_timeout` ms
   - Tool calls from sandbox limited to `max_tool_calls_per_exec`
-  - Deno permissions: network only to `allowed_hosts`, filesystem only to `working_dir`, no subprocess/env/FFI access
+  - Deno permissions: network only to `allowed_hosts`, reads to `working_dir` + `allowed_read_paths` + `allowed_write_paths`, writes to `working_dir` + `allowed_write_paths`, no subprocess/env/FFI access
   - Temporary script files are cleaned up after execution
 - **Expects**: Deno installed and on PATH. `working_dir` exists. `ToolRegistry` populated with tools.
 

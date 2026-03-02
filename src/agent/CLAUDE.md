@@ -1,9 +1,9 @@
 # Agent
 
-Last verified: 2026-03-01
+Last verified: 2026-03-02
 
 ## Purpose
-Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency.
+Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency. Optionally records operation traces for every tool dispatch via `TraceRecorder`.
 
 ## Contracts
 - **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `ContextProvider` type, `createAgent(deps, conversationId?)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `shouldCompress`)
@@ -17,10 +17,11 @@ Implements the core agent loop: receives user messages, builds context from memo
   - Core memory blocks are always included in the system prompt
   - Working memory blocks are prepended to the message context
   - If `contextProviders` are present in deps, their output (if non-undefined) is appended to the system prompt after memory context
-- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for system prompt injection). Database connected with migrations applied.
+  - If `traceRecorder` is present, every tool dispatch (including execute_code and compact_context) is traced fire-and-forget with timing, success/failure, and output summary
+- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `traceRecorder` for operation tracing, optional `owner` for trace identity, optional `contextProviders` for system prompt injection). Database connected with migrations applied.
 
 ## Dependencies
-- **Uses**: `src/model/` (LLM calls), `src/memory/` (context building), `src/tool/` (tool definitions, dispatch), `src/runtime/` (code execution), `src/persistence/` (message persistence), `src/compaction/` (optional, via `Compactor` interface)
+- **Uses**: `src/model/` (LLM calls), `src/memory/` (context building), `src/tool/` (tool definitions, dispatch), `src/runtime/` (code execution), `src/persistence/` (message persistence), `src/compaction/` (optional, via `Compactor` interface), `src/reflexion/` (optional, via `TraceRecorder` interface)
 - **Used by**: `src/index.ts` (composition root)
 - **Boundary**: The agent is the primary caller of `ModelProvider.complete`. The compaction module also makes LLM calls for summarization via its own injected `ModelProvider`.
 
@@ -35,6 +36,6 @@ Implements the core agent loop: receives user messages, builds context from memo
 - Compressed messages are archived to memory before deletion
 
 ## Key Files
-- `types.ts` -- `Agent`, `AgentConfig`, `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `contextProviders`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
+- `types.ts` -- `Agent`, `AgentConfig`, `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `owner`, `contextProviders`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
 - `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression)
 - `context.ts` -- System prompt building with context provider injection, message conversion, token estimation

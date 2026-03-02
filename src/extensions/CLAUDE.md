@@ -1,6 +1,6 @@
 # Extensions
 
-Last verified: 2026-02-28
+Last verified: 2026-03-02
 
 ## Purpose
 Defines extension point interfaces and hosts concrete implementations. Extension interfaces are contracts that plugins implement to extend the agent's capabilities.
@@ -12,7 +12,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 
 ## Dependencies
 - **Uses**: `src/tool/types.ts` (ToolProvider references ToolDefinition/ToolResult)
-- **Used by**: `src/index.ts` (composition root imports Bluesky source)
+- **Used by**: `src/index.ts` (composition root imports Bluesky source), `src/scheduler/` (implements Scheduler interface)
 - **Boundary**: Extension interfaces live here. Implementations live in `src/extensions/<name>/`.
 
 ## Extension Points
@@ -23,6 +23,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 
 ## Implementations
 - **Bluesky** (`bluesky/`): First DataSource implementation. See `bluesky/CLAUDE.md`.
+- **Scheduler** (`../scheduler/`): PostgreSQL-backed Scheduler implementation. See `src/scheduler/CLAUDE.md`.
 
 ## Key Files
 - `data-source.ts` -- DataSource, IncomingMessage, OutgoingMessage

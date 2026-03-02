@@ -6,12 +6,14 @@ Last verified: 2026-03-01
 Embedding-based skill retrieval system. Skills are structured markdown files (SKILL.md) with YAML frontmatter that teach the agent how to approach specific situations. Retrieved per-turn via semantic similarity.
 
 ## Contracts
-- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`)
+- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
 - **Guarantees**:
   - `parseSkillFile` validates frontmatter with Zod, returns discriminated ParseResult
-- **Expects**: `yaml` npm package for YAML parsing
+  - `SkillRegistry` provides unified interface for loading, searching, and managing skills
+  - `LoadResult` captures both successful loads and errors from the loader
+- **Expects**: `yaml` npm package for YAML parsing, `EmbeddingProvider` for skill embeddings
 
-*Note: This CLAUDE.md will be expanded in later phases as the module grows (registry, loader, tools, agent integration).*
+*Note: This CLAUDE.md reflects phase 3 (loader + registry). Future phases will add skill authoring tools and agent integration.*
 
 ## Dependencies
 - **Uses**: `src/tool/` (ToolParameter type), `yaml` (YAML parsing)
@@ -24,7 +26,10 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
 - skill_embeddings table is a search index only: Source of truth is always SKILL.md files on disk
 
 ## Key Files
-- `types.ts` — Domain types: `SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`
+- `types.ts` — Domain types: `SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`, `SkillRegistry` interface
 - `parser.ts` — Pure YAML frontmatter parser with Zod validation
 - `store.ts` — `SkillStore` port interface for embedding persistence
+- `postgres-store.ts` — PostgreSQL implementation of SkillStore
+- `loader.ts` — Filesystem skill loader with change detection (phase 3)
+- `registry.ts` — SkillRegistry implementation (phase 3)
 - `index.ts` — Barrel exports

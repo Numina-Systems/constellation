@@ -39,3 +39,18 @@ export type SkillSearchResult = {
 export type ParseResult =
   | { readonly success: true; readonly metadata: SkillMetadata; readonly body: string }
   | { readonly success: false; readonly error: string };
+
+export type LoadResult = {
+  readonly loaded: ReadonlyArray<SkillDefinition>;
+  readonly errors: ReadonlyArray<{ readonly path: string; readonly error: string }>;
+};
+
+export interface SkillRegistry {
+  load(): Promise<void>;
+  getAll(): Array<SkillDefinition>;
+  getByName(name: string): SkillDefinition | undefined;
+  search(query: string, limit?: number): Promise<Array<SkillSearchResult>>;
+  getRelevant(context: string, limit?: number, threshold?: number): Promise<Array<SkillDefinition>>;
+  createUserSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+  updateUserSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+}

@@ -7,6 +7,8 @@ export type {
   SkillDefinition,
   SkillSearchResult,
   ParseResult,
+  LoadResult,
+  SkillRegistry,
 } from './types.ts';
 
 export type { SkillStore } from './store.ts';

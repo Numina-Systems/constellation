@@ -10,7 +10,7 @@ import { parseSkillFile } from './parser.ts';
 
 type LoadSkillsOptions = {
   readonly builtinDir: string;
-  readonly userDir: string;
+  readonly agentDir: string;
   readonly store: SkillStore;
   readonly embedding: EmbeddingProvider;
 };
@@ -58,13 +58,13 @@ function loadCompanions(
 }
 
 export async function loadSkills(options: LoadSkillsOptions): Promise<LoadResult> {
-  const { builtinDir, userDir, store, embedding } = options;
+  const { builtinDir, agentDir, store, embedding } = options;
   const errors: Array<{ path: string; error: string }> = [];
   const skillsByName = new Map<string, { skill: SkillDefinition; source: SkillSource }>();
 
   for (const [source, dir] of [
     ['builtin', builtinDir] as const,
-    ['user', userDir] as const,
+    ['agent', agentDir] as const,
   ]) {
     if (!existsSync(dir)) {
       continue;

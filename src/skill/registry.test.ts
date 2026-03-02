@@ -11,16 +11,16 @@ import { createMockSkillStore, createMockEmbeddingProvider } from './test-helper
 describe('createSkillRegistry', () => {
   let tempDir: string;
   let builtinDir: string;
-  let userDir: string;
+  let agentDir: string;
   let store: ReturnType<typeof createMockSkillStore>;
   let embedding: ReturnType<typeof createMockEmbeddingProvider>;
 
   beforeEach(() => {
     tempDir = join(tmpdir(), `skill-registry-test-${randomBytes(8).toString('hex')}`);
     builtinDir = join(tempDir, 'builtin');
-    userDir = join(tempDir, 'user');
+    agentDir = join(tempDir, 'agent');
     mkdirSync(builtinDir, { recursive: true });
-    mkdirSync(userDir, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
     store = createMockSkillStore();
     embedding = createMockEmbeddingProvider();
   });
@@ -44,7 +44,7 @@ description: A test skill
 Test content`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       const relevant = await registry.getRelevant('test skill context', 10, 0.3);
@@ -81,7 +81,7 @@ description: A skill with low relevance
 Weakly relevant content`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       // Set specific scores: high above threshold, low below
@@ -118,7 +118,7 @@ Content ${i}`,
         );
       }
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       const relevant = await registry.getRelevant('context', 2);
@@ -128,7 +128,7 @@ Content ${i}`,
   });
 
   describe('skills.AC5.3: getAll returns all loaded skills', () => {
-    it('should return all skills from both builtin and user dirs', async () => {
+    it('should return all skills from both builtin and agent dirs', async () => {
       const builtinSkillDir = join(builtinDir, 'builtin-skill');
       mkdirSync(builtinSkillDir);
       writeFileSync(
@@ -142,26 +142,26 @@ description: A builtin skill
 Builtin content`,
       );
 
-      const userSkillDir = join(userDir, 'user-skill');
-      mkdirSync(userSkillDir);
+      const agentSkillDir = join(agentDir, 'agent-skill');
+      mkdirSync(agentSkillDir);
       writeFileSync(
-        join(userSkillDir, 'SKILL.md'),
+        join(agentSkillDir, 'SKILL.md'),
         `---
-name: user-skill
-description: A user skill
+name: agent-skill
+description: An agent skill
 ---
 # Body
 
-User content`,
+Agent content`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       const all = registry.getAll();
 
       expect(all).toHaveLength(2);
-      expect(all.map((s) => s.metadata.name).sort()).toEqual(['builtin-skill', 'user-skill']);
+      expect(all.map((s) => s.metadata.name).sort()).toEqual(['agent-skill', 'builtin-skill']);
     });
   });
 
@@ -180,7 +180,7 @@ description: A test skill
 Test content`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       const found = registry.getByName('test-skill');
@@ -207,7 +207,7 @@ description: A test skill for searching
 This is a test skill with searchable content`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       const results = await registry.search('test query');
@@ -224,11 +224,11 @@ This is a test skill with searchable content`,
     });
   });
 
-  describe('skills.AC5.6: createUserSkill writes file and adds to registry', () => {
+  describe('skills.AC5.6: createAgentSkill writes file and adds to registry', () => {
     it('should create skill file, parse, embed, and add to registry', async () => {
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
 
-      const created = await registry.createUserSkill(
+      const created = await registry.createAgentSkill(
         'new-skill',
         'A newly created skill',
         'This is the body of the skill',
@@ -239,24 +239,24 @@ This is a test skill with searchable content`,
       expect(created.metadata.name).toBe('new-skill');
       expect(created.metadata.description).toBe('A newly created skill');
       expect(created.metadata.tags).toEqual(['tag1', 'tag2']);
-      expect(created.source).toBe('user');
-      expect(created.id).toBe('skill:user:new-skill');
+      expect(created.source).toBe('agent');
+      expect(created.id).toBe('skill:agent:new-skill');
 
       const retrieved = registry.getByName('new-skill');
       expect(retrieved).toBeDefined();
       expect(retrieved?.metadata.name).toBe('new-skill');
 
-      const skillFilePath = join(userDir, 'new-skill', 'SKILL.md');
+      const skillFilePath = join(agentDir, 'new-skill', 'SKILL.md');
       const fileExists = await Bun.file(skillFilePath).exists();
       expect(fileExists).toBe(true);
     });
 
     it('should safely handle descriptions with YAML special characters', async () => {
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
 
       // Description with colon-space (YAML injection risk)
       const unsafeDesc = 'Skill for: handling errors and special cases';
-      const created = await registry.createUserSkill(
+      const created = await registry.createAgentSkill(
         'safe-skill',
         unsafeDesc,
         'This skill handles edge cases',
@@ -272,21 +272,21 @@ This is a test skill with searchable content`,
       expect(retrieved?.metadata.description).toBe(unsafeDesc);
 
       // Verify file content is valid YAML
-      const skillFilePath = join(userDir, 'safe-skill', 'SKILL.md');
+      const skillFilePath = join(agentDir, 'safe-skill', 'SKILL.md');
       const content = await Bun.file(skillFilePath).text();
       expect(content).toContain('---');
       // The file should parse without error (verified by registry loading)
     });
   });
 
-  describe('skills.AC5.7: updateUserSkill updates existing user skill', () => {
-    it('should update file and registry for user skills', async () => {
-      const userSkillDir = join(userDir, 'user-skill');
-      mkdirSync(userSkillDir);
+  describe('skills.AC5.7: updateAgentSkill updates existing agent skill', () => {
+    it('should update file and registry for agent skills', async () => {
+      const agentSkillDir = join(agentDir, 'agent-skill');
+      mkdirSync(agentSkillDir);
       writeFileSync(
-        join(userSkillDir, 'SKILL.md'),
+        join(agentSkillDir, 'SKILL.md'),
         `---
-name: user-skill
+name: agent-skill
 description: Original description
 ---
 # Body
@@ -294,14 +294,14 @@ description: Original description
 Original body`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
-      let retrieved = registry.getByName('user-skill');
+      let retrieved = registry.getByName('agent-skill');
       expect(retrieved?.metadata.description).toBe('Original description');
 
-      const updated = await registry.updateUserSkill(
-        'user-skill',
+      const updated = await registry.updateAgentSkill(
+        'agent-skill',
         'Updated description',
         'Updated body',
         ['updated-tag'],
@@ -311,12 +311,12 @@ Original body`,
       expect(updated.body).toBe('Updated body');
       expect(updated.metadata.tags).toEqual(['updated-tag']);
 
-      retrieved = registry.getByName('user-skill');
+      retrieved = registry.getByName('agent-skill');
       expect(retrieved?.metadata.description).toBe('Updated description');
     });
   });
 
-  describe('skills.AC5.8: updateUserSkill rejects builtin skills', () => {
+  describe('skills.AC5.8: updateAgentSkill rejects builtin skills', () => {
     it('should throw error when attempting to update builtin skill', async () => {
       const builtinSkillDir = join(builtinDir, 'builtin-skill');
       mkdirSync(builtinSkillDir);
@@ -331,16 +331,16 @@ description: A builtin skill
 Builtin content`,
       );
 
-      const registry = createSkillRegistry({ store, embedding, builtinDir, userDir });
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
       await registry.load();
 
       try {
-        await registry.updateUserSkill('builtin-skill', 'New description', 'New body');
+        await registry.updateAgentSkill('builtin-skill', 'New description', 'New body');
         expect.unreachable('Expected error to be thrown');
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         expect(message).toContain('cannot update builtin skill');
-        expect(message).toContain('user skills only');
+        expect(message).toContain('agent skills only');
       }
     });
   });

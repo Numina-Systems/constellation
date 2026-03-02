@@ -19,12 +19,12 @@ describe('Skill management tools', () => {
       async getRelevant() {
         return [];
       },
-      async createUserSkill(name, description, body, tags) {
+      async createAgentSkill(name, description, body, tags) {
         if (!/^[a-z0-9-]+$/.test(name)) {
           throw new Error('invalid name format');
         }
         const skill: SkillDefinition = {
-          id: `skill:user:${name}`,
+          id: `skill:agent:${name}`,
           metadata: {
             name,
             description,
@@ -33,14 +33,14 @@ describe('Skill management tools', () => {
           },
           body,
           companions: [],
-          source: 'user',
-          filePath: `/user/${name}/SKILL.md`,
+          source: 'agent',
+          filePath: `/agent/${name}/SKILL.md`,
           contentHash: `hash-${name}`,
         };
         map.set(name, skill);
         return skill;
       },
-      async updateUserSkill(name, description, body, tags) {
+      async updateAgentSkill(name, description, body, tags) {
         const existing = map.get(name);
         if (!existing) {
           throw new Error('skill not found');
@@ -103,37 +103,37 @@ describe('Skill management tools', () => {
   });
 
   describe('skills.AC8.2: skill_list filters by source parameter', () => {
-    it('should filter to user skills only when source=user', async () => {
+    it('should filter to agent skills only when source=agent', async () => {
       const builtinSkill = createTestSkill('builtin-skill', 'Builtin', 'builtin body');
-      const userSkill = {
-        ...createTestSkill('user-skill', 'User skill', 'user body'),
-        source: 'user' as const,
+      const agentSkill = {
+        ...createTestSkill('agent-skill', 'Agent skill', 'agent body'),
+        source: 'agent' as const,
       };
 
-      const registry = createMockRegistry([builtinSkill, userSkill]);
+      const registry = createMockRegistry([builtinSkill, agentSkill]);
       const tools = createSkillTools(registry);
       const skill_list = tools.find((t) => t.definition.name === 'skill_list');
       expect(skill_list).toBeDefined();
 
       if (!skill_list) return;
 
-      const result = await skill_list.handler({ source: 'user' });
+      const result = await skill_list.handler({ source: 'agent' });
 
       expect(result.success).toBe(true);
       const parsed = JSON.parse(result.output);
       expect(parsed.length).toBe(1);
-      expect(parsed[0].name).toBe('user-skill');
-      expect(parsed[0].source).toBe('user');
+      expect(parsed[0].name).toBe('agent-skill');
+      expect(parsed[0].source).toBe('agent');
     });
 
     it('should filter to builtin skills only when source=builtin', async () => {
       const builtinSkill = createTestSkill('builtin-skill', 'Builtin', 'builtin body');
-      const userSkill = {
-        ...createTestSkill('user-skill', 'User skill', 'user body'),
-        source: 'user' as const,
+      const agentSkill = {
+        ...createTestSkill('agent-skill', 'Agent skill', 'agent body'),
+        source: 'agent' as const,
       };
 
-      const registry = createMockRegistry([builtinSkill, userSkill]);
+      const registry = createMockRegistry([builtinSkill, agentSkill]);
       const tools = createSkillTools(registry);
       const skill_list = tools.find((t) => t.definition.name === 'skill_list');
       expect(skill_list).toBeDefined();
@@ -200,7 +200,7 @@ describe('Skill management tools', () => {
     });
   });
 
-  describe('skills.AC8.5: skill_create creates a new user skill', () => {
+  describe('skills.AC8.5: skill_create creates a new agent skill', () => {
     it('should create a skill and return success', async () => {
       const registry = createMockRegistry([]);
       const tools = createSkillTools(registry);
@@ -225,7 +225,7 @@ describe('Skill management tools', () => {
       expect(created?.metadata.description).toBe('A new skill');
       expect(created?.body).toBe('This is my new skill body');
       expect(created?.metadata.tags).toEqual(['tag1', 'tag2']);
-      expect(created?.source).toBe('user');
+      expect(created?.source).toBe('agent');
     });
   });
 
@@ -286,14 +286,14 @@ describe('Skill management tools', () => {
     });
   });
 
-  describe('skills.AC8.7: skill_update updates an existing user skill', () => {
-    it('should update a user skill successfully', async () => {
-      const userSkill = {
+  describe('skills.AC8.7: skill_update updates an existing agent skill', () => {
+    it('should update an agent skill successfully', async () => {
+      const agentSkill = {
         ...createTestSkill('my-skill', 'Original description', 'original body'),
-        source: 'user' as const,
+        source: 'agent' as const,
       };
 
-      const registry = createMockRegistry([userSkill]);
+      const registry = createMockRegistry([agentSkill]);
       const tools = createSkillTools(registry);
       const skill_update = tools.find((t) => t.definition.name === 'skill_update');
       expect(skill_update).toBeDefined();
@@ -373,7 +373,7 @@ describe('Skill management tools', () => {
       const sourceParam = skill_list?.definition.parameters.find((p) => p.name === 'source');
       expect(sourceParam).toBeDefined();
       expect(sourceParam?.required).toBe(false);
-      expect(sourceParam?.enum_values).toEqual(['builtin', 'user']);
+      expect(sourceParam?.enum_values).toEqual(['builtin', 'agent']);
     });
 
     it('skill_read should have required name parameter', () => {

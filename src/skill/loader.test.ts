@@ -11,16 +11,16 @@ import { createMockSkillStore, createMockEmbeddingProvider } from './test-helper
 describe('loadSkills', () => {
   let tempDir: string;
   let builtinDir: string;
-  let userDir: string;
+  let agentDir: string;
   let store: ReturnType<typeof createMockSkillStore>;
   let embedding: ReturnType<typeof createMockEmbeddingProvider>;
 
   beforeEach(() => {
     tempDir = join(tmpdir(), `skill-loader-test-${randomBytes(8).toString('hex')}`);
     builtinDir = join(tempDir, 'builtin');
-    userDir = join(tempDir, 'user');
+    agentDir = join(tempDir, 'agent');
     mkdirSync(builtinDir, { recursive: true });
-    mkdirSync(userDir, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
     store = createMockSkillStore();
     embedding = createMockEmbeddingProvider();
   });
@@ -44,7 +44,7 @@ description: A test skill
 Test content`,
       );
 
-      const result = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
       expect(result.loaded).toHaveLength(1);
       expect(result.loaded[0]?.metadata.name).toBe('test-skill');
@@ -53,32 +53,32 @@ Test content`,
     });
   });
 
-  describe('skills.AC4.2: Discover user skills', () => {
-    it('should discover SKILL.md files in userDir/*/SKILL.md pattern', async () => {
-      const skillDir = join(userDir, 'user-skill');
+  describe('skills.AC4.2: Discover agent skills', () => {
+    it('should discover SKILL.md files in agentDir/*/SKILL.md pattern', async () => {
+      const skillDir = join(agentDir, 'agent-skill');
       mkdirSync(skillDir);
       writeFileSync(
         join(skillDir, 'SKILL.md'),
         `---
-name: user-skill
-description: A user skill
+name: agent-skill
+description: An agent skill
 ---
 # Body
 
-User content`,
+Agent content`,
       );
 
-      const result = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
       expect(result.loaded).toHaveLength(1);
-      expect(result.loaded[0]?.metadata.name).toBe('user-skill');
-      expect(result.loaded[0]?.source).toBe('user');
+      expect(result.loaded[0]?.metadata.name).toBe('agent-skill');
+      expect(result.loaded[0]?.source).toBe('agent');
       expect(result.errors).toHaveLength(0);
     });
   });
 
-  describe('skills.AC4.3: User skills override builtin skills', () => {
-    it('should prefer user skill over builtin skill with same name', async () => {
+  describe('skills.AC4.3: Agent skills override builtin skills', () => {
+    it('should prefer agent skill over builtin skill with same name', async () => {
       // Create builtin skill
       const builtinSkillDir = join(builtinDir, 'overlap');
       mkdirSync(builtinSkillDir);
@@ -93,27 +93,27 @@ description: Builtin version
 Builtin content`,
       );
 
-      // Create user skill with same name
-      const userSkillDir = join(userDir, 'overlap');
-      mkdirSync(userSkillDir);
+      // Create agent skill with same name
+      const agentSkillDir = join(agentDir, 'overlap');
+      mkdirSync(agentSkillDir);
       writeFileSync(
-        join(userSkillDir, 'SKILL.md'),
+        join(agentSkillDir, 'SKILL.md'),
         `---
 name: overlap
-description: User version
+description: Agent version
 ---
 # Body
 
-User content`,
+Agent content`,
       );
 
-      const result = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
       expect(result.loaded).toHaveLength(1);
       const skill = result.loaded[0]!;
       expect(skill.metadata.name).toBe('overlap');
-      expect(skill.metadata.description).toBe('User version');
-      expect(skill.source).toBe('user');
+      expect(skill.metadata.description).toBe('Agent version');
+      expect(skill.source).toBe('agent');
     });
   });
 
@@ -131,7 +131,7 @@ Unchanged content`;
       writeFileSync(join(skillDir, 'SKILL.md'), skillContent);
 
       // First load
-      const result1 = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result1 = await loadSkills({ builtinDir, agentDir, store, embedding });
       expect(result1.loaded).toHaveLength(1);
       expect(embedding.callCount).toBeGreaterThan(0);
 
@@ -139,7 +139,7 @@ Unchanged content`;
       embedding.callCount = 0;
 
       // Second load without changes
-      const result2 = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result2 = await loadSkills({ builtinDir, agentDir, store, embedding });
       expect(result2.loaded).toHaveLength(1);
       const embedCalls2 = embedding.callCount;
 
@@ -166,7 +166,7 @@ description: Version 1
 Content v1`,
       );
 
-      const result1 = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result1 = await loadSkills({ builtinDir, agentDir, store, embedding });
       expect(result1.loaded).toHaveLength(1);
       expect(embedding.callCount).toBe(1);
 
@@ -183,7 +183,7 @@ description: Version 2
 Content v2`,
       );
 
-      const result2 = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result2 = await loadSkills({ builtinDir, agentDir, store, embedding });
       expect(result2.loaded).toHaveLength(1);
 
       expect(embedding.callCount).toBe(1);
@@ -221,7 +221,7 @@ Content 2`,
       );
 
       // First load
-      const result1 = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result1 = await loadSkills({ builtinDir, agentDir, store, embedding });
       expect(result1.loaded).toHaveLength(2);
       expect(store.data.size).toBe(2);
 
@@ -229,7 +229,7 @@ Content 2`,
       rmSync(skill1Dir, { recursive: true });
 
       // Second load
-      const result2 = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result2 = await loadSkills({ builtinDir, agentDir, store, embedding });
       expect(result2.loaded).toHaveLength(1);
       expect(result2.loaded[0]?.metadata.name).toBe('skill2');
       expect(store.data.size).toBe(1);
@@ -255,7 +255,7 @@ Main content`);
 
       writeFileSync(join(skillDir, 'companion.md'), 'This is companion content');
 
-      const result = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
       expect(result.loaded).toHaveLength(1);
       const skill = result.loaded[0]!;
@@ -291,7 +291,7 @@ companions:
 Main content`,
         );
 
-        const result = await loadSkills({ builtinDir, userDir, store, embedding });
+        const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
         expect(result.loaded).toHaveLength(1);
         expect(result.errors).toHaveLength(0);
@@ -307,9 +307,9 @@ Main content`,
   describe('skills.AC4.9: Skill ID format', () => {
     it('should format skill IDs as skill:${source}:${name}', async () => {
       const builtinSkillDir = join(builtinDir, 'id-test-builtin');
-      const userSkillDir = join(userDir, 'id-test-user');
+      const agentSkillDir = join(agentDir, 'id-test-agent');
       mkdirSync(builtinSkillDir);
-      mkdirSync(userSkillDir);
+      mkdirSync(agentSkillDir);
 
       writeFileSync(
         join(builtinSkillDir, 'SKILL.md'),
@@ -323,24 +323,24 @@ Content`,
       );
 
       writeFileSync(
-        join(userSkillDir, 'SKILL.md'),
+        join(agentSkillDir, 'SKILL.md'),
         `---
-name: id-test-user
-description: User test
+name: id-test-agent
+description: Agent test
 ---
 # Body
 
 Content`,
       );
 
-      const result = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
       expect(result.loaded).toHaveLength(2);
       const builtinSkill = result.loaded.find((s) => s.source === 'builtin')!;
-      const userSkill = result.loaded.find((s) => s.source === 'user')!;
+      const agentSkill = result.loaded.find((s) => s.source === 'agent')!;
 
       expect(builtinSkill.id).toBe('skill:builtin:id-test-builtin');
-      expect(userSkill.id).toBe('skill:user:id-test-user');
+      expect(agentSkill.id).toBe('skill:agent:id-test-agent');
     });
   });
 
@@ -373,7 +373,7 @@ description: This has invalid name (spaces not allowed)
 Content`,
       );
 
-      const result = await loadSkills({ builtinDir, userDir, store, embedding });
+      const result = await loadSkills({ builtinDir, agentDir, store, embedding });
 
       expect(result.loaded).toHaveLength(1);
       expect(result.loaded[0]?.metadata.name).toBe('good');

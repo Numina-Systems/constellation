@@ -359,7 +359,7 @@ async function main(): Promise<void> {
       store: skillStore,
       embedding,
       builtinDir: config.skills.builtin_dir,
-      userDir: config.skills.user_dir,
+      agentDir: config.skills.agent_dir,
     });
     await skillRegistry.load();
 

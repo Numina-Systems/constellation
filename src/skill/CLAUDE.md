@@ -29,7 +29,7 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
 ## Key Decisions
 - Embedding-based retrieval over system-prompt enumeration: Scales without bloating context
 - Content-hash change detection: Skip re-embedding unchanged skills
-- User skills override builtin: Explicit user intent to replace behaviour
+- Agent skills override builtin: Explicit intent to replace behaviour
 - skill_embeddings table is a search index only: Source of truth is always SKILL.md files on disk
 
 ## Key Files

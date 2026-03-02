@@ -2,7 +2,7 @@
 
 import type { ToolParameter } from '../tool/types.ts';
 
-export type SkillSource = 'builtin' | 'user';
+export type SkillSource = 'builtin' | 'agent';
 
 export type SkillToolDefinition = {
   readonly name: string;
@@ -51,6 +51,6 @@ export interface SkillRegistry {
   getByName(name: string): SkillDefinition | null;
   search(query: string, limit?: number): Promise<Array<SkillSearchResult>>;
   getRelevant(context: string, limit?: number, threshold?: number): Promise<Array<SkillDefinition>>;
-  createUserSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
-  updateUserSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+  createAgentSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+  updateAgentSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
 }

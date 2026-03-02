@@ -126,8 +126,8 @@ describe('Skill injection pipeline', () => {
         getByName: () => null,
         search: async () => [],
         getRelevant: async () => [skill1, skill2],
-        createUserSkill: async () => skill1,
-        updateUserSkill: async () => skill1,
+        createAgentSkill: async () => skill1,
+        updateAgentSkill: async () => skill1,
       };
 
       const result = await buildSystemPromptWithSkills(basePrompt, mockRegistry, 'write python', 3, 0.3);
@@ -159,8 +159,8 @@ describe('Skill injection pipeline', () => {
           }
           return [relevantSkill];
         },
-        createUserSkill: async () => relevantSkill,
-        updateUserSkill: async () => relevantSkill,
+        createAgentSkill: async () => relevantSkill,
+        updateAgentSkill: async () => relevantSkill,
       };
 
       // With low threshold, should include skill
@@ -188,8 +188,8 @@ describe('Skill injection pipeline', () => {
           // Return max limit skills to test limiting
           return limit ? Array.from({ length: limit }, (_, i) => createTestSkill(`skill${i}`, `Skill ${i}`, 'Body')) : [];
         },
-        createUserSkill: async () => createTestSkill('test', 'test', 'test'),
-        updateUserSkill: async () => createTestSkill('test', 'test', 'test'),
+        createAgentSkill: async () => createTestSkill('test', 'test', 'test'),
+        updateAgentSkill: async () => createTestSkill('test', 'test', 'test'),
       };
 
       await buildSystemPromptWithSkills(basePrompt, mockRegistry, 'test', 5, 0.3);
@@ -223,8 +223,8 @@ describe('Skill injection pipeline', () => {
           // No matching skills
           return [];
         },
-        createUserSkill: async () => createTestSkill('test', 'test', 'test'),
-        updateUserSkill: async () => createTestSkill('test', 'test', 'test'),
+        createAgentSkill: async () => createTestSkill('test', 'test', 'test'),
+        updateAgentSkill: async () => createTestSkill('test', 'test', 'test'),
       };
 
       const result = await buildSystemPromptWithSkills(basePrompt, mockRegistry, 'test', 3, 0.3);

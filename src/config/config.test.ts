@@ -238,7 +238,7 @@ describe("skills.AC3: Skill configuration", () => {
 ${baseTomlContent}
 [skills]
 builtin_dir = "/opt/skills"
-user_dir = "/home/user/skills"
+agent_dir = "/home/user/skills"
 max_per_turn = 5
 similarity_threshold = 0.7
 `;
@@ -248,7 +248,7 @@ similarity_threshold = 0.7
 
       expect(config.skills).toBeDefined();
       expect(config.skills?.builtin_dir).toBe("/opt/skills");
-      expect(config.skills?.user_dir).toBe("/home/user/skills");
+      expect(config.skills?.agent_dir).toBe("/home/user/skills");
       expect(config.skills?.max_per_turn).toBe(5);
       expect(config.skills?.similarity_threshold).toBe(0.7);
     });
@@ -266,7 +266,7 @@ ${baseTomlContent}
 
       expect(config.skills).toBeDefined();
       expect(config.skills?.builtin_dir).toBe("./skills");
-      expect(config.skills?.user_dir).toBe("./user-skills");
+      expect(config.skills?.agent_dir).toBe("./agent-skills");
       expect(config.skills?.max_per_turn).toBe(3);
       expect(config.skills?.similarity_threshold).toBe(0.3);
     });
@@ -284,7 +284,7 @@ max_per_turn = 7
 
       expect(config.skills).toBeDefined();
       expect(config.skills?.builtin_dir).toBe("/custom/skills");
-      expect(config.skills?.user_dir).toBe("./user-skills");
+      expect(config.skills?.agent_dir).toBe("./agent-skills");
       expect(config.skills?.max_per_turn).toBe(7);
       expect(config.skills?.similarity_threshold).toBe(0.3);
     });

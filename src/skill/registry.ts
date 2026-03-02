@@ -13,7 +13,7 @@ type CreateSkillRegistryOptions = {
   readonly store: SkillStore;
   readonly embedding: EmbeddingProvider;
   readonly builtinDir: string;
-  readonly userDir: string;
+  readonly agentDir: string;
 };
 
 const SKILL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -42,7 +42,7 @@ function buildSkillMarkdown(
 }
 
 export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillRegistry {
-  const { store, embedding, builtinDir, userDir } = options;
+  const { store, embedding, builtinDir, agentDir } = options;
   const skillsByName = new Map<string, SkillDefinition>();
   const idToName = new Map<string, string>();
 
@@ -53,7 +53,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
 
       const result = await loadSkills({
         builtinDir,
-        userDir,
+        agentDir,
         store,
         embedding,
       });
@@ -115,7 +115,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
         .filter((s): s is SkillDefinition => s !== undefined);
     },
 
-    async createUserSkill(
+    async createAgentSkill(
       name: string,
       description: string,
       body: string,
@@ -126,7 +126,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
         throw new Error(`invalid skill name: ${nameValidation.error}`);
       }
 
-      const skillDir = join(userDir, name);
+      const skillDir = join(agentDir, name);
       mkdirSync(skillDir, { recursive: true });
 
       const skillFilePath = join(skillDir, 'SKILL.md');
@@ -139,7 +139,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       }
 
       const contentHash = computeContentHash(content);
-      const id = `skill:user:${name}`;
+      const id = `skill:agent:${name}`;
       const { metadata } = parseResult;
 
       const embeddingText = buildEmbeddingText(metadata, body);
@@ -152,7 +152,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
         metadata,
         body,
         companions: [],
-        source: 'user',
+        source: 'agent',
         filePath: skillFilePath,
         contentHash,
       };
@@ -163,7 +163,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       return skill;
     },
 
-    async updateUserSkill(
+    async updateAgentSkill(
       name: string,
       description: string,
       body: string,
@@ -173,11 +173,11 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       if (!existing) {
         throw new Error(`skill "${name}" not found`);
       }
-      if (existing.source !== 'user') {
-        throw new Error(`cannot update builtin skill "${name}" — user skills only`);
+      if (existing.source !== 'agent') {
+        throw new Error(`cannot update builtin skill "${name}" — agent skills only`);
       }
 
-      const skillDir = join(userDir, name);
+      const skillDir = join(agentDir, name);
       const skillFilePath = join(skillDir, 'SKILL.md');
       const content = buildSkillMarkdown(name, description, body, tags);
       writeFileSync(skillFilePath, content, 'utf-8');
@@ -188,7 +188,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       }
 
       const contentHash = computeContentHash(content);
-      const id = `skill:user:${name}`;
+      const id = `skill:agent:${name}`;
       const { metadata } = parseResult;
 
       const embeddingText = buildEmbeddingText(metadata, body);
@@ -201,7 +201,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
         metadata,
         body,
         companions: [],
-        source: 'user',
+        source: 'agent',
         filePath: skillFilePath,
         contentHash,
       };

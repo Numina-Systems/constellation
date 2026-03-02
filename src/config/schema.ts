@@ -104,7 +104,7 @@ const WebConfigSchema = z.object({
 
 const SkillConfigSchema = z.object({
   builtin_dir: z.string().default('./skills'),
-  user_dir: z.string().default('./user-skills'),
+  agent_dir: z.string().default('./agent-skills'),
   max_per_turn: z.number().int().positive().default(3),
   similarity_threshold: z.number().min(0).max(1).default(0.3),
 });

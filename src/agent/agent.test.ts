@@ -1142,10 +1142,10 @@ describe('Skill integration', () => {
       getRelevant: async () => {
         throw new Error('Database connection failed');
       },
-      createUserSkill: async () => {
+      createAgentSkill: async () => {
         throw new Error('not implemented');
       },
-      updateUserSkill: async () => {
+      updateAgentSkill: async () => {
         throw new Error('not implemented');
       },
     };

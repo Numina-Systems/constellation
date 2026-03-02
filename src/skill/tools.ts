@@ -17,9 +17,9 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
         {
           name: 'source',
           type: 'string',
-          description: 'Filter skills by source (builtin or user)',
+          description: 'Filter skills by source (builtin or agent)',
           required: false,
-          enum_values: ['builtin', 'user'],
+          enum_values: ['builtin', 'agent'],
         },
       ],
     },
@@ -114,7 +114,7 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
     definition: {
       name: 'skill_create',
       description:
-        'Create a new user-defined skill. Name must be lowercase with hyphens (kebab-case).',
+        'Create a new agent-defined skill. Name must be lowercase with hyphens (kebab-case).',
       parameters: [
         {
           name: 'name',
@@ -153,7 +153,7 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
           ? tagsStr.split(',').map((t) => t.trim()).filter(Boolean)
           : [];
 
-        await registry.createUserSkill(name, description, body, tags);
+        await registry.createAgentSkill(name, description, body, tags);
 
         return {
           success: true,
@@ -173,7 +173,7 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
   const skill_update: Tool = {
     definition: {
       name: 'skill_update',
-      description: 'Update an existing user-defined skill. Cannot update builtin skills.',
+      description: 'Update an existing agent-defined skill. Cannot update builtin skills — only agent skills.',
       parameters: [
         {
           name: 'name',
@@ -212,7 +212,7 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
           ? tagsStr.split(',').map((t) => t.trim()).filter(Boolean)
           : [];
 
-        await registry.updateUserSkill(name, description, body, tags);
+        await registry.updateAgentSkill(name, description, body, tags);
 
         return {
           success: true,

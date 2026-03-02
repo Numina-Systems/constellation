@@ -14,6 +14,7 @@ import { describe, it, expect, mock } from 'bun:test';
 import { createShutdownHandler, processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
 import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider } from '@/reflexion';
+import { Cron } from 'croner';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { Interface as ReadlineInterface } from 'readline';
 
@@ -290,6 +291,7 @@ describe('composition root wiring: agent-scheduled event format (buildAgentSched
 
     expect(agentEvent.source).toBe('self-scheduled');
     expect(typeof agentEvent.content).toBe('string');
+    expect(agentEvent.content).toBe('do something');
     expect(typeof agentEvent.metadata).toBe('object');
     expect(agentEvent.timestamp instanceof Date).toBe(true);
   });
@@ -382,19 +384,6 @@ describe('composition root wiring: agent-scheduled event format (buildAgentSched
     expect(event.timestamp instanceof Date).toBe(true);
     expect(timeDifference).toBeLessThan(1000); // Within 1 second
   });
-
-  it('produces source "self-scheduled" (AC4.1)', () => {
-    const mockTask = {
-      id: 'agent-task-source',
-      name: 'scheduled-prompt',
-      schedule: '0 * * * *',
-      payload: { type: 'agent-scheduled', prompt: 'test' },
-    };
-
-    const event = buildAgentScheduledEvent(mockTask);
-
-    expect(event.source).toBe('self-scheduled');
-  });
 });
 
 // ============================================================================
@@ -404,7 +393,6 @@ describe('composition root wiring: agent-scheduled event format (buildAgentSched
 
 describe('composition root wiring: one-shot auto-cancel via croner (AC4.3)', () => {
   it('croner returns null for ISO timestamp in the past', () => {
-    const Cron = require('croner').Cron;
     const pastTimestamp = new Date(Date.now() - 60000).toISOString(); // 1 minute ago
 
     const nextRun = new Cron(pastTimestamp).nextRun();
@@ -413,7 +401,6 @@ describe('composition root wiring: one-shot auto-cancel via croner (AC4.3)', () 
   });
 
   it('croner returns a future Date for ISO timestamp in the future', () => {
-    const Cron = require('croner').Cron;
     const futureTimestamp = new Date(Date.now() + 60000).toISOString(); // 1 minute from now
 
     const nextRun = new Cron(futureTimestamp).nextRun();
@@ -422,7 +409,6 @@ describe('composition root wiring: one-shot auto-cancel via croner (AC4.3)', () 
   });
 
   it('croner correctly distinguishes between past and future timestamps', () => {
-    const Cron = require('croner').Cron;
     const pastTimestamp = new Date(Date.now() - 1000).toISOString();
     const futureTimestamp = new Date(Date.now() + 86400000).toISOString(); // 1 day from now
 

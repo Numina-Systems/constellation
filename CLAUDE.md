@@ -30,7 +30,8 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
-- `src/agent/` -- Agent loop, context building, compression
+- `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
+- `src/agent/` -- Agent loop, context building, compression, per-turn skill injection
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)

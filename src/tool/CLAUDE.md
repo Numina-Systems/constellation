@@ -17,7 +17,7 @@ Provides a tool registry that manages registration, parameter validation, dispat
 
 ## Dependencies
 - **Uses**: `src/memory/` (for built-in memory tools), `src/web/` (for built-in web tools)
-- **Used by**: `src/agent/`, `src/runtime/` (stubs for Deno bridge), `src/index.ts`
+- **Used by**: `src/agent/`, `src/runtime/` (stubs for Deno bridge), `src/skill/` (ToolParameter, Tool types for skill tool definitions), `src/index.ts`
 - **Boundary**: Tool handlers are pure functions returning `ToolResult`. Side effects go through injected dependencies.
 
 ## Key Decisions

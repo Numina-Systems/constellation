@@ -5,57 +5,8 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import type { EmbeddingProvider } from '../embedding/types.ts';
-import type { SkillStore } from './store.ts';
 import { createSkillRegistry } from './registry.ts';
-
-// In-memory mock SkillStore (reused from loader tests)
-function createMockSkillStore(): SkillStore & { data: Map<string, { contentHash: string; embedding: ReadonlyArray<number> }> } {
-  const data = new Map<string, { contentHash: string; embedding: ReadonlyArray<number> }>();
-  return {
-    data,
-    async upsertEmbedding(id, _name, _desc, contentHash, embedding) {
-      data.set(id, { contentHash, embedding });
-    },
-    async deleteEmbedding(id) {
-      data.delete(id);
-    },
-    async getByHash(id) {
-      return data.get(id)?.contentHash ?? null;
-    },
-    async searchByEmbedding(_embedding, limit, threshold) {
-      return Array.from(data.entries())
-        .slice(0, limit)
-        .map(([id]) => ({ id, score: threshold + 0.1 }));
-    },
-    async getAllIds() {
-      return Array.from(data.keys());
-    },
-  };
-}
-
-// Mock embedding provider
-function createMockEmbeddingProvider(): EmbeddingProvider & { callCount: number } {
-  const provider: EmbeddingProvider & { callCount: number } = {
-    callCount: 0,
-    dimensions: 768,
-    async embed(text: string) {
-      provider.callCount += 1;
-      const hash = Array.from(text).reduce((acc, char) => {
-        return (acc * 31 + char.charCodeAt(0)) >>> 0;
-      }, 0);
-      const seed = Math.abs(hash) % 1000;
-      return Array.from({ length: 768 }, (_, i) => {
-        const val = Math.sin(seed + i) * 0.5 + 0.5;
-        return Number.isFinite(val) ? val : 0.5;
-      });
-    },
-    async embedBatch(texts) {
-      return Promise.all(texts.map((text) => provider.embed(text)));
-    },
-  };
-  return provider;
-}
+import { createMockSkillStore, createMockEmbeddingProvider } from './test-helpers.ts';
 
 describe('createSkillRegistry', () => {
   let tempDir: string;
@@ -187,11 +138,11 @@ Test content`,
       await registry.load();
 
       const found = registry.getByName('test-skill');
-      expect(found).toBeDefined();
+      expect(found).not.toBeNull();
       expect(found?.metadata.name).toBe('test-skill');
 
       const notFound = registry.getByName('nonexistent');
-      expect(notFound).toBeUndefined();
+      expect(notFound).toBeNull();
     });
   });
 

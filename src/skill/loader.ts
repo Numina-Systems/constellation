@@ -15,7 +15,7 @@ type LoadSkillsOptions = {
   readonly embedding: EmbeddingProvider;
 };
 
-function buildEmbeddingText(metadata: SkillMetadata, body: string): string {
+export function buildEmbeddingText(metadata: SkillMetadata, body: string): string {
   const parts = [metadata.description];
   if (metadata.tags?.length) {
     parts.push(metadata.tags.join(', '));
@@ -24,7 +24,7 @@ function buildEmbeddingText(metadata: SkillMetadata, body: string): string {
   return parts.join('\n');
 }
 
-function computeContentHash(content: string): string {
+export function computeContentHash(content: string): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
@@ -70,7 +70,7 @@ export async function loadSkills(options: LoadSkillsOptions): Promise<LoadResult
       continue;
     }
 
-    let dirContents: string[];
+    let dirContents: Array<string>;
     try {
       dirContents = readdirSync(dir);
     } catch (err) {
@@ -112,12 +112,12 @@ export async function loadSkills(options: LoadSkillsOptions): Promise<LoadResult
         metadata,
         body,
         companions,
-        source: source as SkillSource,
+        source,
         filePath: skillFile,
         contentHash,
       };
 
-      skillsByName.set(metadata.name, { skill, source: source as SkillSource });
+      skillsByName.set(metadata.name, { skill, source });
     }
   }
 

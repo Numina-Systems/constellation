@@ -48,7 +48,7 @@ export type LoadResult = {
 export interface SkillRegistry {
   load(): Promise<void>;
   getAll(): Array<SkillDefinition>;
-  getByName(name: string): SkillDefinition | undefined;
+  getByName(name: string): SkillDefinition | null;
   search(query: string, limit?: number): Promise<Array<SkillSearchResult>>;
   getRelevant(context: string, limit?: number, threshold?: number): Promise<Array<SkillDefinition>>;
   createUserSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;

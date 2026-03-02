@@ -1,12 +1,11 @@
 // pattern: Imperative Shell
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import crypto from 'node:crypto';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { SkillStore } from './store.ts';
 import type { SkillDefinition, SkillRegistry, SkillSearchResult } from './types.ts';
-import { loadSkills } from './loader.ts';
+import { loadSkills, buildEmbeddingText, computeContentHash } from './loader.ts';
 import { parseSkillFile } from './parser.ts';
 
 type CreateSkillRegistryOptions = {
@@ -16,8 +15,16 @@ type CreateSkillRegistryOptions = {
   readonly userDir: string;
 };
 
-function computeContentHash(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex');
+const SKILL_NAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+function validateSkillName(name: string): { valid: true } | { valid: false; error: string } {
+  if (!SKILL_NAME_REGEX.test(name)) {
+    return {
+      valid: false,
+      error: 'name must be kebab-case (lowercase letters, numbers, hyphens)',
+    };
+  }
+  return { valid: true };
 }
 
 function buildSkillMarkdown(
@@ -26,7 +33,7 @@ function buildSkillMarkdown(
   body: string,
   tags?: ReadonlyArray<string>,
 ): string {
-  const yamlParts: string[] = [
+  const yamlParts: Array<string> = [
     `name: ${name}`,
     `description: ${description}`,
   ];
@@ -69,8 +76,8 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       return Array.from(skillsByName.values());
     },
 
-    getByName(name: string): SkillDefinition | undefined {
-      return skillsByName.get(name);
+    getByName(name: string): SkillDefinition | null {
+      return skillsByName.get(name) ?? null;
     },
 
     async search(query: string, limit = 10): Promise<Array<SkillSearchResult>> {
@@ -102,14 +109,12 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       const embeddingVector = await embedding.embed(context);
       const results = await store.searchByEmbedding(embeddingVector, limit, threshold);
 
-      const resultsByName = new Map(results.map((r) => [idToName.get(r.id), r]));
-
       return results
         .map((result) => {
           const name = idToName.get(result.id);
           return skillsByName.get(name || '');
         })
-        .filter((s): s is SkillDefinition => s !== undefined && (resultsByName.get(s.metadata.name)?.score ?? 0) >= threshold);
+        .filter((s): s is SkillDefinition => s !== undefined);
     },
 
     async createUserSkill(
@@ -118,10 +123,13 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       body: string,
       tags?: ReadonlyArray<string>,
     ): Promise<SkillDefinition> {
-      const skillDir = join(userDir, name);
-      if (!existsSync(skillDir)) {
-        mkdirSync(skillDir, { recursive: true });
+      const nameValidation = validateSkillName(name);
+      if (!nameValidation.valid) {
+        throw new Error(`Invalid skill name: ${nameValidation.error}`);
       }
+
+      const skillDir = join(userDir, name);
+      mkdirSync(skillDir, { recursive: true });
 
       const skillFilePath = join(skillDir, 'SKILL.md');
       const content = buildSkillMarkdown(name, description, body, tags);
@@ -136,7 +144,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       const id = `skill:user:${name}`;
       const { metadata } = parseResult;
 
-      const embeddingText = [description, ...(tags || []), body.slice(0, 500)].join('\n');
+      const embeddingText = buildEmbeddingText(metadata, body);
       const embeddingVector = await embedding.embed(embeddingText);
 
       await store.upsertEmbedding(id, name, description, contentHash, embeddingVector);
@@ -185,7 +193,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
       const id = `skill:user:${name}`;
       const { metadata } = parseResult;
 
-      const embeddingText = [description, ...(tags || []), body.slice(0, 500)].join('\n');
+      const embeddingText = buildEmbeddingText(metadata, body);
       const embeddingVector = await embedding.embed(embeddingText);
 
       await store.upsertEmbedding(id, name, description, contentHash, embeddingVector);

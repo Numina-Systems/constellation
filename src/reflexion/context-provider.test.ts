@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 /**
  * Unit tests for createPredictionContextProvider.
  * Verifies AC5.1 and AC5.2: context provider output injection and caching.

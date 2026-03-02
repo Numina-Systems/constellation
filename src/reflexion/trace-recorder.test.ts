@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { createPostgresProvider } from '../persistence/postgres.ts';
 import { createTraceRecorder } from './trace-recorder.ts';
@@ -108,8 +106,18 @@ describe('TraceRecorder', () => {
 
   describe('AC2.4: Fire-and-forget recording', () => {
     it('does not throw on record failure, logs warning instead', async () => {
-      // Disconnect to cause INSERT failure
-      await persistence.disconnect();
+      // Create a separate persistence provider that throws on query
+      const failingPersistence = {
+        query: async () => {
+          throw new Error('connection failed');
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        runMigrations: async () => {},
+        withTransaction: async (fn: (q: unknown) => Promise<unknown[]>) => fn(async () => []),
+      } as unknown as ReturnType<typeof createPostgresProvider>;
+
+      const failingRecorder = createTraceRecorder(failingPersistence);
 
       const trace = {
         owner: TEST_OWNER,
@@ -122,18 +130,15 @@ describe('TraceRecorder', () => {
         error: null,
       };
 
-      // This should not throw despite persistence being disconnected
+      // This should not throw despite persistence failing
       let threwError = false;
       try {
-        await recorder.record(trace);
+        await failingRecorder.record(trace);
       } catch {
         threwError = true;
       }
 
       expect(threwError).toBe(false);
-
-      // Reconnect for cleanup
-      await persistence.connect();
     });
   });
 

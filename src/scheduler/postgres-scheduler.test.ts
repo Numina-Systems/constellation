@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { createPostgresProvider } from '../persistence/postgres.ts';

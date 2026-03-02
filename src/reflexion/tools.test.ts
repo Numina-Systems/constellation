@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect } from 'bun:test';
 import type { PredictionStore, Prediction } from './types.ts';
 import { createPredictionTools } from './tools.ts';

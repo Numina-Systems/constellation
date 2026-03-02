@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 /**
  * Unit tests for buildSystemPrompt with context providers.
  * Verifies context provider output injection into system prompts.

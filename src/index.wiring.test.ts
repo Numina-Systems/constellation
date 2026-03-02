@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 /**
  * Smoke tests for composition root wiring.
  * Verifies that all new reflexion and scheduler components can be imported,
@@ -63,7 +61,7 @@ describe('composition root wiring: shutdown handler with scheduler', () => {
       write: mock(() => {}),
       setPrompt: mock(() => {}),
       prompt: mock(() => {}),
-    } as any;
+    } as unknown as ReadlineInterface;
   };
 
   const createMockPersistence = (): PersistenceProvider => {
@@ -81,7 +79,7 @@ describe('composition root wiring: shutdown handler with scheduler', () => {
     const persistence = createMockPersistence();
     const scheduler = { stop: mock(() => {}) };
     const originalExit = process.exit;
-    process.exit = mock(() => {}) as any;
+    process.exit = mock(() => {}) as unknown as typeof process.exit;
 
     try {
       const handler = createShutdownHandler(rl, persistence, null, scheduler);

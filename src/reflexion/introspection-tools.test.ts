@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect } from 'bun:test';
 import type { TraceStore } from './trace-recorder.ts';
 import type { PredictionStore, OperationTrace, IntrospectionQuery } from './types.ts';

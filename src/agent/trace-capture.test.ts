@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 /**
  * Tests for operation trace recording during tool dispatch.
  * Verifies that all tool dispatch branches (regular, execute_code, compact_context)

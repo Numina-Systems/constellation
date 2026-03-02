@@ -176,18 +176,19 @@ function promptForLine(rl: readline.Interface, prompt: string): Promise<string> 
 export async function processEventQueue(
   eventQueue: EventQueue,
   agent: Agent,
+  sourceLabel: string = 'bluesky',
 ): Promise<void> {
   let event = eventQueue.shift();
   while (event) {
     try {
       const result = await agent.processEvent(event);
       if (result) {
-        console.log(`[bluesky] agent response: ${result}`);
+        console.log(`[${sourceLabel}] agent response: ${result}`);
       }
     } catch (error) {
       // AC6.5: Log error but don't crash
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`bluesky processEvent error: ${errorMsg}`);
+      console.error(`${sourceLabel} processEvent error: ${errorMsg}`);
     }
     event = eventQueue.shift();
   }
@@ -579,7 +580,7 @@ async function main(): Promise<void> {
     if (schedulerProcessing) return;
     schedulerProcessing = true;
     try {
-      await processEventQueue(schedulerEventQueue, agent);
+      await processEventQueue(schedulerEventQueue, agent, 'scheduler');
     } finally {
       schedulerProcessing = false;
     }
@@ -588,23 +589,26 @@ async function main(): Promise<void> {
   // Register onDue handler for scheduled tasks
   scheduler.onDue((task) => {
     // AC3.4: Expire stale predictions older than 24h before sending review event
-    predictionStore
-      .expireStalePredictions(AGENT_OWNER, new Date(Date.now() - 24 * 3600_000))
-      .then((expiredCount) => {
+    (async () => {
+      try {
+        const expiredCount = await predictionStore.expireStalePredictions(
+          AGENT_OWNER,
+          new Date(Date.now() - 24 * 3600_000),
+        );
         if (expiredCount > 0) {
           console.log(`review job: expired ${expiredCount} stale predictions`);
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         console.warn('review job: failed to expire stale predictions', error);
+      }
+
+      const reviewEvent = buildReviewEvent(task);
+
+      schedulerEventQueue.push(reviewEvent);
+      processSchedulerEvent().catch((error) => {
+        console.error('scheduler event processing error:', error);
       });
-
-    const reviewEvent = buildReviewEvent(task);
-
-    schedulerEventQueue.push(reviewEvent);
-    processSchedulerEvent().catch((error) => {
-      console.error('scheduler event processing error:', error);
-    });
+    })();
   });
 
   // Register hourly review job if not already scheduled

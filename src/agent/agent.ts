@@ -74,6 +74,8 @@ export function createAgent(
     error: string | null,
   ): void {
     if (!deps.traceRecorder) return;
+    // Fire-and-forget: start the async operation without awaiting
+    // Errors are caught and logged by the TraceRecorder implementation
     deps.traceRecorder.record({
       owner: traceOwner,
       conversationId: id,
@@ -83,6 +85,8 @@ export function createAgent(
       durationMs,
       success,
       error,
+    }).catch(() => {
+      // Silently ignore errors per AC2.4
     });
   }
 

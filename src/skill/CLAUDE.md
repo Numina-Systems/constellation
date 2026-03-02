@@ -6,7 +6,7 @@ Last verified: 2026-03-01
 Embedding-based skill retrieval system. Skills are structured markdown files (SKILL.md) with YAML frontmatter that teach the agent how to approach specific situations. Retrieved per-turn via semantic similarity.
 
 ## Contracts
-- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, `createSkillTools(registry)`, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
+- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, `createSkillRegistry(options)`, `createPostgresSkillStore(persistence)`, `loadSkills(options)`, `createSkillTools(registry)`, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
 - **SkillStore interface methods**:
   - `upsertEmbedding()` — Write or update skill embedding
   - `deleteEmbedding()` — Remove skill embedding
@@ -24,7 +24,7 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
 
 ## Dependencies
 - **Uses**: `src/tool/` (ToolParameter type), `yaml` (YAML parsing)
-- **Used by**: `src/agent/` (per-turn skill retrieval and formatting)
+- **Used by**: `src/agent/` (per-turn skill retrieval and formatting), `src/index.ts` (composition root wires registry, store, and skill-defined tools)
 
 ## Key Decisions
 - Embedding-based retrieval over system-prompt enumeration: Scales without bloating context

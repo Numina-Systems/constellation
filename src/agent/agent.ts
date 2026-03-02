@@ -179,9 +179,10 @@ export function createAgent(
               const result = await deps.runtime.execute(code, stubs, context);
 
               toolResult = result.success ? result.output : `Error: ${result.error}`;
-              recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, true, null);
+              recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? null));
             } else if (toolUse.name === 'compact_context') {
               // Special case: context compaction
+              const compactSuccess = !!deps.compactor;
               if (deps.compactor) {
                 const compactionResult = await deps.compactor.compress(history, id);
                 history = Array.from(compactionResult.history);
@@ -198,7 +199,7 @@ export function createAgent(
                   output: 'Compaction not configured',
                 });
               }
-              recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, true, null);
+              recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, compactSuccess, compactSuccess ? null : 'Compaction not configured');
             } else {
               // Regular tool dispatch
               const result = await deps.registry.dispatch(toolUse.name, toolUse.input);

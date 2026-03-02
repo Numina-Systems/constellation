@@ -1,3 +1,5 @@
+// pattern: Imperative Shell
+
 /**
  * Tests for operation trace recording during tool dispatch.
  * Verifies that all tool dispatch branches (regular, execute_code, compact_context)
@@ -368,6 +370,71 @@ describe('Trace capture', () => {
     expect(trace.toolName).toBe('failing_tool');
     expect(trace.success).toBe(false);
     expect(trace.error).toBe('Tool error message');
+  });
+
+  it('AC2.2 (exception): records error message when tool dispatch throws', async () => {
+    const { recorder: traceRecorder, traces } = createMockTraceRecorder();
+
+    const throwingRegistry: ToolRegistry = {
+      register() {},
+      getDefinitions() {
+        return [];
+      },
+      async dispatch(): Promise<ToolResult> {
+        throw new Error('dispatch explosion');
+      },
+      generateStubs() {
+        return '';
+      },
+      toModelTools() {
+        return [];
+      },
+    };
+
+    const modelResponse: ModelResponse = {
+      content: [
+        { type: 'text', text: 'Using a tool' },
+        {
+          type: 'tool_use',
+          id: 'tool-1',
+          name: 'exploding_tool',
+          input: { param: 'value' },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([
+      modelResponse,
+      {
+        content: [{ type: 'text', text: 'Final response' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      },
+    ]);
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: throwingRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      traceRecorder,
+      owner: 'test-agent',
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Call throwing tool');
+
+    expect(traces.length).toBe(1);
+    const trace = traces[0]!;
+    expect(trace.toolName).toBe('exploding_tool');
+    expect(trace.success).toBe(false);
+    expect(trace.error).toBe('dispatch explosion');
+    expect(trace.outputSummary).toContain('Error executing tool');
+    expect(trace.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('AC2.4: trace recorder error does not block agent loop', async () => {

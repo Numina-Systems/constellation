@@ -27,6 +27,10 @@ import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/e
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
+import { createPredictionStore, createTraceRecorder } from '@/reflexion';
+import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
+import { createPredictionContextProvider } from '@/reflexion';
+import { createPostgresScheduler } from '@/scheduler';
 import type { MemoryManager } from '@/memory/manager';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
@@ -39,6 +43,9 @@ import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
+import type { TraceStore } from '@/reflexion';
+
+const AGENT_OWNER = 'spirit';
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -89,9 +96,14 @@ export function createShutdownHandler(
   rl: readline.Interface,
   persistence: PersistenceProvider,
   blueskySource?: BlueskyDataSource | null,
+  scheduler?: { stop(): void } | null,
 ): () => Promise<void> {
   return async (): Promise<void> => {
     console.log('\nShutting down...');
+    if (scheduler) {
+      scheduler.stop();
+      console.log('scheduler stopped');
+    }
     if (blueskySource) {
       try {
         await blueskySource.disconnect();
@@ -185,7 +197,7 @@ export async function seedCoreMemory(
   personaPath: string,
 ): Promise<void> {
   // Check if core blocks already exist
-  const existingBlocks = await store.getBlocksByTier('spirit', 'core');
+  const existingBlocks = await store.getBlocksByTier(AGENT_OWNER, 'core');
 
   if (existingBlocks.length > 0) {
     // Not a first run, skip seeding
@@ -236,7 +248,7 @@ Use execute_code for anything beyond basic memory operations — API calls, file
   const systemEmbedding = await generateEmbedding(systemContent);
   await store.createBlock({
     id: crypto.randomUUID(),
-    owner: 'spirit',
+    owner: AGENT_OWNER,
     tier: 'core',
     label: 'core:system',
     content: systemContent,
@@ -249,7 +261,7 @@ Use execute_code for anything beyond basic memory operations — API calls, file
   const personaEmbedding = await generateEmbedding(personaContent);
   await store.createBlock({
     id: crypto.randomUUID(),
-    owner: 'spirit',
+    owner: AGENT_OWNER,
     tier: 'core',
     label: 'core:persona',
     content: personaContent,
@@ -263,7 +275,7 @@ Use execute_code for anything beyond basic memory operations — API calls, file
   const familiarEmbedding = await generateEmbedding(familiarContent);
   await store.createBlock({
     id: crypto.randomUUID(),
-    owner: 'spirit',
+    owner: AGENT_OWNER,
     tier: 'core',
     label: 'core:familiar',
     content: familiarContent,
@@ -316,15 +328,45 @@ async function main(): Promise<void> {
   }
 
   // Create domain modules
-  const memory = createMemoryManager(memoryStore, embedding, 'spirit');
+  const memory = createMemoryManager(memoryStore, embedding, AGENT_OWNER);
+
+  // Create reflexion stores
+  const predictionStore = createPredictionStore(persistence);
+  const traceRecorder: TraceStore = createTraceRecorder(persistence);
 
   const registry = createToolRegistry();
+
+  // Generate conversation ID for main agent upfront so it can be shared with prediction tools
+  const mainConversationId = crypto.randomUUID();
+
   const memoryTools = createMemoryTools(memory);
   for (const tool of memoryTools) {
     registry.register(tool);
   }
   registry.register(createExecuteCodeTool());
   registry.register(createCompactContextTool());
+
+  // Register reflexion tools
+  const predictionTools = createPredictionTools({
+    store: predictionStore,
+    owner: AGENT_OWNER,
+    conversationId: mainConversationId,
+  });
+  for (const tool of predictionTools) {
+    registry.register(tool);
+  }
+
+  const introspectionTools = createIntrospectionTools({
+    traceStore: traceRecorder,
+    predictionStore,
+    owner: AGENT_OWNER,
+  });
+  for (const tool of introspectionTools) {
+    registry.register(tool);
+  }
+
+  // Create prediction context provider
+  const predictionContextProvider = createPredictionContextProvider(predictionStore, AGENT_OWNER);
 
   if (config.web) {
     const searchChain = createSearchChain(config.web);
@@ -428,7 +470,10 @@ async function main(): Promise<void> {
     },
     getExecutionContext,
     compactor,
-  });
+    traceRecorder,
+    owner: AGENT_OWNER,
+    contextProviders: [predictionContextProvider],
+  }, mainConversationId);
 
   if (blueskyConnected && blueskySource) {
       // Create dedicated Bluesky agent with deterministic conversation ID
@@ -448,6 +493,8 @@ async function main(): Promise<void> {
           model_name: config.model.name,
         },
         getExecutionContext,
+        traceRecorder,
+        owner: AGENT_OWNER,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop
@@ -483,6 +530,86 @@ async function main(): Promise<void> {
       console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
   }
 
+  // Set up scheduler for periodic tasks
+  const scheduler = createPostgresScheduler(persistence, AGENT_OWNER);
+
+  // Create event queue and processing function for scheduler events
+  const schedulerEventQueue = createEventQueue(10);
+  let schedulerProcessing = false;
+
+  async function processSchedulerEvent(): Promise<void> {
+    if (schedulerProcessing) return;
+    schedulerProcessing = true;
+    try {
+      await processEventQueue(schedulerEventQueue, agent);
+    } finally {
+      schedulerProcessing = false;
+    }
+  }
+
+  // Register onDue handler for scheduled tasks
+  scheduler.onDue((task) => {
+    // AC3.4: Expire stale predictions older than 24h before sending review event
+    predictionStore
+      .expireStalePredictions(AGENT_OWNER, new Date(Date.now() - 24 * 3600_000))
+      .then((expiredCount) => {
+        if (expiredCount > 0) {
+          console.log(`review job: expired ${expiredCount} stale predictions`);
+        }
+      })
+      .catch((error) => {
+        console.warn('review job: failed to expire stale predictions', error);
+      });
+
+    const reviewEvent = {
+      source: 'review-job',
+      content: [
+        `Scheduled task "${task.name}" has fired.`,
+        '',
+        'Review your pending predictions against recent operation traces.',
+        'Use self_introspect to see your recent tool usage, then use list_predictions to see pending predictions.',
+        'For each prediction, use annotate_prediction to record whether it was accurate.',
+        'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
+        '',
+        'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
+      ].join('\n'),
+      metadata: {
+        taskId: task.id,
+        taskName: task.name,
+        schedule: task.schedule,
+        ...task.payload,
+      },
+      timestamp: new Date(),
+    };
+
+    schedulerEventQueue.push(reviewEvent);
+    processSchedulerEvent().catch((error) => {
+      console.error('scheduler event processing error:', error);
+    });
+  });
+
+  // Register hourly review job if not already scheduled
+  const existingTasks = await persistence.query<{ id: string }>(
+    `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+    [AGENT_OWNER, 'review-predictions'],
+  );
+
+  if (existingTasks.length === 0) {
+    await scheduler.schedule({
+      id: crypto.randomUUID(),
+      name: 'review-predictions',
+      schedule: '0 * * * *', // Every hour at minute 0
+      payload: { type: 'prediction-review' },
+    });
+    console.log('review job scheduled (hourly)');
+  } else {
+    console.log('review job already scheduled');
+  }
+
+  // Start the scheduler
+  scheduler.start();
+  console.log('scheduler started');
+
   // Set up readline interface for REPL
   const rl = readline.createInterface({
     input: process.stdin,
@@ -497,7 +624,7 @@ async function main(): Promise<void> {
   });
 
   // Set up graceful shutdown
-  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource);
+  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, scheduler);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

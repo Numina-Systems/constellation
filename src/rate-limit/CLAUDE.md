@@ -30,5 +30,7 @@ Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-
 ## Key Files
 - `types.ts` -- Domain types: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`
 - `bucket.ts` -- Pure token bucket functions: `createTokenBucket`, `refill`, `tryConsume`, `recordConsumption`, `getStatus`
+- `estimate.ts` -- Input token estimation: `estimateInputTokens` heuristic (chars/4)
 - `provider.ts` -- `RateLimitedProvider` imperative wrapper with mutex
+- `context.ts` -- Config helpers (`hasRateLimitConfig`, `buildRateLimiterConfig`) and `createRateLimitContextProvider` factory (Functional Core)
 - `index.ts` -- Barrel exports

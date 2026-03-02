@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_ed3d-playwright_playwright__playwright_navigate",
+      "mcp__plugin_ed3d-playwright_ed3d-playwright-internal__browser_install",
+      "Bash(git stash push -m \"wip: denied_hosts + openai-compat tool normalization + config env fix\")",
+      "Bash(git checkout -b feat/sandbox-networking-and-openai-compat)",
+      "Bash(git stash pop)",
+      "Bash(git add config.toml config.toml.example src/config/config.ts src/config/schema.ts src/integration/e2e.test.ts src/model/openai-compat.ts src/runtime/executor.test.ts src/runtime/executor.ts)",
+      "Bash(git commit -m \"$\\(cat <<'EOF'\nfeat: switch sandbox networking to denylist, fix openai-compat tool messages\n\nFlip Deno sandbox from allowed_hosts allowlist to denied_hosts denylist\nfor more permissive default networking. Fix OpenAI-compatible provider to\nproperly normalize tool_use/tool_result blocks instead of serializing as\ntext. Fix config env override to check provider type before selecting\nAPI key variable.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git checkout main)",
+      "Bash(git checkout web-tools)"
+    ]
+  }
+}

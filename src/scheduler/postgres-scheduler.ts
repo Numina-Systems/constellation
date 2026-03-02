@@ -6,7 +6,7 @@ import type { PersistenceProvider } from '../persistence/types.ts';
 import type { Scheduler, ScheduledTask } from '../extensions/scheduler.ts';
 import type { SchedulerRow } from './types.ts';
 
-type PostgresScheduler = Scheduler & {
+export type PostgresScheduler = Scheduler & {
   start(): void;
   stop(): void;
 };
@@ -77,7 +77,13 @@ export function createPostgresScheduler(
   const scheduler: PostgresScheduler = {
     async schedule(task: ScheduledTask): Promise<void> {
       const id = randomUUID();
-      const nextRun = new Cron(task.schedule).nextRun();
+      let nextRun: Date | null;
+
+      try {
+        nextRun = new Cron(task.schedule).nextRun();
+      } catch (error) {
+        throw new Error(`Invalid cron expression: ${task.schedule}`);
+      }
 
       if (nextRun === null) {
         throw new Error(

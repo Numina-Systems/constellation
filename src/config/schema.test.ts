@@ -279,3 +279,142 @@ describe("SummarizationConfigSchema", () => {
     });
   });
 });
+
+describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
+  describe("rate-limiter.AC2.2: Rate limit fields are optional; when absent, no defaults applied at schema level", () => {
+    it("should parse full AppConfig with no rate limit fields on [model]", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.model.requests_per_minute).toBeUndefined();
+      expect(result.model.input_tokens_per_minute).toBeUndefined();
+      expect(result.model.output_tokens_per_minute).toBeUndefined();
+      expect(result.model.min_output_reserve).toBeUndefined();
+    });
+
+    it("should parse config with all four rate limit fields on [model]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          requests_per_minute: 50,
+          input_tokens_per_minute: 40000,
+          output_tokens_per_minute: 8000,
+          min_output_reserve: 1024,
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.model.requests_per_minute).toBe(50);
+      expect(result.model.input_tokens_per_minute).toBe(40000);
+      expect(result.model.output_tokens_per_minute).toBe(8000);
+      expect(result.model.min_output_reserve).toBe(1024);
+    });
+  });
+
+  describe("rate-limiter.AC2.3: Summarization model can have different rate limits than the main model", () => {
+    it("should parse config with different rate limit fields on [model] and [summarization]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          requests_per_minute: 50,
+          input_tokens_per_minute: 40000,
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "openai-compat",
+          name: "olmo-3:7b-think",
+          requests_per_minute: 30,
+          input_tokens_per_minute: 20000,
+          output_tokens_per_minute: 4000,
+          min_output_reserve: 512,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      // Verify model rate limits
+      expect(result.model.requests_per_minute).toBe(50);
+      expect(result.model.input_tokens_per_minute).toBe(40000);
+      expect(result.model.output_tokens_per_minute).toBeUndefined();
+
+      // Verify summarization has different rate limits
+      expect(result.summarization!.requests_per_minute).toBe(30);
+      expect(result.summarization!.input_tokens_per_minute).toBe(20000);
+      expect(result.summarization!.output_tokens_per_minute).toBe(4000);
+      expect(result.summarization!.min_output_reserve).toBe(512);
+    });
+  });
+
+  describe("rate-limiter.AC2.4: Invalid rate limit config values (zero, negative, non-integer) are rejected", () => {
+    it("should reject requests_per_minute: 0 (zero) on [model]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          requests_per_minute: 0,
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject input_tokens_per_minute: -100 (negative) on [model]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          input_tokens_per_minute: -100,
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject output_tokens_per_minute: 1.5 (non-integer) on [model]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          output_tokens_per_minute: 1.5,
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+  });
+});

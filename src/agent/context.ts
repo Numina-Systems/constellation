@@ -23,9 +23,9 @@ export async function buildSystemPrompt(
 
   if (contextProviders) {
     for (const provider of contextProviders) {
-      const line = provider();
-      if (line !== undefined) {
-        prompt += `\n\n${line}`;
+      const section = provider();
+      if (section !== undefined) {
+        prompt += '\n\n' + section;
       }
     }
   }

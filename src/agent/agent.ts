@@ -8,6 +8,7 @@
 
 // UUID generation is built-in to Bun via crypto
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
+import { formatSkillsSection } from '../skill/context.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
@@ -115,7 +116,24 @@ export function createAgent(
       roundCount++;
 
       // Build fresh context for each round
-      const systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+      let systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+
+      // Retrieve and append relevant skills
+      if (deps.skills) {
+        try {
+          const maxSkills = deps.config.max_skills_per_turn ?? 3;
+          const threshold = deps.config.skill_threshold ?? 0.3;
+          const relevantSkills = await deps.skills.getRelevant(userMessage, maxSkills, threshold);
+          const skillSection = formatSkillsSection(relevantSkills);
+          if (skillSection) {
+            systemPrompt += '\n\n' + skillSection;
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
+        }
+      }
+
       const messages = await buildMessages(history, deps.memory);
 
       // Call the model with current context

@@ -12,7 +12,7 @@ Provides a PostgreSQL adapter behind a port interface so all database access flo
 
 ## Dependencies
 - **Uses**: `pg` (node-postgres), `src/config/`
-- **Used by**: `src/memory/postgres-store.ts`, `src/agent/agent.ts` (message persistence), `src/reflexion/` (prediction store, trace recorder), `src/scheduler/` (scheduled tasks), `src/index.ts`
+- **Used by**: `src/memory/postgres-store.ts`, `src/agent/agent.ts` (message persistence), `src/skill/postgres-store.ts` (skill embeddings), `src/reflexion/` (prediction store, trace recorder), `src/scheduler/` (scheduled tasks), `src/index.ts`
 - **Boundary**: No module should import `pg` directly. All SQL goes through `PersistenceProvider.query`.
 
 ## Key Decisions

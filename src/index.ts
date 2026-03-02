@@ -27,11 +27,17 @@ import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/e
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
+import { createRateLimitedProvider } from '@/rate-limit/provider.js';
+import { hasRateLimitConfig, buildRateLimiterConfig, createRateLimitContextProvider } from '@/rate-limit/context.js';
+import { createPostgresSkillStore } from '@/skill/postgres-store';
+import { createSkillRegistry } from '@/skill/registry';
+import { createSkillTools } from '@/skill/tools';
 import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { createPostgresScheduler } from '@/scheduler';
 import type { MemoryManager } from '@/memory/manager';
+import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
@@ -44,6 +50,7 @@ import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
+import type { ContextProvider } from '@/agent/types';
 
 const AGENT_OWNER = 'spirit';
 
@@ -337,19 +344,44 @@ async function main(): Promise<void> {
 
   // Create providers
   const persistence = createPostgresProvider(config.database);
-  const model = createModelProvider(config.model);
+  const rawModel = createModelProvider(config.model);
+  const contextProviders: Array<ContextProvider> = [];
+
+  const model = hasRateLimitConfig(config.model)
+    ? (() => {
+        const rateLimitedModel = createRateLimitedProvider(
+          rawModel,
+          buildRateLimiterConfig(config.model),
+        );
+        contextProviders.push(createRateLimitContextProvider(() => rateLimitedModel.getStatus()));
+        console.log(`rate limiting active for model ${config.model.name} (${config.model.requests_per_minute} RPM, ${config.model.input_tokens_per_minute} ITPM, ${config.model.output_tokens_per_minute} OTPM)`);
+        return rateLimitedModel;
+      })()
+    : rawModel;
+
   const embedding = createEmbeddingProvider(config.embedding);
 
   // Create summarization model provider
   // If summarization config exists, create a dedicated provider from it
   // Otherwise, reuse the main model provider
   const summarizationModel: ModelProvider = config.summarization
-    ? createModelProvider({
-        provider: config.summarization.provider,
-        name: config.summarization.name,
-        api_key: config.summarization.api_key,
-        base_url: config.summarization.base_url,
-      })
+    ? (() => {
+        const rawSummarizationModel = createModelProvider({
+          provider: config.summarization.provider,
+          name: config.summarization.name,
+          api_key: config.summarization.api_key,
+          base_url: config.summarization.base_url,
+        });
+        if (hasRateLimitConfig(config.summarization)) {
+          const rateLimited = createRateLimitedProvider(
+            rawSummarizationModel,
+            buildRateLimiterConfig(config.summarization),
+          );
+          console.log(`rate limiting active for summarization model ${config.summarization.name}`);
+          return rateLimited;
+        }
+        return rawSummarizationModel;
+      })()
     : model;
 
   // Connect to database and run migrations
@@ -426,6 +458,51 @@ async function main(): Promise<void> {
   }
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
+
+  // Skills system (optional)
+  let skillRegistry: SkillRegistry | undefined;
+
+  if (config.skills) {
+    const skillStore = createPostgresSkillStore(persistence);
+    skillRegistry = createSkillRegistry({
+      store: skillStore,
+      embedding,
+      builtinDir: config.skills.builtin_dir,
+      agentDir: config.skills.agent_dir,
+    });
+    await skillRegistry.load();
+
+    // Register skill management tools
+    const skillTools = createSkillTools(skillRegistry);
+    for (const tool of skillTools) {
+      registry.register(tool);
+    }
+
+    // Register skill-defined tools
+    // These tools are defined declaratively in skill frontmatter but executed as static skill content.
+    // The parameters are part of the tool definition (for agent context) but ignored by the handler,
+    // which simply returns the skill body. This design allows skills to declare tool affordances
+    // (what they can do) while keeping execution simple: tool invocation triggers skill retrieval.
+    for (const skill of skillRegistry.getAll()) {
+      if (skill.metadata.tools) {
+        for (const toolDef of skill.metadata.tools) {
+          registry.register({
+            definition: {
+              name: toolDef.name,
+              description: toolDef.description,
+              parameters: toolDef.parameters,
+            },
+            handler: async () => ({
+              success: true,
+              output: `[Skill: ${skill.metadata.name}]\n\n${skill.body}`,
+            }),
+          });
+        }
+      }
+    }
+
+    console.log(`skills loaded (${skillRegistry.getAll().length} skills)`);
+  }
 
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
   let blueskySource: BlueskyDataSource | null = null;
@@ -506,12 +583,15 @@ async function main(): Promise<void> {
       context_budget: config.agent.context_budget,
       model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
       model_name: config.model.name,
+      max_skills_per_turn: config.skills?.max_per_turn,
+      skill_threshold: config.skills?.similarity_threshold,
     },
     getExecutionContext,
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [predictionContextProvider],
+    contextProviders: [...contextProviders, predictionContextProvider],
+    skills: skillRegistry,
   }, mainConversationId);
 
   if (blueskyConnected && blueskySource) {
@@ -530,10 +610,14 @@ async function main(): Promise<void> {
           context_budget: config.agent.context_budget,
           model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
           model_name: config.model.name,
+          max_skills_per_turn: config.skills?.max_per_turn,
+          skill_threshold: config.skills?.similarity_threshold,
         },
         getExecutionContext,
         traceRecorder,
         owner: AGENT_OWNER,
+        contextProviders: contextProviders.length > 0 ? contextProviders : undefined,
+        skills: skillRegistry,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop

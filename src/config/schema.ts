@@ -110,6 +110,13 @@ const WebConfigSchema = z.object({
   cache_ttl: z.number().int().positive().default(300000),
 });
 
+const SkillConfigSchema = z.object({
+  builtin_dir: z.string().default('./skills'),
+  agent_dir: z.string().default('./agent-skills'),
+  max_per_turn: z.number().int().positive().default(3),
+  similarity_threshold: z.number().min(0).max(1).default(0.3),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -119,6 +126,7 @@ const AppConfigSchema = z.object({
   bluesky: BlueskyConfigSchema.default({}),
   summarization: SummarizationConfigSchema.optional(),
   web: WebConfigSchema.optional(),
+  skills: SkillConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -130,5 +138,6 @@ export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
 export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
 export type WebConfig = z.infer<typeof WebConfigSchema>;
+export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema };

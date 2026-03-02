@@ -19,6 +19,7 @@ import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime } from '../runtime/types.ts';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.ts';
 import type { Compactor, CompactionResult } from '../compaction/types.ts';
+import type { SkillRegistry } from '../skill/types.ts';
 
 /**
  * Mock implementations for testing
@@ -35,7 +36,7 @@ function createMockPersistenceProvider(): PersistenceProvider {
   ): Promise<Array<T>> => {
     // Support INSERT and SELECT queries
     if (sql.includes('INSERT INTO messages')) {
-      const [conversationId, role, content, toolCalls, toolCallId] = params || [];
+      const [conversationId, role, content, toolCalls, toolCallId, reasoningContent] = params || [];
       const id = String(nextId++);
       const message: ConversationMessage = {
         id,
@@ -44,6 +45,7 @@ function createMockPersistenceProvider(): PersistenceProvider {
         content: String(content),
         tool_calls: toolCalls,
         tool_call_id: toolCallId ? String(toolCallId) : undefined,
+        reasoning_content: reasoningContent ? String(reasoningContent) : undefined,
         created_at: new Date(),
       };
       const list = messages.get(String(conversationId)) || [];
@@ -847,6 +849,140 @@ describe('Agent loop', () => {
   });
 });
 
+describe('reasoning_content persistence', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+  let config: AgentConfig;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockMemory = createMockMemoryManager();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+    config = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+    };
+  });
+
+  it('persists reasoning_content from tool_use assistant messages', async () => {
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-r1',
+          name: 'test_tool',
+          input: { arg: 'value' },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+      reasoning_content: 'I should use the test tool to look this up.',
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Done thinking' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Think about this');
+
+    const history = await agent.getConversationHistory();
+    const assistantMsg = history.find(
+      (msg) => msg.role === 'assistant' && msg.reasoning_content,
+    );
+
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg?.reasoning_content).toBe(
+      'I should use the test tool to look this up.',
+    );
+  });
+
+  it('loads reasoning_content from history and includes it in model messages', async () => {
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-r2',
+          name: 'test_tool',
+          input: {},
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+      reasoning_content: 'Let me check this with the tool.',
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'First turn done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const tracker1 = { requests: [] as Array<ModelRequest> };
+    const mockModel1 = createMockModelProvider([toolUseResponse, finalResponse], tracker1);
+    const deps1: AgentDependencies = {
+      model: mockModel1,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent1 = createAgent(deps1);
+    await agent1.processMessage('First question');
+
+    // Create a second agent resuming the same conversation
+    const secondResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Resumed' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const tracker2 = { requests: [] as Array<ModelRequest> };
+    const mockModel2 = createMockModelProvider([secondResponse], tracker2);
+    const deps2: AgentDependencies = {
+      model: mockModel2,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+    };
+
+    const agent2 = createAgent(deps2, agent1.conversationId);
+    await agent2.processMessage('Follow up');
+
+    // The second model call should include the reasoning_content from history
+    expect(tracker2.requests.length).toBeGreaterThanOrEqual(1);
+    const request = tracker2.requests[0];
+    expect(request).toBeDefined();
+
+    const assistantMsgWithReasoning = request!.messages.find(
+      (msg) => msg.role === 'assistant' && msg.reasoning_content,
+    );
+    expect(assistantMsgWithReasoning).toBeDefined();
+    expect(assistantMsgWithReasoning?.reasoning_content).toBe(
+      'Let me check this with the tool.',
+    );
+  });
+});
+
 describe('processEvent', () => {
   let mockPersistence: PersistenceProvider;
   let mockMemory: MemoryManager;
@@ -1103,6 +1239,72 @@ describe('processEvent', () => {
     expect(content).toContain('Just content, no metadata');
     // Instructions still present even with minimal metadata
     expect(content).toContain('[Instructions:');
+  });
+});
+
+describe('Skill integration', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+  let config: AgentConfig;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockMemory = createMockMemoryManager();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+    config = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+    };
+  });
+
+  it('C1: continues with base prompt when skill retrieval throws', async () => {
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response without skills' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse]);
+
+    const failingSkillRegistry: SkillRegistry = {
+      load: async () => {},
+      getAll: () => [],
+      getByName: () => null,
+      search: async () => [],
+      getRelevant: async () => {
+        throw new Error('Database connection failed');
+      },
+      createAgentSkill: async () => {
+        throw new Error('not implemented');
+      },
+      updateAgentSkill: async () => {
+        throw new Error('not implemented');
+      },
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+      skills: failingSkillRegistry,
+    };
+
+    const agent = createAgent(deps);
+    const response = await agent.processMessage('Test message');
+
+    // Agent should return the model response despite skill retrieval failing
+    expect(response).toBe('Response without skills');
+
+    // Verify the message was persisted successfully
+    const history = await agent.getConversationHistory();
+    expect(history.length).toBeGreaterThanOrEqual(2);
+    expect(history.some((msg) => msg.role === 'user' && msg.content === 'Test message')).toBe(true);
   });
 });
 

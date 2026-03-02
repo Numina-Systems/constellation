@@ -12,6 +12,7 @@ import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime, ExecutionContext } from '../runtime/types.ts';
 import type { PersistenceProvider } from '../persistence/types.ts';
 import type { Compactor } from '../compaction/types.ts';
+import type { SkillRegistry } from '../skill/types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -19,6 +20,8 @@ export type AgentConfig = {
   model_max_tokens?: number; // Model's context window size (default: 200000 for Claude 3 Sonnet)
   model_name?: string; // LLM model name (default: claude-3-sonnet-20250219)
   max_tokens?: number; // Token limit per request (default: 24576)
+  max_skills_per_turn?: number; // Maximum skills to include per turn (default: 3)
+  skill_threshold?: number; // Minimum similarity threshold for skill inclusion (default: 0.3)
 };
 
 export type ConversationMessage = {
@@ -51,6 +54,7 @@ export type AgentDependencies = {
   getExecutionContext?: () => ExecutionContext;
   compactor?: Compactor;
   contextProviders?: ReadonlyArray<ContextProvider>;
+  skills?: SkillRegistry;
 };
 
 export type Agent = {

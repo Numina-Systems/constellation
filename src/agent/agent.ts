@@ -8,6 +8,7 @@
 
 // UUID generation is built-in to Bun via crypto
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
+import { formatSkillsSection } from '../skill/context.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
@@ -88,7 +89,24 @@ export function createAgent(
       roundCount++;
 
       // Build fresh context for each round
-      const systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+      let systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+
+      // Retrieve and append relevant skills
+      if (deps.skills) {
+        try {
+          const maxSkills = deps.config.max_skills_per_turn ?? 3;
+          const threshold = deps.config.skill_threshold ?? 0.3;
+          const relevantSkills = await deps.skills.getRelevant(userMessage, maxSkills, threshold);
+          const skillSection = formatSkillsSection(relevantSkills);
+          if (skillSection) {
+            systemPrompt += '\n\n' + skillSection;
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
+        }
+      }
+
       const messages = await buildMessages(history, deps.memory);
 
       // Call the model with current context
@@ -113,6 +131,7 @@ export function createAgent(
           conversation_id: id,
           role: 'assistant',
           content: text,
+          reasoning_content: response.reasoning_content,
         });
 
         return text;
@@ -262,10 +281,10 @@ export function createAgent(
     reasoning_content?: string | null;
   }): Promise<string> {
     const result = await deps.persistence.query(
-      `INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, created_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())
+      `INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, reasoning_content, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW())
        RETURNING id`,
-      [msg.conversation_id, msg.role, msg.content, msg.tool_calls ? JSON.stringify(msg.tool_calls) : null, msg.tool_call_id || null],
+      [msg.conversation_id, msg.role, msg.content, msg.tool_calls ? JSON.stringify(msg.tool_calls) : null, msg.tool_call_id || null, msg.reasoning_content || null],
     );
 
     const row = result[0];
@@ -280,7 +299,7 @@ export function createAgent(
    */
   async function loadConversationHistory(convId: string): Promise<Array<ConversationMessage>> {
     const rows = await deps.persistence.query(
-      `SELECT id, conversation_id, role, content, tool_calls, tool_call_id, created_at
+      `SELECT id, conversation_id, role, content, tool_calls, tool_call_id, reasoning_content, created_at
        FROM messages
        WHERE conversation_id = $1
        ORDER BY created_at ASC`,
@@ -296,6 +315,7 @@ export function createAgent(
         ? (typeof row['tool_calls'] === 'string' ? JSON.parse(row['tool_calls']) : row['tool_calls'])
         : undefined,
       tool_call_id: row['tool_call_id'] ? String(row['tool_call_id']) : undefined,
+      reasoning_content: row['reasoning_content'] ? String(row['reasoning_content']) : undefined,
       created_at: new Date(String(row['created_at'])),
     }));
   }

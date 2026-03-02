@@ -65,6 +65,14 @@ did = "did:plc:example"
 watched_dids = ["did:plc:friend1", "did:plc:friend2"]
 jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
 
+# Skill retrieval system. Skills are SKILL.md files with YAML frontmatter,
+# loaded from builtin and agent directories, retrieved per-turn via embedding similarity.
+# [skills]
+# builtin_dir = "./skills"
+# agent_dir = "./agent-skills"
+# max_per_turn = 3
+# similarity_threshold = 0.3
+
 # Web search and fetch tools. Requires at least one search provider API key.
 # For production, use environment variables: BRAVE_API_KEY, TAVILY_API_KEY
 [web]

@@ -6,7 +6,7 @@ Last verified: 2026-03-01
 Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-model throughput limits. Prevents 429 errors from API rate limit exhaustion by proactively throttling requests.
 
 ## Contracts
-- **Exposes**: `TokenBucket` type, `createTokenBucket()`, `tryConsume()`, `recordConsumption()`, `getStatus()` (pure functions), `createRateLimitedProvider()` (imperative wrapper), `RateLimiterConfig`, `RateLimitStatus`, `ConsumeResult`, `TokenBucketConfig`
+- **Exposes**: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`, `BucketStatus` (types); `createTokenBucket()`, `refill()`, `tryConsume()`, `recordConsumption()`, `getStatus()` (pure bucket functions); `estimateInputTokens()` (heuristic); `createRateLimitedProvider()` (imperative wrapper); `hasRateLimitConfig()`, `buildRateLimiterConfig()`, `createRateLimitContextProvider()` (config/context helpers)
 - **Guarantees**:
   - Token buckets refill continuously based on elapsed time, never exceeding capacity
   - `tryConsume` returns exact wait time when insufficient capacity
@@ -28,7 +28,7 @@ Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-
 - Negative bucket balances allowed (natural backpressure from underestimation)
 
 ## Key Files
-- `types.ts` -- Domain types: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`
+- `types.ts` -- Domain types: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`, `BucketStatus`
 - `bucket.ts` -- Pure token bucket functions: `createTokenBucket`, `refill`, `tryConsume`, `recordConsumption`, `getStatus`
 - `estimate.ts` -- Input token estimation: `estimateInputTokens` heuristic (chars/4)
 - `provider.ts` -- `RateLimitedProvider` imperative wrapper with mutex

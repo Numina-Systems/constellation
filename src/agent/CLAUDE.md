@@ -1,6 +1,6 @@
 # Agent
 
-Last verified: 2026-02-28
+Last verified: 2026-03-01
 
 ## Purpose
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency.

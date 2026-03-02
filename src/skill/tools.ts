@@ -150,7 +150,7 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
         const tagsStr = params['tags'] as string | undefined;
 
         const tags = tagsStr
-          ? tagsStr.split(',').map((t) => t.trim())
+          ? tagsStr.split(',').map((t) => t.trim()).filter(Boolean)
           : [];
 
         await registry.createUserSkill(name, description, body, tags);
@@ -209,7 +209,7 @@ export function createSkillTools(registry: SkillRegistry): Array<Tool> {
         const tagsStr = params['tags'] as string | undefined;
 
         const tags = tagsStr
-          ? tagsStr.split(',').map((t) => t.trim())
+          ? tagsStr.split(',').map((t) => t.trim()).filter(Boolean)
           : [];
 
         await registry.updateUserSkill(name, description, body, tags);

@@ -6,7 +6,7 @@ Last verified: 2026-03-01
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency.
 
 ## Contracts
-- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `createAgent(deps, conversationId?)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `shouldCompress`)
+- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `ContextProvider` type, `createAgent(deps, conversationId?)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `shouldCompress`)
 - **Guarantees**:
   - Each message round persists user input, assistant response (including `reasoning_content` for thinking-mode models), and tool results to the `messages` table
   - Tool dispatch loop runs up to `max_tool_rounds` before stopping
@@ -16,7 +16,8 @@ Implements the core agent loop: receives user messages, builds context from memo
   - The agent can also be triggered to compact via the `compact_context` tool call
   - Core memory blocks are always included in the system prompt
   - Working memory blocks are prepended to the message context
-- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression). Database connected with migrations applied.
+  - If `contextProviders` are present in deps, their output (if non-undefined) is appended to the system prompt after memory context
+- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for system prompt injection). Database connected with migrations applied.
 
 ## Dependencies
 - **Uses**: `src/model/` (LLM calls), `src/memory/` (context building), `src/tool/` (tool definitions, dispatch), `src/runtime/` (code execution), `src/persistence/` (message persistence), `src/compaction/` (optional, via `Compactor` interface)
@@ -34,6 +35,6 @@ Implements the core agent loop: receives user messages, builds context from memo
 - Compressed messages are archived to memory before deletion
 
 ## Key Files
-- `types.ts` -- `Agent`, `AgentConfig`, `AgentDependencies` (includes optional `compactor`, `getExecutionContext`), `ConversationMessage`, `ExternalEvent`
+- `types.ts` -- `Agent`, `AgentConfig`, `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `contextProviders`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
 - `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression)
-- `context.ts` -- System prompt building, message conversion, token estimation
+- `context.ts` -- System prompt building with context provider injection, message conversion, token estimation

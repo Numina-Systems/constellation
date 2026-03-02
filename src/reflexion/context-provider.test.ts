@@ -11,10 +11,12 @@ import type { Prediction, PredictionStore } from './types.ts';
 
 function createMockPredictionStore(
   predictions: ReadonlyArray<Prediction>,
-): PredictionStore & { callCount: number; resetCallCount: () => void } {
+): PredictionStore & { get callCount(): number; resetCallCount: () => void } {
   let callCount = 0;
   return {
-    callCount,
+    get callCount() {
+      return callCount;
+    },
     resetCallCount() {
       callCount = 0;
     },
@@ -114,14 +116,16 @@ describe('createPredictionContextProvider', () => {
     provider();
     await Bun.sleep(50);
 
-    const callCountAfterPrime = store.callCount;
+    // After cache prime, store should have been called exactly once
+    expect(store.callCount).toBe(1);
 
     // Call multiple times within 5 minutes — store should not be called again
     for (let i = 0; i < 5; i++) {
       provider();
     }
 
-    expect(store.callCount).toBe(callCountAfterPrime);
+    // Verify store was still only called once (cache hit)
+    expect(store.callCount).toBe(1);
   });
 
   it('multiple providers have independent caches', async () => {
@@ -195,12 +199,10 @@ describe('createPredictionContextProvider', () => {
     provider();
     provider();
 
-    const callCountBefore = store.callCount;
-
     // Wait for refresh
     await Bun.sleep(50);
 
-    // Only one refresh should have occurred
-    expect(store.callCount).toBe(callCountBefore);
+    // Only one refresh should have occurred (not three)
+    expect(store.callCount).toBe(1);
   });
 });

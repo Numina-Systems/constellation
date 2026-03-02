@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import { describe, it, expect } from 'bun:test';
 import { createSchedulingContextProvider } from './scheduling-context';
 

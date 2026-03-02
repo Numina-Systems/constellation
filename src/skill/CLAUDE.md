@@ -7,10 +7,17 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
 
 ## Contracts
 - **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
+- **SkillStore interface methods**:
+  - `upsertEmbedding()` — Write or update skill embedding
+  - `deleteEmbedding()` — Remove skill embedding
+  - `getByHash()` — Check content hash for change detection
+  - `searchByEmbedding()` — Semantic similarity search
+  - `getAllIds()` — Get all skill IDs for orphan cleanup
 - **Guarantees**:
   - `parseSkillFile` validates frontmatter with Zod, returns discriminated ParseResult
   - `SkillRegistry` provides unified interface for loading, searching, and managing skills
   - `LoadResult` captures both successful loads and errors from the loader
+  - `getAllIds()` enables orphan cleanup when skills are removed from disk
 - **Expects**: `yaml` npm package for YAML parsing, `EmbeddingProvider` for skill embeddings
 
 *Note: This CLAUDE.md reflects phase 3 (loader + registry). Future phases will add skill authoring tools and agent integration.*

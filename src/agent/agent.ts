@@ -88,7 +88,7 @@ export function createAgent(
       roundCount++;
 
       // Build fresh context for each round
-      const systemPrompt = await buildSystemPrompt(deps.memory);
+      const systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
       const messages = await buildMessages(history, deps.memory);
 
       // Call the model with current context

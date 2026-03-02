@@ -37,6 +37,7 @@ import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { createPostgresScheduler } from '@/scheduler';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
+import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -471,6 +472,12 @@ async function main(): Promise<void> {
   // Create prediction context provider
   const predictionContextProvider = createPredictionContextProvider(predictionStore, AGENT_OWNER);
 
+  // Create scheduling context provider
+  const schedulingContextProvider = createSchedulingContextProvider(
+    config.bluesky.schedule_dids,
+    config.bluesky.watched_dids,
+  );
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -622,7 +629,7 @@ async function main(): Promise<void> {
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [...contextProviders, predictionContextProvider],
+    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
   }, mainConversationId);
 
@@ -630,6 +637,8 @@ async function main(): Promise<void> {
       // Create dedicated Bluesky agent with deterministic conversation ID
       // Zod validates that did is present when enabled, but TypeScript doesn't know it
       const blueskyConversationId = `bluesky-${config.bluesky.did!}`;
+
+      const blueskyContextProviders = [...contextProviders, schedulingContextProvider];
 
       const blueskyAgent = createAgent({
         model,
@@ -648,7 +657,7 @@ async function main(): Promise<void> {
         getExecutionContext,
         traceRecorder,
         owner: AGENT_OWNER,
-        contextProviders: contextProviders.length > 0 ? contextProviders : undefined,
+        contextProviders: blueskyContextProviders.length > 0 ? blueskyContextProviders : undefined,
         skills: skillRegistry,
       }, blueskyConversationId);
 

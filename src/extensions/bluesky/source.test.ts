@@ -61,6 +61,92 @@ describe("shouldAcceptEvent", () => {
     });
   });
 
+  describe("agent-scheduling.AC5.1 & AC5.2: Accept/reject based on scheduleDids", () => {
+    it("should return true when author DID is in schedule_dids but NOT in watched_dids", () => {
+      const watchedDids = new Set(["did:plc:friend1"]);
+      const scheduleDids = new Set(["did:plc:scheduler"]);
+      const agentDid = "did:plc:agent";
+      const event: CommitEvent = {
+        kind: "commit",
+        did: "did:plc:scheduler",
+        time_us: 1000000,
+        commit: {
+          operation: "create",
+          rev: "3",
+          collection: "app.bsky.feed.post",
+          rkey: "abc123",
+          cid: "bafy123",
+          record: { text: "scheduling request" },
+        },
+      };
+
+      expect(shouldAcceptEvent(event, watchedDids, agentDid, scheduleDids)).toBe(true);
+    });
+
+    it("should return true when author DID is in both watchedDids and scheduleDids", () => {
+      const watchedDids = new Set(["did:plc:both"]);
+      const scheduleDids = new Set(["did:plc:both"]);
+      const agentDid = "did:plc:agent";
+      const event: CommitEvent = {
+        kind: "commit",
+        did: "did:plc:both",
+        time_us: 1000000,
+        commit: {
+          operation: "create",
+          rev: "3",
+          collection: "app.bsky.feed.post",
+          rkey: "abc123",
+          cid: "bafy123",
+          record: { text: "post" },
+        },
+      };
+
+      expect(shouldAcceptEvent(event, watchedDids, agentDid, scheduleDids)).toBe(true);
+    });
+
+    it("should return false when author DID is in neither watchedDids nor scheduleDids", () => {
+      const watchedDids = new Set(["did:plc:friend1"]);
+      const scheduleDids = new Set(["did:plc:scheduler"]);
+      const agentDid = "did:plc:agent";
+      const event: CommitEvent = {
+        kind: "commit",
+        did: "did:plc:stranger",
+        time_us: 1000000,
+        commit: {
+          operation: "create",
+          rev: "3",
+          collection: "app.bsky.feed.post",
+          rkey: "abc123",
+          cid: "bafy123",
+          record: { text: "random post" },
+        },
+      };
+
+      expect(shouldAcceptEvent(event, watchedDids, agentDid, scheduleDids)).toBe(false);
+    });
+
+    it("should accept events when scheduleDids is not provided (backward compatibility)", () => {
+      const watchedDids = new Set(["did:plc:friend1"]);
+      const agentDid = "did:plc:agent";
+      const event: CommitEvent = {
+        kind: "commit",
+        did: "did:plc:friend1",
+        time_us: 1000000,
+        commit: {
+          operation: "create",
+          rev: "3",
+          collection: "app.bsky.feed.post",
+          rkey: "abc123",
+          cid: "bafy123",
+          record: { text: "post from watched" },
+        },
+      };
+
+      // Call without scheduleDids parameter
+      expect(shouldAcceptEvent(event, watchedDids, agentDid)).toBe(true);
+    });
+  });
+
   describe("bsky-datasource.AC1.4: Reject posts not in watched_dids and not replies to agent", () => {
     it("should return false when author DID not in watched_dids and not a reply to agent", () => {
       const watchedDids = new Set(["did:plc:friend1"]);

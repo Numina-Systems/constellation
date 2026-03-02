@@ -654,7 +654,8 @@ async function main(): Promise<void> {
   }
 
   // Set up scheduler for periodic tasks
-  const scheduler = createPostgresScheduler(persistence, AGENT_OWNER);
+  const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER);
+  const systemScheduler = createPostgresScheduler(persistence, 'system');
 
   // Create event queue and processing function for scheduler events
   const schedulerEventQueue = createEventQueue(10);
@@ -671,7 +672,7 @@ async function main(): Promise<void> {
   }
 
   // Register onDue handler for scheduled tasks
-  scheduler.onDue((task) => {
+  systemScheduler.onDue((task) => {
     // AC3.4: Expire stale predictions older than 24h before sending review event
     (async () => {
       try {
@@ -698,11 +699,11 @@ async function main(): Promise<void> {
   // Register hourly review job if not already scheduled
   const existingTasks = await persistence.query<{ id: string }>(
     `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-    [AGENT_OWNER, 'review-predictions'],
+    ['system', 'review-predictions'],
   );
 
   if (existingTasks.length === 0) {
-    await scheduler.schedule({
+    await systemScheduler.schedule({
       id: crypto.randomUUID(),
       name: 'review-predictions',
       schedule: '0 * * * *', // Every hour at minute 0
@@ -713,9 +714,10 @@ async function main(): Promise<void> {
     console.log('review job already scheduled');
   }
 
-  // Start the scheduler
-  scheduler.start();
-  console.log('scheduler started');
+  // Start both schedulers
+  agentScheduler.start();
+  systemScheduler.start();
+  console.log('schedulers started (agent + system)');
 
   // Set up readline interface for REPL
   const rl = readline.createInterface({
@@ -731,7 +733,13 @@ async function main(): Promise<void> {
   });
 
   // Set up graceful shutdown
-  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, scheduler);
+  const schedulerWrapper = {
+    stop: () => {
+      agentScheduler.stop();
+      systemScheduler.stop();
+    },
+  };
+  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, schedulerWrapper);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

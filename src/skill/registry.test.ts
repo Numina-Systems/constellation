@@ -120,7 +120,7 @@ User content`,
   });
 
   describe('skills.AC5.4: getByName retrieves skill by name', () => {
-    it('should return the skill with matching name, or undefined', async () => {
+    it('should return the skill with matching name, or null', async () => {
       const skillDir = join(builtinDir, 'test-skill');
       mkdirSync(skillDir);
       writeFileSync(

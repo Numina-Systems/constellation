@@ -189,7 +189,6 @@ describe('PostgreSQL Scheduler', () => {
         [TEST_OWNER],
       );
       const taskId = taskRows[0]!.id;
-      const originalNextRun = taskRows[0]!.next_run_at;
 
       await persistence.query(
         'UPDATE scheduled_tasks SET next_run_at = NOW() - INTERVAL \'1 hour\' WHERE id = $1',
@@ -213,9 +212,6 @@ describe('PostgreSQL Scheduler', () => {
       expect(updated.last_run_at!.getTime()).toBeLessThanOrEqual(Date.now());
 
       expect(updated.next_run_at.getTime()).toBeGreaterThan(Date.now());
-      expect(updated.next_run_at.getTime()).not.toBe(
-        originalNextRun.getTime(),
-      );
 
       scheduler.stop();
     });

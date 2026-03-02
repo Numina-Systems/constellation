@@ -89,7 +89,7 @@ export function createAgent(
       roundCount++;
 
       // Build fresh context for each round
-      let systemPrompt = await buildSystemPrompt(deps.memory);
+      let systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
 
       // Retrieve and append relevant skills
       if (deps.skills) {
@@ -104,7 +104,6 @@ export function createAgent(
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
           console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
-          // Continue with base system prompt if skill retrieval fails
         }
       }
 

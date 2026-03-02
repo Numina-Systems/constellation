@@ -9,6 +9,10 @@ context_budget = 0.8
 [model]
 provider = "anthropic"
 name = "claude-sonnet-4-5-20250514"
+# requests_per_minute = 50
+# input_tokens_per_minute = 40000
+# output_tokens_per_minute = 8000
+# min_output_reserve = 1024
 
 [embedding]
 provider = "ollama"
@@ -29,6 +33,10 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # provider = "openai-compat"
 # name = "olmo-3:7b-think"
 # base_url = "http://192.168.1.6:11434/v1"
+# requests_per_minute = 30
+# input_tokens_per_minute = 20000
+# output_tokens_per_minute = 4000
+# min_output_reserve = 512
 # chunk_size = 20
 # keep_recent = 5
 # max_summary_tokens = 1024

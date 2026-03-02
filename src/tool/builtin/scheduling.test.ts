@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect } from 'bun:test';
 import { validateMinimumInterval, createSchedulingTools } from './scheduling.ts';
 import type { Scheduler, ScheduledTask } from '../../extensions/scheduler.ts';
@@ -46,7 +44,7 @@ describe('createSchedulingTools — schedule_task', () => {
     return {
       scheduler: {
         async schedule(task: ScheduledTask): Promise<{ id: string; nextRunAt: Date }> {
-          const resultId = task.id;
+          const resultId = 'mock-uuid-123';
           const nextRunAt = new Date(Date.now() + 60000); // 1 minute in the future
           calls.push({ task, resultId, resultNextRunAt: nextRunAt });
           return { id: resultId, nextRunAt };
@@ -94,7 +92,7 @@ describe('createSchedulingTools — schedule_task', () => {
     expect(result.error).toBeUndefined();
 
     const output = JSON.parse(result.output);
-    expect(output.id).toBeDefined();
+    expect(output.id).toBe('mock-uuid-123');
     expect(output.name).toBe('Memory consolidation');
     expect(output.schedule).toBe('0 */2 * * *');
     expect(output.next_run_at).toBeDefined();
@@ -129,7 +127,7 @@ describe('createSchedulingTools — schedule_task', () => {
     expect(result.error).toBeUndefined();
 
     const output = JSON.parse(result.output);
-    expect(output.id).toBeDefined();
+    expect(output.id).toBe('mock-uuid-123');
     expect(output.next_run_at).toBeDefined();
   });
 
@@ -223,7 +221,7 @@ describe('createSchedulingTools — schedule_task', () => {
     expect(payload['prompt']).toBe('My custom prompt instruction');
   });
 
-  it('AC1.7: should pass owner to scheduler (via task ownership)', async () => {
+  it('AC1.7: should delegate to scheduler with correct task structure', async () => {
     const mockScheduler = createMockScheduler();
     const deps = {
       scheduler: mockScheduler.scheduler,
@@ -244,10 +242,12 @@ describe('createSchedulingTools — schedule_task', () => {
 
     const calls = mockScheduler.getCalls();
     expect(calls.length).toBe(1);
-    // Verify scheduler.schedule() was called
+    // Verify scheduler.schedule() was called with correct task structure
     expect(calls[0]!.task.name).toBe('Owned task');
+    expect(calls[0]!.task.schedule).toBe('0 */2 * * *');
     expect(calls[0]!.task.payload['type']).toBe('agent-scheduled');
     expect(calls[0]!.task.payload['prompt']).toBe('Task prompt');
+    expect(calls[0]!.resultId).toBe('mock-uuid-123');
   });
 });
 

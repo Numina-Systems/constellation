@@ -64,6 +64,33 @@ export function createAgent(
   const modelName = deps.config.model_name ?? DEFAULT_MODEL_NAME;
   const maxTokens = deps.config.max_tokens ?? DEFAULT_MAX_TOKENS;
 
+  const traceOwner = deps.owner ?? 'unknown';
+
+  function recordTrace(
+    toolName: string,
+    input: Record<string, unknown>,
+    output: string,
+    durationMs: number,
+    success: boolean,
+    error: string | null,
+  ): void {
+    if (!deps.traceRecorder) return;
+    // Fire-and-forget: start the async operation without awaiting
+    // Errors are caught and logged by the TraceRecorder implementation
+    deps.traceRecorder.record({
+      owner: traceOwner,
+      conversationId: id,
+      toolName,
+      input,
+      outputSummary: output,
+      durationMs,
+      success,
+      error,
+    }).catch(() => {
+      // Silently ignore errors per AC2.4
+    });
+  }
+
   async function processMessage(userMessage: string): Promise<string> {
     // Step 1: Persist user message
     await persistMessage({
@@ -160,6 +187,7 @@ export function createAgent(
         for (const toolUse of toolUseBlocks) {
           let toolResult: string;
 
+          const startTime = Date.now();
           try {
             if (toolUse.name === 'execute_code') {
               // Special case: code execution
@@ -169,8 +197,10 @@ export function createAgent(
               const result = await deps.runtime.execute(code, stubs, context);
 
               toolResult = result.success ? result.output : `Error: ${result.error}`;
+              recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? null));
             } else if (toolUse.name === 'compact_context') {
               // Special case: context compaction
+              const compactSuccess = !!deps.compactor;
               if (deps.compactor) {
                 const compactionResult = await deps.compactor.compress(history, id);
                 history = Array.from(compactionResult.history);
@@ -187,14 +217,17 @@ export function createAgent(
                   output: 'Compaction not configured',
                 });
               }
+              recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, compactSuccess, compactSuccess ? null : 'Compaction not configured');
             } else {
               // Regular tool dispatch
               const result = await deps.registry.dispatch(toolUse.name, toolUse.input);
               toolResult = result.output;
+              recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
             }
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             toolResult = `Error executing tool ${toolUse.name}: ${errorMsg}`;
+            recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, false, errorMsg);
           }
 
           // Persist tool result

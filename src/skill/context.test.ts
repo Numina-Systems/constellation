@@ -2,48 +2,8 @@
 
 import { describe, it, expect } from 'bun:test';
 import { formatSkillsSection } from './context.ts';
-import type { SkillDefinition, SkillRegistry } from './types.ts';
-
-// Helper to create test skill definitions
-function createTestSkill(name: string, description: string, body: string): SkillDefinition {
-  return {
-    id: `skill:test:${name}`,
-    metadata: {
-      name,
-      description,
-      version: '1.0.0',
-      tags: ['test'],
-    },
-    body,
-    companions: [],
-    source: 'builtin',
-    filePath: `/test/${name}.md`,
-    contentHash: `hash-${name}`,
-  };
-}
-
-// Helper to create test skill with companions
-function createTestSkillWithCompanions(
-  name: string,
-  description: string,
-  body: string,
-  companions: Array<{ name: string; content: string }>,
-): SkillDefinition {
-  return {
-    id: `skill:test:${name}`,
-    metadata: {
-      name,
-      description,
-      version: '1.0.0',
-      tags: ['test'],
-    },
-    body,
-    companions,
-    source: 'builtin',
-    filePath: `/test/${name}.md`,
-    contentHash: `hash-${name}`,
-  };
-}
+import { createTestSkill, createTestSkillWithCompanions } from './test-helpers.ts';
+import type { SkillRegistry } from './types.ts';
 
 describe('formatSkillsSection', () => {
   describe('skills.AC7.1: Format single skill with name and body', () => {

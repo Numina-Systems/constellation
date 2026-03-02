@@ -19,6 +19,7 @@ import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime } from '../runtime/types.ts';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.ts';
 import type { Compactor, CompactionResult } from '../compaction/types.ts';
+import type { SkillRegistry } from '../skill/types.ts';
 
 /**
  * Mock implementations for testing
@@ -1103,6 +1104,72 @@ describe('processEvent', () => {
     expect(content).toContain('Just content, no metadata');
     // Instructions still present even with minimal metadata
     expect(content).toContain('[Instructions:');
+  });
+});
+
+describe('Skill integration', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+  let config: AgentConfig;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockMemory = createMockMemoryManager();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+    config = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+    };
+  });
+
+  it('C1: continues with base prompt when skill retrieval throws', async () => {
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response without skills' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse]);
+
+    const failingSkillRegistry: SkillRegistry = {
+      load: async () => {},
+      getAll: () => [],
+      getByName: () => null,
+      search: async () => [],
+      getRelevant: async () => {
+        throw new Error('Database connection failed');
+      },
+      createUserSkill: async () => {
+        throw new Error('not implemented');
+      },
+      updateUserSkill: async () => {
+        throw new Error('not implemented');
+      },
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+      skills: failingSkillRegistry,
+    };
+
+    const agent = createAgent(deps);
+    const response = await agent.processMessage('Test message');
+
+    // Agent should return the model response despite skill retrieval failing
+    expect(response).toBe('Response without skills');
+
+    // Verify the message was persisted successfully
+    const history = await agent.getConversationHistory();
+    expect(history.length).toBeGreaterThanOrEqual(2);
+    expect(history.some((msg) => msg.role === 'user' && msg.content === 'Test message')).toBe(true);
   });
 });
 

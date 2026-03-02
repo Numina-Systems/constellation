@@ -93,12 +93,18 @@ export function createAgent(
 
       // Retrieve and append relevant skills
       if (deps.skills) {
-        const maxSkills = deps.config.max_skills_per_turn ?? 3;
-        const threshold = deps.config.skill_threshold ?? 0.3;
-        const relevantSkills = await deps.skills.getRelevant(userMessage, maxSkills, threshold);
-        const skillSection = formatSkillsSection(relevantSkills);
-        if (skillSection) {
-          systemPrompt += '\n\n' + skillSection;
+        try {
+          const maxSkills = deps.config.max_skills_per_turn ?? 3;
+          const threshold = deps.config.skill_threshold ?? 0.3;
+          const relevantSkills = await deps.skills.getRelevant(userMessage, maxSkills, threshold);
+          const skillSection = formatSkillsSection(relevantSkills);
+          if (skillSection) {
+            systemPrompt += '\n\n' + skillSection;
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`Warning: Failed to retrieve relevant skills: ${errorMsg}`);
+          // Continue with base system prompt if skill retrieval fails
         }
       }
 

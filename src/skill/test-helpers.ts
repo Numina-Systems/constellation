@@ -2,6 +2,7 @@
 
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { SkillStore } from './store.ts';
+import type { SkillDefinition } from './types.ts';
 
 export function createMockSkillStore(): SkillStore & { data: Map<string, { contentHash: string; embedding: ReadonlyArray<number> }> } {
   const data = new Map<string, { contentHash: string; embedding: ReadonlyArray<number> }>();
@@ -47,4 +48,43 @@ export function createMockEmbeddingProvider(): EmbeddingProvider & { callCount: 
     },
   };
   return provider;
+}
+
+export function createTestSkill(name: string, description: string, body: string): SkillDefinition {
+  return {
+    id: `skill:test:${name}`,
+    metadata: {
+      name,
+      description,
+      version: '1.0.0',
+      tags: ['test'],
+    },
+    body,
+    companions: [],
+    source: 'builtin',
+    filePath: `/test/${name}.md`,
+    contentHash: `hash-${name}`,
+  };
+}
+
+export function createTestSkillWithCompanions(
+  name: string,
+  description: string,
+  body: string,
+  companions: Array<{ name: string; content: string }>,
+): SkillDefinition {
+  return {
+    id: `skill:test:${name}`,
+    metadata: {
+      name,
+      description,
+      version: '1.0.0',
+      tags: ['test'],
+    },
+    body,
+    companions,
+    source: 'builtin',
+    filePath: `/test/${name}.md`,
+    contentHash: `hash-${name}`,
+  };
 }

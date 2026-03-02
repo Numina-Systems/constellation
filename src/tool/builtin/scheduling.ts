@@ -134,5 +134,135 @@ export function createSchedulingTools(deps: SchedulingToolDeps): Array<Tool> {
     },
   };
 
-  return [schedule_task];
+  const cancel_task: Tool = {
+    definition: {
+      name: 'cancel_task',
+      description: 'Cancel a scheduled task by ID. Only the agent that owns the task can cancel it.',
+      parameters: [
+        {
+          name: 'task_id',
+          type: 'string',
+          description: 'The ID of the task to cancel',
+          required: true,
+        },
+      ],
+    },
+    handler: async (params) => {
+      try {
+        const taskId = params['task_id'] as string;
+
+        // Verify the task exists and belongs to this owner
+        const rows = await deps.persistence.query(
+          'SELECT id FROM scheduled_tasks WHERE id = $1 AND owner = $2',
+          [taskId, deps.owner],
+        );
+
+        if (rows.length === 0) {
+          return {
+            success: false,
+            output: '',
+            error: 'Task not found or not owned by this agent',
+          };
+        }
+
+        // Cancel the task
+        await deps.scheduler.cancel(taskId);
+
+        return {
+          success: true,
+          output: JSON.stringify(
+            {
+              id: taskId,
+              status: 'cancelled',
+            },
+            null,
+            2,
+          ),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          output: '',
+          error: `cancel_task failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    },
+  };
+
+  const list_tasks: Tool = {
+    definition: {
+      name: 'list_tasks',
+      description:
+        'List all scheduled tasks owned by this agent. By default, only active (non-cancelled) tasks are shown.',
+      parameters: [
+        {
+          name: 'include_cancelled',
+          type: 'boolean',
+          description: 'Whether to include cancelled tasks (default false)',
+          required: false,
+        },
+      ],
+    },
+    handler: async (params) => {
+      try {
+        const includeCancelled = params['include_cancelled'] as boolean | undefined;
+        const showCancelled = includeCancelled === true;
+
+        let sql =
+          'SELECT id, name, schedule, payload, next_run_at, last_run_at, cancelled FROM scheduled_tasks WHERE owner = $1';
+        const queryParams: readonly unknown[] = [deps.owner];
+
+        if (!showCancelled) {
+          sql += ' AND cancelled = FALSE';
+        }
+
+        sql += ' ORDER BY next_run_at ASC';
+
+        const rows = await deps.persistence.query<{
+          readonly id: string;
+          readonly name: string;
+          readonly schedule: string;
+          readonly payload: { type: string; prompt?: string };
+          readonly next_run_at: Date;
+          readonly last_run_at: Date | null;
+          readonly cancelled: boolean;
+        }>(sql, queryParams);
+
+        const tasks = rows.map((row) => {
+          const taskInfo: Record<string, unknown> = {
+            id: row.id,
+            name: row.name,
+            schedule: row.schedule,
+            prompt: row.payload.prompt || '',
+            next_run_at: row.next_run_at instanceof Date ? row.next_run_at.toISOString() : row.next_run_at,
+            last_run_at:
+              row.last_run_at === null
+                ? null
+                : row.last_run_at instanceof Date
+                  ? row.last_run_at.toISOString()
+                  : row.last_run_at,
+          };
+
+          if (showCancelled) {
+            taskInfo['cancelled'] = row.cancelled;
+          }
+
+          return taskInfo;
+        });
+
+        return {
+          success: true,
+          output: JSON.stringify(tasks, null, 2),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          output: '',
+          error: `list_tasks failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    },
+  };
+
+  return [schedule_task, cancel_task, list_tasks];
 }

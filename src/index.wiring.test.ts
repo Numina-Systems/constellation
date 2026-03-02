@@ -398,6 +398,124 @@ describe('composition root wiring: agent-scheduled event format (buildAgentSched
 });
 
 // ============================================================================
+// AC4.3 (one-shot auto-cancel):
+// Verify croner nextRun() returns null for timestamps in the past (one-shot detection)
+// ============================================================================
+
+describe('composition root wiring: one-shot auto-cancel via croner (AC4.3)', () => {
+  it('croner returns null for ISO timestamp in the past', () => {
+    const Cron = require('croner').Cron;
+    const pastTimestamp = new Date(Date.now() - 60000).toISOString(); // 1 minute ago
+
+    const nextRun = new Cron(pastTimestamp).nextRun();
+
+    expect(nextRun).toBe(null);
+  });
+
+  it('croner returns a future Date for ISO timestamp in the future', () => {
+    const Cron = require('croner').Cron;
+    const futureTimestamp = new Date(Date.now() + 60000).toISOString(); // 1 minute from now
+
+    const nextRun = new Cron(futureTimestamp).nextRun();
+
+    expect(nextRun instanceof Date).toBe(true);
+  });
+
+  it('croner correctly distinguishes between past and future timestamps', () => {
+    const Cron = require('croner').Cron;
+    const pastTimestamp = new Date(Date.now() - 1000).toISOString();
+    const futureTimestamp = new Date(Date.now() + 86400000).toISOString(); // 1 day from now
+
+    const pastNextRun = new Cron(pastTimestamp).nextRun();
+    const futureNextRun = new Cron(futureTimestamp).nextRun();
+
+    expect(pastNextRun).toBe(null);
+    expect(futureNextRun instanceof Date).toBe(true);
+  });
+});
+
+// ============================================================================
+// AC4.1 & AC4.3 (onDue branching):
+// Verify both event builders produce correct sources and one-shot detection works
+// ============================================================================
+
+describe('composition root wiring: onDue branching (AC4.1, AC4.3)', () => {
+  it('buildReviewEvent produces source "review-job" for review tasks', () => {
+    const mockTask = {
+      id: 'review-task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review' },
+    };
+
+    const event = buildReviewEvent(mockTask);
+
+    expect(event.source).toBe('review-job');
+  });
+
+  it('buildAgentScheduledEvent produces source "self-scheduled" for agent tasks (AC4.1)', () => {
+    const mockTask = {
+      id: 'agent-task-123',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'do stuff' },
+    };
+
+    const event = buildAgentScheduledEvent(mockTask);
+
+    expect(event.source).toBe('self-scheduled');
+  });
+
+  it('both builders coexist and produce distinct event sources', () => {
+    const reviewTask = {
+      id: 'review-1',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review' },
+    };
+
+    const agentTask = {
+      id: 'agent-1',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'test prompt' },
+    };
+
+    const reviewEvent = buildReviewEvent(reviewTask);
+    const agentEvent = buildAgentScheduledEvent(agentTask);
+
+    expect(reviewEvent.source).toBe('review-job');
+    expect(agentEvent.source).toBe('self-scheduled');
+    expect(reviewEvent.source).not.toBe(agentEvent.source);
+  });
+
+  it('event branching preserves metadata distinctly for each event type', () => {
+    const reviewTask = {
+      id: 'review-1',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review', extraField: 'review-value' },
+    };
+
+    const agentTask = {
+      id: 'agent-1',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'agent prompt', extraField: 'agent-value' },
+    };
+
+    const reviewEvent = buildReviewEvent(reviewTask);
+    const agentEvent = buildAgentScheduledEvent(agentTask);
+
+    expect(reviewEvent.metadata['type']).toBe('prediction-review');
+    expect(reviewEvent.metadata['extraField']).toBe('review-value');
+
+    expect(agentEvent.metadata['type']).toBe('agent-scheduled');
+    expect(agentEvent.metadata['extraField']).toBe('agent-value');
+  });
+});
+
+// ============================================================================
 // AC6.5 (processEvent error resilience):
 // Verify processEventQueue is exported and can be called
 // ============================================================================

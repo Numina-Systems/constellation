@@ -62,10 +62,19 @@ export function createPostgresSkillStore(
       .map(r => ({ id: r.id, score: r.similarity }));
   }
 
+  async function getAllIds(): Promise<ReadonlyArray<string>> {
+    const rows = await persistence.query<{ id: string }>(
+      'SELECT id FROM skill_embeddings',
+      [],
+    );
+    return rows.map(r => r.id);
+  }
+
   return {
     upsertEmbedding,
     deleteEmbedding,
     getByHash,
     searchByEmbedding,
+    getAllIds,
   };
 }

@@ -5,4 +5,5 @@ export interface SkillStore {
   deleteEmbedding(id: string): Promise<void>;
   getByHash(id: string): Promise<string | null>;
   searchByEmbedding(embedding: ReadonlyArray<number>, limit: number, threshold: number): Promise<ReadonlyArray<{ id: string; score: number }>>;
+  getAllIds(): Promise<ReadonlyArray<string>>;
 }

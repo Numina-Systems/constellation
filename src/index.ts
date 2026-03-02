@@ -27,7 +27,11 @@ import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/e
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
+import { createPostgresSkillStore } from '@/skill/postgres-store';
+import { createSkillRegistry } from '@/skill/registry';
+import { createSkillTools } from '@/skill/tools';
 import type { MemoryManager } from '@/memory/manager';
+import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
@@ -346,6 +350,51 @@ async function main(): Promise<void> {
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
 
+  // Skills system (optional)
+  let skillRegistry: SkillRegistry | undefined;
+
+  if (config.skills) {
+    const skillStore = createPostgresSkillStore(persistence);
+    skillRegistry = createSkillRegistry({
+      store: skillStore,
+      embedding,
+      builtinDir: config.skills.builtin_dir,
+      agentDir: config.skills.agent_dir,
+    });
+    await skillRegistry.load();
+
+    // Register skill management tools
+    const skillTools = createSkillTools(skillRegistry);
+    for (const tool of skillTools) {
+      registry.register(tool);
+    }
+
+    // Register skill-defined tools
+    // These tools are defined declaratively in skill frontmatter but executed as static skill content.
+    // The parameters are part of the tool definition (for agent context) but ignored by the handler,
+    // which simply returns the skill body. This design allows skills to declare tool affordances
+    // (what they can do) while keeping execution simple: tool invocation triggers skill retrieval.
+    for (const skill of skillRegistry.getAll()) {
+      if (skill.metadata.tools) {
+        for (const toolDef of skill.metadata.tools) {
+          registry.register({
+            definition: {
+              name: toolDef.name,
+              description: toolDef.description,
+              parameters: toolDef.parameters,
+            },
+            handler: async () => ({
+              success: true,
+              output: `[Skill: ${skill.metadata.name}]\n\n${skill.body}`,
+            }),
+          });
+        }
+      }
+    }
+
+    console.log(`skills loaded (${skillRegistry.getAll().length} skills)`);
+  }
+
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
   let blueskySource: BlueskyDataSource | null = null;
   let blueskyConnected = false;
@@ -425,9 +474,12 @@ async function main(): Promise<void> {
       context_budget: config.agent.context_budget,
       model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
       model_name: config.model.name,
+      max_skills_per_turn: config.skills?.max_per_turn,
+      skill_threshold: config.skills?.similarity_threshold,
     },
     getExecutionContext,
     compactor,
+    skills: skillRegistry,
   });
 
   if (blueskyConnected && blueskySource) {
@@ -446,8 +498,11 @@ async function main(): Promise<void> {
           context_budget: config.agent.context_budget,
           model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
           model_name: config.model.name,
+          max_skills_per_turn: config.skills?.max_per_turn,
+          skill_threshold: config.skills?.similarity_threshold,
         },
         getExecutionContext,
+        skills: skillRegistry,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop

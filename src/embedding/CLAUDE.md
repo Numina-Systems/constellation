@@ -1,9 +1,9 @@
 # Embedding
 
-Last verified: 2026-02-23
+Last verified: 2026-03-01
 
 ## Purpose
-Abstracts embedding providers behind a unified `EmbeddingProvider` port for semantic search in the memory system.
+Abstracts embedding providers behind a unified `EmbeddingProvider` port for semantic search in the memory and skill systems.
 
 ## Contracts
 - **Exposes**: `EmbeddingProvider` interface (`embed`, `embedBatch`, `dimensions`), `createEmbeddingProvider(config)`, OpenAI and Ollama adapters
@@ -12,8 +12,8 @@ Abstracts embedding providers behind a unified `EmbeddingProvider` port for sema
 
 ## Dependencies
 - **Uses**: `openai` SDK (for OpenAI adapter), HTTP fetch (for Ollama adapter), `src/config/`
-- **Used by**: `src/memory/` (MemoryManager, postgres-store seeding), `src/index.ts` (core memory seeding)
-- **Boundary**: Only memory-related code should use embedding providers directly.
+- **Used by**: `src/memory/` (MemoryManager, postgres-store seeding), `src/skill/` (skill embedding and semantic retrieval), `src/index.ts` (core memory seeding)
+- **Boundary**: Only memory and skill modules should use embedding providers directly.
 
 ## Key Decisions
 - Ollama via raw HTTP: Avoids SDK dependency for a simple POST endpoint

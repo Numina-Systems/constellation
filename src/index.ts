@@ -569,6 +569,7 @@ async function main(): Promise<void> {
       const bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
       blueskySource = createBlueskySource(config.bluesky, bskyAgent);
       await blueskySource.connect();
+      blueskySource.startSessionRefresh();
       blueskyConnected = true;
     } catch (error) {
       // AC6.3: Jetstream failure doesn't block REPL

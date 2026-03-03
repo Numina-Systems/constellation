@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect } from "bun:test";
 import { createMailgunSender, type MessagesAPI } from "./sender.ts";
 

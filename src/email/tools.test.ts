@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect } from 'bun:test';
 import { createEmailTools } from './tools.ts';
 import type { SendEmailFn, SendResult } from './types.ts';

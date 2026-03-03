@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 /**
  * Registration tests for email tools.
  * Verifies conditional registration and stub generation.

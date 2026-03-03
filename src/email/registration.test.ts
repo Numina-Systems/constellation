@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'bun:test';
 import { createToolRegistry } from '@/tool/registry.ts';
 import { createEmailTools } from './tools.ts';
-import type { SendEmailFn, SendResult } from './types.ts';
+import type { SendEmailFn } from './types.ts';
 
 describe('email tool registration', () => {
   describe('agent-email.AC3.1: send_email in registry when tools registered', () => {

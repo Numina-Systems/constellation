@@ -36,6 +36,7 @@ import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { createPostgresScheduler } from '@/scheduler';
+import { createMailgunSender, createEmailTools } from '@/email';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -455,6 +456,22 @@ async function main(): Promise<void> {
       registry.register(tool);
     }
     console.log(`web tools registered (providers: ${searchChain.providers.join(', ')})`);
+  }
+
+  if (config.email) {
+    const sender = createMailgunSender({
+      apiKey: config.email.mailgun_api_key,
+      domain: config.email.mailgun_domain,
+      fromAddress: config.email.from_address,
+    });
+    const emailTools = createEmailTools({
+      sender,
+      allowedRecipients: config.email.allowed_recipients,
+    });
+    for (const tool of emailTools) {
+      registry.register(tool);
+    }
+    console.log('email tools registered');
   }
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);

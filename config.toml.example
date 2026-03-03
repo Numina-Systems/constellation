@@ -74,6 +74,14 @@ jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
 # max_per_turn = 3
 # similarity_threshold = 0.3
 
+# Email sending via Mailgun. Registers send_email tool when present.
+# For production, use environment variables: MAILGUN_API_KEY, MAILGUN_DOMAIN
+# [email]
+# api_key = "key-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# domain = "mg.example.com"
+# from_address = "Spirit <spirit@mg.example.com>"
+# allowed_recipients = ["operator@example.com"]
+
 # Web search and fetch tools. Requires at least one search provider API key.
 # For production, use environment variables: BRAVE_API_KEY, TAVILY_API_KEY
 [web]

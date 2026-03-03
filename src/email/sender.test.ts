@@ -1,14 +1,7 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect } from "bun:test";
-import { createMailgunSender } from "./sender.ts";
-
-interface MessagesAPI {
-  create(
-    domain: string,
-    data: Record<string, unknown>,
-  ): Promise<{ id?: string; message?: string; status?: number }>;
-}
+import { createMailgunSender, type MessagesAPI } from "./sender.ts";
 
 describe("agent-email.AC1.1: Sender sends text email", () => {
   it("should return success with messageId when Mailgun succeeds with text format", async () => {
@@ -29,12 +22,12 @@ describe("agent-email.AC1.1: Sender sends text email", () => {
       },
     };
 
-    const sender = createMailgunSender(
-      "test-api-key",
-      "example.com",
-      "noreply@example.com",
-      mockMessages,
-    );
+    const sender = createMailgunSender({
+      apiKey: "test-api-key",
+      domain: "example.com",
+      fromAddress: "noreply@example.com",
+      messages: mockMessages,
+    });
 
     const result = await sender(
       "user@example.com",
@@ -69,12 +62,12 @@ describe("agent-email.AC1.2: Sender sends HTML email", () => {
       },
     };
 
-    const sender = createMailgunSender(
-      "test-api-key",
-      "example.com",
-      "noreply@example.com",
-      mockMessages,
-    );
+    const sender = createMailgunSender({
+      apiKey: "test-api-key",
+      domain: "example.com",
+      fromAddress: "noreply@example.com",
+      messages: mockMessages,
+    });
 
     const result = await sender(
       "user@example.com",
@@ -94,25 +87,18 @@ describe("agent-email.AC1.3: Sender handles Mailgun API errors", () => {
   it("should return failure when Mailgun API returns non-2xx status", async () => {
     const mockMessages: MessagesAPI = {
       async create() {
-        const error = new Error("Forbidden");
-        const errorAsUnknown = error as unknown;
-        if (
-          typeof errorAsUnknown === "object" &&
-          errorAsUnknown !== null &&
-          "statusCode" in errorAsUnknown
-        ) {
-          (errorAsUnknown as Record<string, unknown>)["statusCode"] = 401;
-        }
+        const error = new Error("Forbidden") as Error & { statusCode: number };
+        error.statusCode = 401;
         throw error;
       },
     };
 
-    const sender = createMailgunSender(
-      "test-api-key",
-      "example.com",
-      "noreply@example.com",
-      mockMessages,
-    );
+    const sender = createMailgunSender({
+      apiKey: "test-api-key",
+      domain: "example.com",
+      fromAddress: "noreply@example.com",
+      messages: mockMessages,
+    });
 
     const result = await sender(
       "user@example.com",
@@ -136,12 +122,12 @@ describe("agent-email.AC1.4: Sender handles network errors", () => {
       },
     };
 
-    const sender = createMailgunSender(
-      "test-api-key",
-      "example.com",
-      "noreply@example.com",
-      mockMessages,
-    );
+    const sender = createMailgunSender({
+      apiKey: "test-api-key",
+      domain: "example.com",
+      fromAddress: "noreply@example.com",
+      messages: mockMessages,
+    });
 
     const result = await sender(
       "user@example.com",

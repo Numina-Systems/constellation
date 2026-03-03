@@ -3,19 +3,24 @@
 import Mailgun from "mailgun.js";
 import type { SendEmailFn, SendResult } from "./types.ts";
 
-interface MessagesAPI {
+export type MessagesAPI = {
   create(
     domain: string,
     data: Record<string, unknown>,
   ): Promise<{ id?: string; message?: string; status?: number }>;
-}
+};
+
+export type CreateMailgunSenderOptions = {
+  apiKey: string;
+  domain: string;
+  fromAddress: string;
+  messages?: MessagesAPI;
+};
 
 export function createMailgunSender(
-  apiKey: string,
-  domain: string,
-  fromAddress: string,
-  messages?: MessagesAPI,
+  options: CreateMailgunSenderOptions,
 ): SendEmailFn {
+  const { apiKey, domain, fromAddress, messages } = options;
   let messagesAPI: MessagesAPI;
 
   if (messages) {

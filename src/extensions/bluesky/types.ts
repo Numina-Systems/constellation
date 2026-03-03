@@ -21,4 +21,6 @@ export interface BlueskyDataSource extends DataSource {
   getAccessToken(): string;
   getRefreshToken(): string;
   getPdsUrl(): string;
+  startSessionRefresh(intervalMs?: number): void;
+  stopSessionRefresh(): void;
 }

@@ -45,6 +45,8 @@ export function shouldAcceptEvent(
   return false;
 }
 
+const DEFAULT_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
 export function createBlueskySource(
   config: BlueskyConfig,
   agent: BskyAgent,
@@ -52,7 +54,26 @@ export function createBlueskySource(
   let subscription: JetstreamSubscription | null = null;
   let subscriptionIterator: AsyncIterator<unknown> | null = null;
   let messageHandler: ((message: IncomingMessage) => void) | null = null;
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
   const watchedDids = new Set(config.watched_dids);
+
+  async function refreshSession(): Promise<void> {
+    try {
+      await agent.sessionManager.refreshSession();
+      console.log("[bluesky] session refreshed");
+    } catch (refreshError) {
+      console.error("[bluesky] session refresh failed, attempting re-login:", refreshError);
+      try {
+        await agent.login({
+          identifier: config.handle!,
+          password: config.app_password!,
+        });
+        console.log("[bluesky] re-login successful");
+      } catch (loginError) {
+        console.error("[bluesky] re-login failed:", loginError);
+      }
+    }
+  }
 
   const adapter: BlueskyDataSource = {
     name: "bluesky",
@@ -143,6 +164,7 @@ export function createBlueskySource(
     },
 
     async disconnect(): Promise<void> {
+      adapter.stopSessionRefresh();
       if (subscriptionIterator) {
         await subscriptionIterator.return?.();
         subscriptionIterator = null;
@@ -153,6 +175,20 @@ export function createBlueskySource(
 
     onMessage(handler: (message: IncomingMessage) => void): void {
       messageHandler = handler;
+    },
+
+    startSessionRefresh(intervalMs?: number): void {
+      if (refreshTimer) return;
+      const interval = intervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+      refreshTimer = setInterval(() => void refreshSession(), interval);
+      console.log(`[bluesky] session refresh scheduled every ${interval / 1000}s`);
+    },
+
+    stopSessionRefresh(): void {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
     },
 
     getAccessToken(): string {

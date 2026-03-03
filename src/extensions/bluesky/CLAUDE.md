@@ -1,12 +1,12 @@
 # Bluesky DataSource
 
-Last verified: 2026-02-28
+Last verified: 2026-03-03
 
 ## Purpose
 First concrete `DataSource` implementation. Connects the agent to Bluesky via the AT Protocol, receiving posts/replies from a Jetstream firehose subscription and providing credentials for sandbox code to post back.
 
 ## Contracts
-- **Exposes**: `BlueskyDataSource` (extends `DataSource` with `getAccessToken()`, `getRefreshToken()`), `BlueskyPostMetadata`, `EventQueue`, `createBlueskySource(config, agent)`, `createEventQueue(capacity)`, `seedBlueskyTemplates(store, embedding)`
+- **Exposes**: `BlueskyDataSource` (extends `DataSource` with `getAccessToken()`, `getRefreshToken()`, `startSessionRefresh()`, `stopSessionRefresh()`), `BlueskyPostMetadata`, `EventQueue`, `createBlueskySource(config, agent)`, `createEventQueue(capacity)`, `seedBlueskyTemplates(store, embedding)`
 - **Guarantees**:
   - Jetstream subscription filters to `app.bsky.feed.post` collection only
   - Events accepted only from `watched_dids` or replies to the agent's own posts
@@ -14,6 +14,7 @@ First concrete `DataSource` implementation. Connects the agent to Bluesky via th
   - Template seeding is idempotent (checks for both `bluesky:post` AND `bluesky:capabilities` blocks; partial seeding is repaired)
   - Jetstream failure does not block the REPL (caught at composition root)
   - Capabilities block is seeded into working memory (pinned, readonly) so the agent sees it every turn
+  - Session tokens are proactively refreshed hourly; falls back to re-login with app password if refresh fails
 - **Expects**: `BlueskyConfig` with `enabled: true`, valid `handle`, `app_password`, and `did`. `@atproto/api` BskyAgent instance injected.
 
 ## Dependencies
@@ -30,7 +31,7 @@ First concrete `DataSource` implementation. Connects the agent to Bluesky via th
 
 ## Key Files
 - `types.ts` -- `BlueskyPostMetadata`, `BlueskyDataSource`
-- `source.ts` -- Jetstream subscription, event filtering (`shouldAcceptEvent`), adapter factory
+- `source.ts` -- Jetstream subscription, event filtering (`shouldAcceptEvent`), adapter factory, periodic session refresh
 - `event-queue.ts` -- Bounded FIFO queue for incoming messages
 - `seed.ts` -- Idempotent memory seeding (3 archival templates + 1 working capabilities block)
 - `templates.ts` -- Bluesky post/reply/like code templates

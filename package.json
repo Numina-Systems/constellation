@@ -16,13 +16,14 @@
     "@iarna/toml": "^2.2.5",
     "@mozilla/readability": "^0.6.0",
     "@truto/turndown-plugin-gfm": "^1.0.2",
+    "croner": "^10.0.1",
     "linkedom": "^0.18.12",
+    "mailgun.js": "^12.7.0",
     "openai": "^4.80.0",
     "pg": "^8.13.0",
     "pgvector": "^0.2.0",
     "turndown": "^7.2.2",
     "yaml": "^2.8.2",
-    "croner": "^10.0.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {

@@ -48,6 +48,7 @@ const BlueskyConfigSchema = z
     app_password: z.string().optional(),
     did: z.string().optional(),
     watched_dids: z.array(z.string()).default([]),
+    schedule_dids: z.array(z.string()).default([]),
     jetstream_url: z.string().url().default("wss://jetstream2.us-east.bsky.network/subscribe"),
   })
   .superRefine((data, ctx) => {

@@ -175,7 +175,7 @@ export async function buildAgentScheduledEvent(
   });
   const activitySection = formatTraceSummary(traces);
 
-  const prompt = (task.payload?.prompt as string) || 'Execute this scheduled task.';
+  const prompt = (task.payload?.['prompt'] as string) || 'Execute this scheduled task.';
 
   return {
     source: 'agent-scheduled',

@@ -462,6 +462,32 @@ describe('composition root wiring: agent-scheduled event trace enrichment', () =
     expect(event.metadata['prompt']).toBe('Do something');
     expect(event.metadata['extraData']).toBe('value');
   });
+
+  it('queries traces with limit 20 and 2-hour lookback', async () => {
+    const traceStore = createMockTraceStore([]);
+    const queryTracesMock = traceStore.queryTraces as any;
+
+    const task = {
+      id: 'task-456',
+      name: 'custom-task',
+      schedule: '0 9 * * *',
+      payload: { prompt: 'Do something' },
+    };
+
+    const beforeTime = Date.now();
+    await buildAgentScheduledEvent(task, traceStore, 'test-owner');
+
+    const callArgs = queryTracesMock.mock.calls[0]?.[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs.limit).toBe(20);
+    expect(callArgs.lookbackSince).toBeDefined();
+
+    const lookbackMs = beforeTime - callArgs.lookbackSince.getTime();
+    const expectedLookbackMs = 2 * 3600_000; // 2 hours
+    const tolerance = 5000; // 5 second tolerance
+
+    expect(Math.abs(lookbackMs - expectedLookbackMs)).toBeLessThan(tolerance);
+  });
 });
 
 // ============================================================================

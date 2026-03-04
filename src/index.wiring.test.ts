@@ -488,6 +488,13 @@ describe('composition root wiring: agent-scheduled event trace enrichment', () =
 
     expect(Math.abs(lookbackMs - expectedLookbackMs)).toBeLessThan(tolerance);
   });
+
+  it('uses default prompt when payload.prompt is absent', async () => {
+    const traceStore = createMockTraceStore([]);
+    const task = { id: 'task-789', name: 'no-prompt-task', schedule: '0 9 * * *' };
+    const event = await buildAgentScheduledEvent(task, traceStore, 'test-owner');
+    expect(event.content).toContain('Execute this scheduled task.');
+  });
 });
 
 // ============================================================================

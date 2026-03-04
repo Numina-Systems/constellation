@@ -32,17 +32,24 @@ describe('formatTraceSummary', () => {
   });
 
   test('AC3.1: formats single trace with timestamp, tool name, status, and output', () => {
+    const createdAt = new Date('2026-03-03T14:32:00Z');
     const traces = [
       createTestTrace({
-        createdAt: new Date('2026-03-03T14:32:00Z'),
+        createdAt,
         toolName: 'memory_write',
         success: true,
         outputSummary: 'Wrote block core:persona with updated personality traits',
       }),
     ];
 
+    const expectedTime = createdAt.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
     const result = formatTraceSummary(traces);
-    expect(result).toContain('[14:32]');
+    expect(result).toContain(`[${expectedTime}]`);
     expect(result).toContain('memory_write');
     expect(result).toContain('✓');
     expect(result).toContain('Wrote block core:persona with updated personality traits');
@@ -97,29 +104,49 @@ describe('formatTraceSummary', () => {
   });
 
   test('AC3.3: preserves input order (newest-first from queryTraces)', () => {
+    const time1 = new Date('2026-03-03T14:32:00Z');
+    const time2 = new Date('2026-03-03T14:30:00Z');
+    const time3 = new Date('2026-03-03T14:28:00Z');
+
     const traces = [
       createTestTrace({
-        createdAt: new Date('2026-03-03T14:32:00Z'),
+        createdAt: time1,
         toolName: 'memory_write',
         outputSummary: 'First (newest)',
       }),
       createTestTrace({
-        createdAt: new Date('2026-03-03T14:30:00Z'),
+        createdAt: time2,
         toolName: 'web_search',
         outputSummary: 'Second',
       }),
       createTestTrace({
-        createdAt: new Date('2026-03-03T14:28:00Z'),
+        createdAt: time3,
         toolName: 'code_execute',
         outputSummary: 'Third (oldest)',
       }),
     ];
 
+    const expectedTime1 = time1.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const expectedTime2 = time2.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const expectedTime3 = time3.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
     const result = formatTraceSummary(traces);
     const lines = result.split('\n');
-    expect(lines[1]).toContain('[14:32]');
-    expect(lines[2]).toContain('[14:30]');
-    expect(lines[3]).toContain('[14:28]');
+    expect(lines[1]).toContain(`[${expectedTime1}]`);
+    expect(lines[2]).toContain(`[${expectedTime2}]`);
+    expect(lines[3]).toContain(`[${expectedTime3}]`);
   });
 
   test('section header: output starts with [Recent Activity]\\n', () => {

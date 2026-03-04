@@ -35,6 +35,7 @@ import { createSkillTools } from '@/skill/tools';
 import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
+import { formatTraceSummary } from '@/scheduled-context';
 import { createPostgresScheduler } from '@/scheduler';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
@@ -96,21 +97,33 @@ export async function performShutdown(
 }
 
 /**
- * Build a review event from a scheduled task.
+ * Build a review event from a scheduled task with trace enrichment.
+ * Queries recent operation traces and includes them in the event content.
  * Extracted for testability - allows tests to verify the exact event shape
  * that the scheduler's onDue handler produces.
  */
-export function buildReviewEvent(task: {
-  id: string;
-  name: string;
-  schedule: string;
-  payload?: Record<string, unknown>;
-}): {
+export async function buildReviewEvent(
+  task: {
+    id: string;
+    name: string;
+    schedule: string;
+    payload?: Record<string, unknown>;
+  },
+  traceStore: TraceStore,
+  owner: string,
+): Promise<{
   source: string;
   content: string;
   metadata: Record<string, unknown>;
   timestamp: Date;
-} {
+}> {
+  const traces = await traceStore.queryTraces({
+    owner,
+    lookbackSince: new Date(Date.now() - 2 * 3600_000),
+    limit: 20,
+  });
+  const activitySection = formatTraceSummary(traces);
+
   return {
     source: 'review-job',
     content: [
@@ -122,6 +135,8 @@ export function buildReviewEvent(task: {
       'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
       '',
       'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
+      '',
+      activitySection,
     ].join('\n'),
     metadata: {
       taskId: task.id,

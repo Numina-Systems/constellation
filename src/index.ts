@@ -750,9 +750,12 @@ async function main(): Promise<void> {
         console.warn('review job: failed to expire stale predictions', error);
       }
 
-      const reviewEvent = buildReviewEvent(task);
+      const event =
+        task.name === 'review-predictions'
+          ? await buildReviewEvent(task, traceRecorder, AGENT_OWNER)
+          : await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
 
-      schedulerEventQueue.push(reviewEvent);
+      schedulerEventQueue.push(event);
       processSchedulerEvent().catch((error) => {
         console.error('scheduler event processing error:', error);
       });

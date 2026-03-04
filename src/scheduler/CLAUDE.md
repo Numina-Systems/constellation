@@ -9,19 +9,20 @@ Implements the `Scheduler` extension interface with PostgreSQL-backed cron sched
 - **Exposes**: `PostgresScheduler` (Scheduler + start/stop lifecycle), `createPostgresScheduler(persistence, owner)`
 - **Guarantees**:
   - Tasks are polled every 60 seconds when started
+  - `schedule()` returns `{ id, nextRunAt }` for caller confirmation
   - Cron expressions are validated on schedule; invalid expressions throw
   - After a task fires, `next_run_at` is advanced to the next occurrence (or task is cancelled if no future occurrence exists)
   - Per-task errors are caught and logged; one failing task does not block others
-- **Expects**: `PersistenceProvider` with migration 004 applied (`scheduled_tasks` table). Owner string for multi-agent isolation.
+- **Expects**: `PersistenceProvider` with migrations 004+005 applied (`scheduled_tasks` table with owner isolation). Owner string for multi-agent isolation.
 
 ## Dependencies
 - **Uses**: `src/persistence/` (query interface), `src/extensions/scheduler.ts` (Scheduler, ScheduledTask port interfaces), `croner` (cron parsing)
-- **Used by**: `src/index.ts` (composition root wires onDue handler; dispatches to `buildReviewEvent` or `buildAgentScheduledEvent` based on task name, both enriched with recent operation traces)
+- **Used by**: `src/index.ts` (composition root wires dual instances: agent-owned + system-owned; onDue dispatches to `buildReviewEvent` or `buildAgentScheduledEvent` based on task name, both enriched with recent operation traces), `src/tool/builtin/scheduling.ts` (agent scheduling tools)
 - **Boundary**: The scheduler dispatches tasks but does not process them. Event handling is the caller's responsibility.
 
 ## Key Decisions
 - Polling over pg_notify: Simpler, no persistent connection requirement. 60-second granularity is sufficient for cron tasks
-- Owner-scoped: Each scheduler instance only sees tasks for its owner
+- Owner-scoped: Each scheduler instance only sees tasks for its owner. Composition root runs two instances (`agent` + `system`) for isolation -- agent scheduling tools cannot see or modify system jobs
 
 ## Invariants
 - `next_run_at` is always set when a task is active (not cancelled)

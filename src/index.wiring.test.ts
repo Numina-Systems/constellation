@@ -14,6 +14,9 @@ import { describe, it, expect, mock } from 'bun:test';
 import { createShutdownHandler, processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
 import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider } from '@/reflexion';
+import { createSchedulingTools } from '@/tool/builtin/scheduling';
+import { createSchedulingContextProvider } from '@/agent/scheduling-context';
+import { Cron } from 'croner';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { Interface as ReadlineInterface } from 'readline';
 import type { TraceStore, OperationTrace } from '@/reflexion';
@@ -56,6 +59,14 @@ describe('composition root wiring: import compatibility', () => {
 
   it('exports createPostgresScheduler from scheduler', () => {
     expect(typeof createPostgresScheduler).toBe('function');
+  });
+
+  it('exports createSchedulingTools from tool/builtin/scheduling', () => {
+    expect(typeof createSchedulingTools).toBe('function');
+  });
+
+  it('exports createSchedulingContextProvider from agent/scheduling-context', () => {
+    expect(typeof createSchedulingContextProvider).toBe('function');
   });
 });
 
@@ -385,6 +396,100 @@ describe('composition root wiring: review event trace enrichment', () => {
 });
 
 // ============================================================================
+// AC4.1 & AC4.2 (agent-scheduled event format):
+// Verify buildAgentScheduledEvent creates correct event shape with prompt content
+// (updated for async trace-enriched API)
+// ============================================================================
+
+describe('composition root wiring: agent-scheduled event format (buildAgentScheduledEvent)', () => {
+  it('builds agent-scheduled event with correct source and metadata structure', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'agent-task-123',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'do something' },
+    };
+
+    const agentEvent = await buildAgentScheduledEvent(mockTask, traceStore, 'test-owner');
+
+    expect(agentEvent.source).toBe('agent-scheduled');
+    expect(typeof agentEvent.content).toBe('string');
+    expect(agentEvent.content).toContain('do something');
+    expect(typeof agentEvent.metadata).toBe('object');
+    expect(agentEvent.timestamp instanceof Date).toBe(true);
+  });
+
+  it('includes taskId in metadata matching task.id', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'agent-task-456',
+      name: 'scheduled-prompt',
+      schedule: '*/30 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'check status' },
+    };
+
+    const event = await buildAgentScheduledEvent(mockTask, traceStore, 'test-owner');
+
+    expect(event.metadata['taskId']).toBe('agent-task-456');
+    expect(event.metadata['taskName']).toBe('scheduled-prompt');
+    expect(event.metadata['schedule']).toBe('*/30 * * * *');
+  });
+
+  it('includes content from task.payload.prompt (AC4.2)', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'agent-task-789',
+      name: 'scheduled-prompt',
+      schedule: '0 12 * * *',
+      payload: { type: 'agent-scheduled', prompt: 'review recent conversations' },
+    };
+
+    const event = await buildAgentScheduledEvent(mockTask, traceStore, 'test-owner');
+
+    expect(event.content).toContain('review recent conversations');
+  });
+
+  it('includes full task.payload in metadata spread', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'agent-task-payload',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: {
+        type: 'agent-scheduled',
+        prompt: 'do work',
+        customField: 'custom-value',
+        anotherField: 42,
+      },
+    };
+
+    const event = await buildAgentScheduledEvent(mockTask, traceStore, 'test-owner');
+
+    expect(event.metadata['type']).toBe('agent-scheduled');
+    expect(event.metadata['prompt']).toBe('do work');
+    expect(event.metadata['customField']).toBe('custom-value');
+    expect(event.metadata['anotherField']).toBe(42);
+  });
+
+  it('creates timestamp as Date instance', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'agent-task-timestamp',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'test' },
+    };
+
+    const event = await buildAgentScheduledEvent(mockTask, traceStore, 'test-owner');
+    const timeDifference = Math.abs(Date.now() - event.timestamp.getTime());
+
+    expect(event.timestamp instanceof Date).toBe(true);
+    expect(timeDifference).toBeLessThan(1000); // Within 1 second
+  });
+});
+
+// ============================================================================
 // AC1.2, AC1.3 (trace enrichment for buildAgentScheduledEvent):
 // Verify agent-scheduled events include formatted traces
 // ============================================================================
@@ -494,6 +599,126 @@ describe('composition root wiring: agent-scheduled event trace enrichment', () =
     const task = { id: 'task-789', name: 'no-prompt-task', schedule: '0 9 * * *' };
     const event = await buildAgentScheduledEvent(task, traceStore, 'test-owner');
     expect(event.content).toContain('Execute this scheduled task.');
+  });
+});
+
+// ============================================================================
+// AC4.3 (one-shot auto-cancel):
+// Verify croner nextRun() returns null for timestamps in the past (one-shot detection)
+// ============================================================================
+
+describe('composition root wiring: one-shot auto-cancel via croner (AC4.3)', () => {
+  it('croner returns null for ISO timestamp in the past', () => {
+    const pastTimestamp = new Date(Date.now() - 60000).toISOString(); // 1 minute ago
+
+    const nextRun = new Cron(pastTimestamp).nextRun();
+
+    expect(nextRun).toBe(null);
+  });
+
+  it('croner returns a future Date for ISO timestamp in the future', () => {
+    const futureTimestamp = new Date(Date.now() + 60000).toISOString(); // 1 minute from now
+
+    const nextRun = new Cron(futureTimestamp).nextRun();
+
+    expect(nextRun instanceof Date).toBe(true);
+  });
+
+  it('croner correctly distinguishes between past and future timestamps', () => {
+    const pastTimestamp = new Date(Date.now() - 1000).toISOString();
+    const futureTimestamp = new Date(Date.now() + 86400000).toISOString(); // 1 day from now
+
+    const pastNextRun = new Cron(pastTimestamp).nextRun();
+    const futureNextRun = new Cron(futureTimestamp).nextRun();
+
+    expect(pastNextRun).toBe(null);
+    expect(futureNextRun instanceof Date).toBe(true);
+  });
+});
+
+// ============================================================================
+// AC4.1 & AC4.3 (onDue branching):
+// Verify both event builders produce correct sources and one-shot detection works
+// (updated for async trace-enriched API)
+// ============================================================================
+
+describe('composition root wiring: onDue branching (AC4.1, AC4.3)', () => {
+  it('buildReviewEvent produces source "review-job" for review tasks', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'review-task-123',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review' },
+    };
+
+    const event = await buildReviewEvent(mockTask, traceStore, 'test-owner');
+
+    expect(event.source).toBe('review-job');
+  });
+
+  it('buildAgentScheduledEvent produces source "agent-scheduled" for agent tasks (AC4.1)', async () => {
+    const traceStore = createMockTraceStore([]);
+    const mockTask = {
+      id: 'agent-task-123',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'do stuff' },
+    };
+
+    const event = await buildAgentScheduledEvent(mockTask, traceStore, 'test-owner');
+
+    expect(event.source).toBe('agent-scheduled');
+  });
+
+  it('both builders coexist and produce distinct event sources', async () => {
+    const traceStore = createMockTraceStore([]);
+    const reviewTask = {
+      id: 'review-1',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review' },
+    };
+
+    const agentTask = {
+      id: 'agent-1',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'test prompt' },
+    };
+
+    const reviewEvent = await buildReviewEvent(reviewTask, traceStore, 'test-owner');
+    const agentEvent = await buildAgentScheduledEvent(agentTask, traceStore, 'test-owner');
+
+    expect(reviewEvent.source).toBe('review-job');
+    expect(agentEvent.source).toBe('agent-scheduled');
+    expect(reviewEvent.source).not.toBe(agentEvent.source);
+  });
+
+  it('event branching preserves metadata distinctly for each event type', async () => {
+    const traceStore = createMockTraceStore([]);
+    const reviewTask = {
+      id: 'review-1',
+      name: 'review-predictions',
+      schedule: '0 * * * *',
+      payload: { type: 'prediction-review', extraField: 'review-value' },
+    };
+
+    const agentTask = {
+      id: 'agent-1',
+      name: 'scheduled-prompt',
+      schedule: '0 * * * *',
+      payload: { type: 'agent-scheduled', prompt: 'agent prompt', extraField: 'agent-value' },
+    };
+
+    const reviewEvent = await buildReviewEvent(reviewTask, traceStore, 'test-owner');
+    const agentEvent = await buildAgentScheduledEvent(agentTask, traceStore, 'test-owner');
+
+    expect(reviewEvent.metadata['type']).toBe('prediction-review');
+    expect(reviewEvent.metadata['extraField']).toBe('review-value');
+
+    expect(agentEvent.metadata['type']).toBe('agent-scheduled');
+    expect(agentEvent.metadata['extraField']).toBe('agent-value');
   });
 });
 

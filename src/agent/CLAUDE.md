@@ -6,7 +6,7 @@ Last verified: 2026-03-02
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency, injects relevant skills into the system prompt per turn via optional `SkillRegistry` dependency, and optionally records operation traces for every tool dispatch via `TraceRecorder`.
 
 ## Contracts
-- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `ContextProvider` type, `createAgent(deps, conversationId?)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `shouldCompress`)
+- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `ContextProvider` type, `createAgent(deps, conversationId?)`, `createSchedulingContextProvider(scheduleDids, watchedDids)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `shouldCompress`)
 - **Guarantees**:
   - Each message round persists user input, assistant response (including `reasoning_content` for thinking-mode models), and tool results to the `messages` table
   - Tool dispatch loop runs up to `max_tool_rounds` before stopping
@@ -40,3 +40,4 @@ Implements the core agent loop: receives user messages, builds context from memo
 - `types.ts` -- `Agent`, `AgentConfig` (includes `max_skills_per_turn`, `skill_threshold`), `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `owner`, `contextProviders`, `skills`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
 - `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression, skill injection, trace recording)
 - `context.ts` -- System prompt building, message conversion, token estimation, context provider integration
+- `scheduling-context.ts` -- Scheduling context provider (DID authority injection into system prompt)

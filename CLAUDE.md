@@ -27,7 +27,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
-- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web)
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
@@ -35,8 +35,9 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/agent/` -- Agent loop, context building, compression, context providers, per-turn skill injection, per-turn trace recording
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
-- `src/scheduler/` -- PostgreSQL-backed cron scheduler (implements Scheduler extension interface)
+- `src/scheduler/` -- PostgreSQL-backed cron scheduler with owner isolation (agent-owned vs system-owned tasks)
 - `src/scheduled-context.ts` -- Pure function: formats operation traces into compact `[Recent Activity]` summaries for scheduled task events
+- `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
 - `src/index.ts` -- Entry point, composition root, REPL
@@ -47,7 +48,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - **Barrel exports**: Each module has `index.ts` exporting public API
 - **Factory functions over classes**: `createFoo()` returns interface, no `new`
 - **Path aliases**: `@/*` maps to `./src/*` (tsconfig paths)
-- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY` override config.toml values
+- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` override config.toml values
 
 ## Boundaries
 - Safe to edit: `src/`

@@ -15,7 +15,7 @@ export type ScheduledTask = {
 };
 
 export interface Scheduler {
-  schedule(task: ScheduledTask): Promise<void>;
+  schedule(task: ScheduledTask): Promise<{ id: string; nextRunAt: Date }>;
   cancel(taskId: string): Promise<void>;
   onDue(handler: (task: ScheduledTask) => void): void;
 }

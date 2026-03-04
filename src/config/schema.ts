@@ -48,6 +48,7 @@ const BlueskyConfigSchema = z
     app_password: z.string().optional(),
     did: z.string().optional(),
     watched_dids: z.array(z.string()).default([]),
+    schedule_dids: z.array(z.string()).default([]),
     jetstream_url: z.string().url().default("wss://jetstream2.us-east.bsky.network/subscribe"),
   })
   .superRefine((data, ctx) => {
@@ -118,6 +119,13 @@ const SkillConfigSchema = z.object({
   similarity_threshold: z.number().min(0).max(1).default(0.3),
 });
 
+const EmailConfigSchema = z.object({
+  mailgun_api_key: z.string(),
+  mailgun_domain: z.string(),
+  from_address: z.string().email(),
+  allowed_recipients: z.array(z.string().email()),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -128,6 +136,7 @@ const AppConfigSchema = z.object({
   summarization: SummarizationConfigSchema.optional(),
   web: WebConfigSchema.optional(),
   skills: SkillConfigSchema.optional(),
+  email: EmailConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -140,5 +149,6 @@ export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
 export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
 export type WebConfig = z.infer<typeof WebConfigSchema>;
 export type SkillConfig = z.infer<typeof SkillConfigSchema>;
+export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema };

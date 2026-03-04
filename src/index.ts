@@ -149,6 +149,54 @@ export async function buildReviewEvent(
 }
 
 /**
+ * Build an agent-scheduled event from a scheduled task with trace enrichment.
+ * Queries recent operation traces and includes them in the event content.
+ * For tasks scheduled by the agent itself (not system review tasks).
+ */
+export async function buildAgentScheduledEvent(
+  task: {
+    id: string;
+    name: string;
+    schedule: string;
+    payload?: Record<string, unknown>;
+  },
+  traceStore: TraceStore,
+  owner: string,
+): Promise<{
+  source: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  timestamp: Date;
+}> {
+  const traces = await traceStore.queryTraces({
+    owner,
+    lookbackSince: new Date(Date.now() - 2 * 3600_000),
+    limit: 20,
+  });
+  const activitySection = formatTraceSummary(traces);
+
+  const prompt = (task.payload?.prompt as string) || 'Execute this scheduled task.';
+
+  return {
+    source: 'agent-scheduled',
+    content: [
+      `Scheduled task "${task.name}" has fired.`,
+      '',
+      prompt,
+      '',
+      activitySection,
+    ].join('\n'),
+    metadata: {
+      taskId: task.id,
+      taskName: task.name,
+      schedule: task.schedule,
+      ...task.payload,
+    },
+    timestamp: new Date(),
+  };
+}
+
+/**
  * Create a graceful shutdown handler that closes readline and disconnects persistence.
  * Extracted for testability.
  */

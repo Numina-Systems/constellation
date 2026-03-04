@@ -19,6 +19,7 @@ export function shouldAcceptEvent(
   event: CommitEvent,
   watchedDids: Set<string>,
   agentDid: string,
+  scheduleDids?: Set<string>,
 ): boolean {
   const commit = event.commit;
 
@@ -31,6 +32,11 @@ export function shouldAcceptEvent(
 
   // Accept if author DID is in watched_dids set
   if (watchedDids.has(did)) {
+    return true;
+  }
+
+  // Accept if author DID is in schedule_dids set
+  if (scheduleDids?.has(did)) {
     return true;
   }
 
@@ -56,6 +62,7 @@ export function createBlueskySource(
   let messageHandler: ((message: IncomingMessage) => void) | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   const watchedDids = new Set(config.watched_dids);
+  const scheduleDids = new Set(config.schedule_dids);
 
   async function refreshSession(): Promise<void> {
     try {
@@ -107,7 +114,7 @@ export function createBlueskySource(
             }
 
             const commitEvent = event as CommitEvent;
-            if (!shouldAcceptEvent(commitEvent, watchedDids, agentDid)) {
+            if (!shouldAcceptEvent(commitEvent, watchedDids, agentDid, scheduleDids)) {
               continue;
             }
 

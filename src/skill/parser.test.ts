@@ -1,6 +1,8 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseSkillFile } from './parser.ts';
 
 describe('parseSkillFile', () => {
@@ -475,6 +477,33 @@ Body`;
 
       expect(result.success).toBe(false);
       if (result.success) throw new Error('Expected failure');
+    });
+  });
+
+  describe('agent-scheduling.AC7.1: Scheduling skill loads via parser', () => {
+    it('should parse skills/scheduling/SKILL.md successfully', async () => {
+      const skillPath = join(process.cwd(), 'skills', 'scheduling', 'SKILL.md');
+      const content = readFileSync(skillPath, 'utf-8');
+
+      const result = parseSkillFile(content);
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error('Expected success');
+
+      expect(result.metadata.name).toBe('scheduling');
+      expect(result.metadata.description).toBeDefined();
+      expect(result.metadata.description).not.toBe('');
+      expect(result.metadata.tags).toBeDefined();
+
+      const tags = result.metadata.tags;
+      if (!tags) throw new Error('tags should be defined');
+      expect(tags).toContain('scheduling');
+      expect(tags).toContain('cron');
+      expect(tags).toContain('automation');
+      expect(tags).toContain('bluesky');
+
+      expect(result.body).toBeDefined();
+      expect(result.body).not.toBe('');
     });
   });
 });

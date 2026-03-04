@@ -12,13 +12,13 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 
 ## Dependencies
 - **Uses**: `src/tool/types.ts` (ToolProvider references ToolDefinition/ToolResult)
-- **Used by**: `src/index.ts` (composition root imports Bluesky source), `src/scheduler/` (implements Scheduler interface)
+- **Used by**: `src/index.ts` (composition root imports Bluesky source), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port)
 - **Boundary**: Extension interfaces live here. Implementations live in `src/extensions/<name>/`.
 
 ## Extension Points
 - **DataSource**: Connect external message streams (Discord, Bluesky, webhooks). Produces `IncomingMessage`, optionally sends `OutgoingMessage`.
 - **Coordinator**: Multi-agent routing with patterns: supervisor, round_robin, pipeline, voting.
-- **Scheduler**: Cron or one-shot deferred tasks for background work ("sleep time compute").
+- **Scheduler**: Cron or one-shot deferred tasks for background work ("sleep time compute"). `schedule()` returns `{ id, nextRunAt }` for caller confirmation.
 - **ToolProvider**: Dynamic tool discovery from MCP servers, plugins, or remote registries.
 
 ## Implementations

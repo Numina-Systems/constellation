@@ -9,7 +9,7 @@ First concrete `DataSource` implementation. Connects the agent to Bluesky via th
 - **Exposes**: `BlueskyDataSource` (extends `DataSource` with `getAccessToken()`, `getRefreshToken()`, `startSessionRefresh()`, `stopSessionRefresh()`), `BlueskyPostMetadata`, `EventQueue`, `createBlueskySource(config, agent)`, `createEventQueue(capacity)`, `seedBlueskyTemplates(store, embedding)`
 - **Guarantees**:
   - Jetstream subscription filters to `app.bsky.feed.post` collection only
-  - Events accepted only from `watched_dids` or replies to the agent's own posts
+  - Events accepted from `watched_dids`, `schedule_dids`, or replies to the agent's own posts
   - Event queue is bounded (drops oldest on overflow)
   - Template seeding is idempotent (checks for both `bluesky:post` AND `bluesky:capabilities` blocks; partial seeding is repaired)
   - Jetstream failure does not block the REPL (caught at composition root)

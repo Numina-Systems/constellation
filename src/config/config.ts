@@ -51,8 +51,19 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["web"] = webObj;
   }
 
+  if (parsed["email"] && (process.env["MAILGUN_API_KEY"] || process.env["MAILGUN_DOMAIN"])) {
+    const emailObj = parsed["email"] as Record<string, unknown>;
+    if (process.env["MAILGUN_API_KEY"]) {
+      emailObj["mailgun_api_key"] = process.env["MAILGUN_API_KEY"];
+    }
+    if (process.env["MAILGUN_DOMAIN"]) {
+      emailObj["mailgun_domain"] = process.env["MAILGUN_DOMAIN"];
+    }
+    envOverrides["email"] = emailObj;
+  }
+
   const merged = { ...parsed, ...envOverrides };
   return AppConfigSchema.parse(merged);
 }
 
-export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig } from "./schema.ts";
+export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig, EmailConfig } from "./schema.ts";

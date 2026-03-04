@@ -36,6 +36,9 @@ import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { createPostgresScheduler } from '@/scheduler';
+import { createMailgunSender, createEmailTools } from '@/email';
+import { createSchedulingTools } from '@/tool/builtin/scheduling';
+import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -123,6 +126,37 @@ export function buildReviewEvent(task: {
       '',
       'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
     ].join('\n'),
+    metadata: {
+      taskId: task.id,
+      taskName: task.name,
+      schedule: task.schedule,
+      ...task.payload,
+    },
+    timestamp: new Date(),
+  };
+}
+
+/**
+ * Build an agent-scheduled event from a scheduled task.
+ * Extracted for testability - allows tests to verify the exact event shape
+ * that the scheduler's onDue handler produces.
+ */
+export function buildAgentScheduledEvent(task: {
+  id: string;
+  name: string;
+  schedule: string;
+  payload?: Record<string, unknown>;
+}): {
+  source: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  timestamp: Date;
+} {
+  const prompt = (task.payload?.['prompt'] as string | undefined) ?? '';
+
+  return {
+    source: 'self-scheduled',
+    content: prompt,
     metadata: {
       taskId: task.id,
       taskName: task.name,
@@ -439,6 +473,12 @@ async function main(): Promise<void> {
   // Create prediction context provider
   const predictionContextProvider = createPredictionContextProvider(predictionStore, AGENT_OWNER);
 
+  // Create scheduling context provider
+  const schedulingContextProvider = createSchedulingContextProvider(
+    config.bluesky.schedule_dids,
+    config.bluesky.watched_dids,
+  );
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -455,6 +495,22 @@ async function main(): Promise<void> {
       registry.register(tool);
     }
     console.log(`web tools registered (providers: ${searchChain.providers.join(', ')})`);
+  }
+
+  if (config.email) {
+    const sender = createMailgunSender({
+      apiKey: config.email.mailgun_api_key,
+      domain: config.email.mailgun_domain,
+      fromAddress: config.email.from_address,
+    });
+    const emailTools = createEmailTools({
+      sender,
+      allowedRecipients: config.email.allowed_recipients,
+    });
+    for (const tool of emailTools) {
+      registry.register(tool);
+    }
+    console.log('email tools registered');
   }
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
@@ -591,7 +647,7 @@ async function main(): Promise<void> {
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [...contextProviders, predictionContextProvider],
+    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
   }, mainConversationId);
 
@@ -599,6 +655,8 @@ async function main(): Promise<void> {
       // Create dedicated Bluesky agent with deterministic conversation ID
       // Zod validates that did is present when enabled, but TypeScript doesn't know it
       const blueskyConversationId = `bluesky-${config.bluesky.did!}`;
+
+      const blueskyContextProviders = [...contextProviders, schedulingContextProvider];
 
       const blueskyAgent = createAgent({
         model,
@@ -617,7 +675,7 @@ async function main(): Promise<void> {
         getExecutionContext,
         traceRecorder,
         owner: AGENT_OWNER,
-        contextProviders: contextProviders.length > 0 ? contextProviders : undefined,
+        contextProviders: blueskyContextProviders.length > 0 ? blueskyContextProviders : undefined,
         skills: skillRegistry,
       }, blueskyConversationId);
 
@@ -655,7 +713,18 @@ async function main(): Promise<void> {
   }
 
   // Set up scheduler for periodic tasks
-  const scheduler = createPostgresScheduler(persistence, AGENT_OWNER);
+  const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER);
+  const systemScheduler = createPostgresScheduler(persistence, 'system');
+
+  // Register scheduling tools
+  const schedulingTools = createSchedulingTools({
+    scheduler: agentScheduler,
+    owner: AGENT_OWNER,
+    persistence,
+  });
+  for (const tool of schedulingTools) {
+    registry.register(tool);
+  }
 
   // Create event queue and processing function for scheduler events
   const schedulerEventQueue = createEventQueue(10);
@@ -672,7 +741,7 @@ async function main(): Promise<void> {
   }
 
   // Register onDue handler for scheduled tasks
-  scheduler.onDue((task) => {
+  systemScheduler.onDue((task) => {
     // AC3.4: Expire stale predictions older than 24h before sending review event
     (async () => {
       try {
@@ -696,14 +765,29 @@ async function main(): Promise<void> {
     })();
   });
 
+  // Register onDue handler for agent-scheduled tasks
+  agentScheduler.onDue((task) => {
+    (async () => {
+      try {
+        const event = buildAgentScheduledEvent(task);
+        schedulerEventQueue.push(event);
+        processSchedulerEvent().catch((error) => {
+          console.error('agent scheduler event processing error:', error);
+        });
+      } catch (error) {
+        console.error('agent scheduler onDue error:', error);
+      }
+    })();
+  });
+
   // Register hourly review job if not already scheduled
   const existingTasks = await persistence.query<{ id: string }>(
     `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-    [AGENT_OWNER, 'review-predictions'],
+    ['system', 'review-predictions'],
   );
 
   if (existingTasks.length === 0) {
-    await scheduler.schedule({
+    await systemScheduler.schedule({
       id: crypto.randomUUID(),
       name: 'review-predictions',
       schedule: '0 * * * *', // Every hour at minute 0
@@ -714,9 +798,10 @@ async function main(): Promise<void> {
     console.log('review job already scheduled');
   }
 
-  // Start the scheduler
-  scheduler.start();
-  console.log('scheduler started');
+  // Start both schedulers
+  agentScheduler.start();
+  systemScheduler.start();
+  console.log('schedulers started (agent + system)');
 
   // Set up readline interface for REPL
   const rl = readline.createInterface({
@@ -732,7 +817,13 @@ async function main(): Promise<void> {
   });
 
   // Set up graceful shutdown
-  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, scheduler);
+  const schedulerWrapper = {
+    stop: () => {
+      agentScheduler.stop();
+      systemScheduler.stop();
+    },
+  };
+  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, schedulerWrapper);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

@@ -75,7 +75,7 @@ export function createPostgresScheduler(
   }
 
   const scheduler: PostgresScheduler = {
-    async schedule(task: ScheduledTask): Promise<void> {
+    async schedule(task: ScheduledTask): Promise<{ id: string; nextRunAt: Date }> {
       const id = randomUUID();
       let nextRun: Date | null;
 
@@ -97,6 +97,8 @@ export function createPostgresScheduler(
          RETURNING *`,
         [id, owner, task.name, task.schedule, task.payload, nextRun],
       );
+
+      return { id, nextRunAt: nextRun };
     },
 
     async cancel(taskId: string): Promise<void> {

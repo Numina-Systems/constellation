@@ -49,6 +49,8 @@ describe("loadConfig env var overrides", () => {
     delete process.env["BLUESKY_APP_PASSWORD"];
     delete process.env["ANTHROPIC_API_KEY"];
     delete process.env["OPENAI_COMPAT_API_KEY"];
+    delete process.env["MAILGUN_API_KEY"];
+    delete process.env["MAILGUN_DOMAIN"];
     try {
       unlinkSync(tempPath);
     } catch {
@@ -213,6 +215,83 @@ did = "did:plc:example"
 
       expect(config.bluesky.handle).toBe("toml-handle.bsky.social");
       expect(config.bluesky.app_password).toBe("toml-password");
+    });
+  });
+
+  describe("agent-email.AC3.3: MAILGUN_API_KEY and MAILGUN_DOMAIN env vars override TOML values", () => {
+    it("should override mailgun_api_key when MAILGUN_API_KEY env var is set", () => {
+      const tomlContent = `
+${baseTomlContent}
+[email]
+mailgun_api_key = "toml-key"
+mailgun_domain = "example.com"
+from_address = "noreply@example.com"
+allowed_recipients = ["user@example.com"]
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      process.env["MAILGUN_API_KEY"] = "env-key";
+
+      const config = loadConfig(tempPath);
+
+      expect(config.email?.mailgun_api_key).toBe("env-key");
+      expect(config.email?.mailgun_domain).toBe("example.com");
+    });
+
+    it("should override mailgun_domain when MAILGUN_DOMAIN env var is set", () => {
+      const tomlContent = `
+${baseTomlContent}
+[email]
+mailgun_api_key = "test-key"
+mailgun_domain = "toml.domain.com"
+from_address = "noreply@toml.domain.com"
+allowed_recipients = ["user@example.com"]
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      process.env["MAILGUN_DOMAIN"] = "env.domain.com";
+
+      const config = loadConfig(tempPath);
+
+      expect(config.email?.mailgun_domain).toBe("env.domain.com");
+      expect(config.email?.mailgun_api_key).toBe("test-key");
+    });
+
+    it("should preserve TOML values when no env vars are set", () => {
+      const tomlContent = `
+${baseTomlContent}
+[email]
+mailgun_api_key = "toml-key"
+mailgun_domain = "toml.domain.com"
+from_address = "noreply@toml.domain.com"
+allowed_recipients = ["user@example.com"]
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.email?.mailgun_api_key).toBe("toml-key");
+      expect(config.email?.mailgun_domain).toBe("toml.domain.com");
+    });
+
+    it("should override both mailgun_api_key and mailgun_domain when both env vars are set", () => {
+      const tomlContent = `
+${baseTomlContent}
+[email]
+mailgun_api_key = "toml-key"
+mailgun_domain = "toml.domain.com"
+from_address = "noreply@toml.domain.com"
+allowed_recipients = ["user@example.com"]
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      process.env["MAILGUN_API_KEY"] = "env-key";
+      process.env["MAILGUN_DOMAIN"] = "env.domain.com";
+
+      const config = loadConfig(tempPath);
+
+      expect(config.email?.mailgun_api_key).toBe("env-key");
+      expect(config.email?.mailgun_domain).toBe("env.domain.com");
     });
   });
 });

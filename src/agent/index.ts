@@ -12,3 +12,4 @@ export {
   estimateTokens,
   shouldCompress,
 } from './context.ts';
+export { createSchedulingContextProvider } from './scheduling-context.ts';

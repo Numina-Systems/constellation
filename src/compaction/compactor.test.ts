@@ -1382,6 +1382,84 @@ describe('Compaction pipeline with mocked dependencies', () => {
     expect(blocks2.length).toBeGreaterThan(0);
     expect(maxDepth2).toBeGreaterThanOrEqual(maxDepth1);
   });
+
+  it('GH-24: clip-archive created_at sorts before kept messages', async () => {
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(50), i * 100),
+    );
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summary 1']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 20,
+      keepRecent: 3,
+      maxSummaryTokens: 500,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // The clip-archive should be the first message in the result
+    const clipArchive = result.history[0];
+    expect(clipArchive?.role).toBe('system');
+    expect(clipArchive?.content).toContain('[Context Summary');
+
+    // Its created_at should be before the first kept message
+    const firstKept = result.history[1];
+    if (clipArchive && firstKept) {
+      expect(clipArchive.created_at.getTime()).toBeLessThan(firstKept.created_at.getTime());
+    }
+  });
+
+  it('GH-24: prior clip-archive is deleted from DB during recompaction', async () => {
+    const messages = [
+      createMessage('prior-summary', 'system', '[Context Summary — 50 messages compressed across 1 compaction cycle]', 0),
+      createMessage('1', 'user', 'msg1', 100),
+      createMessage('2', 'assistant', 'msg2', 200),
+      createMessage('3', 'user', 'msg3', 300),
+      createMessage('4', 'assistant', 'msg4', 400),
+      createMessage('5', 'user', 'msg5', 500),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summary']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 20,
+      keepRecent: 2,
+      maxSummaryTokens: 500,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    // The prior summary ID should be in the deleted set
+    const persistence = mockPersistence as unknown as { _deletedIds: string[] };
+    expect(persistence._deletedIds).toContain('prior-summary');
+  });
 });
 
 /**

@@ -648,8 +648,11 @@ export function createCompactor(
       // 8. Rebuild batch list after potential re-summarization
       const finalBatches = await getCompactionBatches(memory, conversationId);
 
-      // 9. Delete old messages from database
+      // 9. Delete old messages from database (including prior clip-archive if present)
       const idsToDelete = toCompress.map((m) => m.id);
+      if (priorSummary) {
+        idsToDelete.push(priorSummary.id);
+      }
       await persistence.query(
         'DELETE FROM messages WHERE id = ANY($1)',
         [idsToDelete],
@@ -662,12 +665,15 @@ export function createCompactor(
         toCompress.length,
       );
 
-      // 11. Insert clip-archive as a system message
+      // 11. Insert clip-archive as a system message.
+      // Use a timestamp just before the first kept message so the clip-archive
+      // sorts before kept messages (and any in-flight tool call messages) on reload.
       const clipArchiveId = randomUUID();
-      const now = new Date();
+      const firstKeptTime = toKeep[0]?.created_at ?? new Date();
+      const clipArchiveTime = new Date(firstKeptTime.getTime() - 1);
       await persistence.query(
         'INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [clipArchiveId, conversationId, 'system', clipArchiveContent, now],
+        [clipArchiveId, conversationId, 'system', clipArchiveContent, clipArchiveTime],
       );
 
       // 12. Build the clip-archive ConversationMessage object
@@ -676,7 +682,7 @@ export function createCompactor(
         conversation_id: conversationId,
         role: 'system',
         content: clipArchiveContent,
-        created_at: now,
+        created_at: clipArchiveTime,
       };
 
       // 13. Calculate token estimates

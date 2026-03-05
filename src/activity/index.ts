@@ -13,3 +13,5 @@ export type { ScheduleConfig } from './schedule.ts';
 export { createActivityContextProvider } from './context-provider.ts';
 export { createActivityDispatch } from './dispatch.ts';
 export type { DispatchOptions, ScheduledTaskLike } from './dispatch.ts';
+export { buildCompactionEvent, buildPredictionReviewEvent, buildPatternAnalysisEvent } from './sleep-events.ts';
+export type { SleepTaskEvent } from './sleep-events.ts';

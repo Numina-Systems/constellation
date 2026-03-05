@@ -1,5 +1,6 @@
 // pattern: Functional Core
 import { z } from "zod";
+import { Cron } from "croner";
 
 const AgentConfigSchema = z.object({
   max_tool_rounds: z.number().int().positive().default(20),
@@ -126,6 +127,59 @@ const EmailConfigSchema = z.object({
   allowed_recipients: z.array(z.string().email()),
 });
 
+const ActivityConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    timezone: z.string().optional(),
+    sleep_schedule: z.string().optional(),
+    wake_schedule: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.enabled) {
+      if (!data.timezone) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "timezone is required when activity is enabled",
+          path: ["timezone"],
+        });
+      }
+      if (!data.sleep_schedule) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "sleep_schedule is required when activity is enabled",
+          path: ["sleep_schedule"],
+        });
+      } else {
+        try {
+          new Cron(data.sleep_schedule);
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `invalid cron expression for sleep_schedule: ${data.sleep_schedule}`,
+            path: ["sleep_schedule"],
+          });
+        }
+      }
+      if (!data.wake_schedule) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "wake_schedule is required when activity is enabled",
+          path: ["wake_schedule"],
+        });
+      } else {
+        try {
+          new Cron(data.wake_schedule);
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `invalid cron expression for wake_schedule: ${data.wake_schedule}`,
+            path: ["wake_schedule"],
+          });
+        }
+      }
+    }
+  });
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -137,6 +191,7 @@ const AppConfigSchema = z.object({
   web: WebConfigSchema.optional(),
   skills: SkillConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
+  activity: ActivityConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -150,5 +205,6 @@ export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
 export type WebConfig = z.infer<typeof WebConfigSchema>;
 export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
+export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema };

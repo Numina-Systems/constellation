@@ -36,6 +36,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/scheduler/` -- PostgreSQL-backed cron scheduler with owner isolation (agent-owned vs system-owned tasks)
+- `src/activity/` -- Circadian sleep/wake cycle with event queuing, sleep tasks, and activity-aware dispatch
 - `src/scheduled-context.ts` -- Pure function: formats operation traces into compact `[Recent Activity]` summaries for scheduled task events
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations

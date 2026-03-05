@@ -498,3 +498,160 @@ describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
     });
   });
 });
+
+describe("ActivityConfigSchema", () => {
+  describe("sleep-cycle.AC8.1: Absent [activity] config results in no activity manager, no context injection", () => {
+    it("should parse config with no [activity] section and activity is undefined", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.activity).toBeUndefined();
+    });
+  });
+
+  describe("sleep-cycle.AC8.2: enabled:false has same effect as absent config", () => {
+    it("should parse config with activity enabled:false", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: { enabled: false },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.activity).toBeDefined();
+      expect(result.activity!.enabled).toBe(false);
+    });
+  });
+
+  describe("sleep-cycle.AC1.5: Invalid cron expression in config rejected at startup with clear error", () => {
+    it("should reject config with enabled:true but no timezone", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: {
+          enabled: true,
+          sleep_schedule: "0 22 * * *",
+          wake_schedule: "0 6 * * *",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject config with enabled:true but no sleep_schedule", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: {
+          enabled: true,
+          timezone: "America/Toronto",
+          wake_schedule: "0 6 * * *",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject config with enabled:true but no wake_schedule", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: {
+          enabled: true,
+          timezone: "America/Toronto",
+          sleep_schedule: "0 22 * * *",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should successfully parse config with all required fields when enabled:true", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: {
+          enabled: true,
+          timezone: "America/Toronto",
+          sleep_schedule: "0 22 * * *",
+          wake_schedule: "0 6 * * *",
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.activity).toBeDefined();
+      expect(result.activity!.enabled).toBe(true);
+      expect(result.activity!.timezone).toBe("America/Toronto");
+      expect(result.activity!.sleep_schedule).toBe("0 22 * * *");
+      expect(result.activity!.wake_schedule).toBe("0 6 * * *");
+    });
+
+    it("should reject config with invalid cron expression for sleep_schedule", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: {
+          enabled: true,
+          timezone: "America/Toronto",
+          sleep_schedule: "not a cron",
+          wake_schedule: "0 6 * * *",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow(/invalid cron expression for sleep_schedule/);
+    });
+
+    it("should reject config with invalid cron expression for wake_schedule", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        activity: {
+          enabled: true,
+          timezone: "America/Toronto",
+          sleep_schedule: "0 22 * * *",
+          wake_schedule: "garbage",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow(/invalid cron expression for wake_schedule/);
+    });
+  });
+});

@@ -12,7 +12,7 @@ Loads and validates application configuration from TOML with environment variabl
 
 ## Dependencies
 - **Uses**: `@iarna/toml`, `zod`, `node:fs`, `croner` (for cron validation)
-- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`, `src/extensions/bluesky/` (BlueskyConfig), `src/web/` (WebConfig), `src/skill/` (SkillConfig), `src/email/` (EmailConfig), `src/scheduler/` (ActivityConfig)
+- **Used by**: `src/index.ts` (composition root), `src/persistence/migrate.ts`, `src/extensions/bluesky/` (BlueskyConfig), `src/web/` (WebConfig), `src/skill/` (SkillConfig), `src/email/` (EmailConfig), `src/scheduler/`, `src/activity/` (ActivityConfig via ScheduleConfig)
 - **Boundary**: Config is read-only after load. No module should mutate config at runtime.
 
 ## Key Decisions

@@ -5,8 +5,13 @@ import {
   normalizeToolDefinitions,
   normalizeMessages,
   buildOllamaRequest,
+  normalizeResponse,
+  normalizeStopReason,
+  classifyHttpError,
+  isRetryableOllamaError,
 } from "./ollama.js";
 import type { Message, ToolDefinition, ModelRequest } from "./types.js";
+import { ModelError } from "./types.js";
 
 // ollama-adapter.AC3.1: Tool definition translation
 describe("normalizeToolDefinitions", () => {
@@ -556,5 +561,397 @@ describe("buildOllamaRequest", () => {
     expect(result.options!.num_predict).toBe(200);
     expect(result.options!.temperature).toBe(0.8);
     expect(result.tools).toHaveLength(1);
+  });
+});
+
+// ollama-adapter.AC3.2: Tool calls map to ToolUseBlock with UUIDs
+describe("normalizeResponse - tool calls", () => {
+  it("should map single tool call to ToolUseBlock with valid UUID", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Calling tool",
+        tool_calls: [
+          {
+            type: "function" as const,
+            function: {
+              name: "get_weather",
+              arguments: { location: "Boston" },
+            },
+          },
+        ],
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    expect(result.content).toHaveLength(2); // text + tool_use
+    const toolUseBlock = result.content.find((b) => b.type === "tool_use");
+    expect(toolUseBlock).toBeDefined();
+    expect(toolUseBlock?.type).toBe("tool_use");
+    if (toolUseBlock?.type === "tool_use") {
+      expect(toolUseBlock.id).toBeDefined();
+      // Check UUID format (v4)
+      const uuidPattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(uuidPattern.test(toolUseBlock.id)).toBe(true);
+      expect(toolUseBlock.name).toBe("get_weather");
+      expect(toolUseBlock.input).toEqual({ location: "Boston" });
+    }
+  });
+
+  it("should generate unique UUIDs for each tool call", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: [
+          {
+            type: "function" as const,
+            function: {
+              name: "tool1",
+              arguments: { arg1: "value1" },
+            },
+          },
+          {
+            type: "function" as const,
+            function: {
+              name: "tool2",
+              arguments: { arg2: "value2" },
+            },
+          },
+        ],
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    const toolUseBlocks = result.content.filter((b) => b.type === "tool_use");
+    expect(toolUseBlocks).toHaveLength(2);
+
+    const ids = toolUseBlocks
+      .filter((b) => b.type === "tool_use")
+      .map((b) => (b as any).id);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+});
+
+// ollama-adapter.AC3.3: Stop reason when tool_calls present
+describe("normalizeStopReason", () => {
+  it("should return tool_use when tool_calls present", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Calling tool",
+        tool_calls: [
+          {
+            type: "function" as const,
+            function: {
+              name: "get_weather",
+              arguments: {},
+            },
+          },
+        ],
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeStopReason(response);
+    expect(result).toBe("tool_use");
+  });
+
+  it("should return end_turn when no tool_calls and done_reason is stop", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Hello",
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeStopReason(response);
+    expect(result).toBe("end_turn");
+  });
+
+  it("should return max_tokens when done_reason is length", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Hello",
+      },
+      done: true,
+      done_reason: "length" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeStopReason(response);
+    expect(result).toBe("max_tokens");
+  });
+});
+
+// ollama-adapter.AC3.5: Multiple parallel tool calls
+describe("normalizeResponse - multiple tool calls", () => {
+  it("should map multiple tool calls to multiple ToolUseBlocks with unique UUIDs", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: [
+          {
+            type: "function" as const,
+            function: {
+              name: "search",
+              arguments: { query: "AI" },
+            },
+          },
+          {
+            type: "function" as const,
+            function: {
+              name: "get_weather",
+              arguments: { location: "NYC" },
+            },
+          },
+          {
+            type: "function" as const,
+            function: {
+              name: "calculate",
+              arguments: { expr: "2+2" },
+            },
+          },
+        ],
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    const toolUseBlocks = result.content.filter((b) => b.type === "tool_use");
+    expect(toolUseBlocks).toHaveLength(3);
+
+    expect((toolUseBlocks[0] as any).name).toBe("search");
+    expect((toolUseBlocks[1] as any).name).toBe("get_weather");
+    expect((toolUseBlocks[2] as any).name).toBe("calculate");
+
+    // Verify all IDs are unique
+    const ids = toolUseBlocks.map((b) => (b as any).id);
+    const uniqueIds = new Set(ids);
+    expect(uniqueIds.size).toBe(3);
+  });
+});
+
+// ollama-adapter.AC4.2: Thinking maps to reasoning_content
+describe("normalizeResponse - thinking", () => {
+  it("should map message.thinking to reasoning_content", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Answer",
+        thinking: "Let me think about this...",
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    expect(result.reasoning_content).toBe("Let me think about this...");
+  });
+
+  it("should set reasoning_content to null when thinking is absent", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Answer",
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    expect(result.reasoning_content).toBeNull();
+  });
+});
+
+// ollama-adapter.AC5.1: HTTP 429 → rate_limit, retryable
+describe("classifyHttpError - rate limiting", () => {
+  it("should classify 429 as rate_limit with retryable true", () => {
+    const error = classifyHttpError(429, "Too many requests");
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.code).toBe("rate_limit");
+    expect(error.retryable).toBe(true);
+  });
+});
+
+// ollama-adapter.AC5.2: HTTP 500/502 → api_error, retryable
+describe("classifyHttpError - server errors", () => {
+  it("should classify 500 as api_error with retryable true", () => {
+    const error = classifyHttpError(500, "Internal server error");
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.code).toBe("api_error");
+    expect(error.retryable).toBe(true);
+  });
+
+  it("should classify 502 as api_error with retryable true", () => {
+    const error = classifyHttpError(502, "Bad gateway");
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.code).toBe("api_error");
+    expect(error.retryable).toBe(true);
+  });
+});
+
+// ollama-adapter.AC5.3: HTTP 400/404 → api_error, not retryable
+describe("classifyHttpError - client errors", () => {
+  it("should classify 400 as api_error with retryable false", () => {
+    const error = classifyHttpError(400, "Bad request");
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.code).toBe("api_error");
+    expect(error.retryable).toBe(false);
+  });
+
+  it("should classify 404 as api_error with retryable false", () => {
+    const error = classifyHttpError(404, "Not found");
+
+    expect(error).toBeInstanceOf(ModelError);
+    expect(error.code).toBe("api_error");
+    expect(error.retryable).toBe(false);
+  });
+});
+
+// ollama-adapter.AC5.4: Network errors are retryable
+describe("isRetryableOllamaError", () => {
+  it("should return true for ECONNREFUSED error", () => {
+    const error = new Error("ECONNREFUSED");
+
+    expect(isRetryableOllamaError(error)).toBe(true);
+  });
+
+  it("should return true for fetch failed error", () => {
+    const error = new Error("fetch failed");
+
+    expect(isRetryableOllamaError(error)).toBe(true);
+  });
+
+  it("should return true for network error", () => {
+    const error = new Error("network error");
+
+    expect(isRetryableOllamaError(error)).toBe(true);
+  });
+
+  it("should return true for timeout error", () => {
+    const error = new Error("timeout");
+
+    expect(isRetryableOllamaError(error)).toBe(true);
+  });
+
+  it("should return false for non-network error", () => {
+    const error = new Error("some other error");
+
+    expect(isRetryableOllamaError(error)).toBe(false);
+  });
+
+  it("should return false for non-retryable ModelError", () => {
+    const error = new ModelError("api_error", false, "not retryable");
+
+    expect(isRetryableOllamaError(error)).toBe(false);
+  });
+
+  it("should return true for retryable ModelError", () => {
+    const error = new ModelError("rate_limit", true, "retryable");
+
+    expect(isRetryableOllamaError(error)).toBe(true);
+  });
+});
+
+// ollama-adapter.AC2.1: ModelResponse has non-empty content
+describe("normalizeResponse - content invariant", () => {
+  it("should always have non-empty content array", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Hello",
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    expect(result.content.length).toBeGreaterThan(0);
+  });
+
+  it("should add fallback text block when content is empty", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "",
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 10,
+      eval_count: 20,
+    };
+
+    const result = normalizeResponse(response);
+
+    expect(result.content.length).toBeGreaterThan(0);
+    expect(result.content[0]?.type).toBe("text");
+  });
+
+  it("should include usage stats from response", () => {
+    const response = {
+      model: "llama3.2",
+      message: {
+        role: "assistant" as const,
+        content: "Hello",
+      },
+      done: true,
+      done_reason: "stop" as const,
+      prompt_eval_count: 15,
+      eval_count: 25,
+    };
+
+    const result = normalizeResponse(response);
+
+    expect(result.usage.input_tokens).toBe(15);
+    expect(result.usage.output_tokens).toBe(25);
   });
 });

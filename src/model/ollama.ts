@@ -10,7 +10,11 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
   ToolDefinition,
+  ContentBlock,
+  StopReason,
 } from "./types.js";
+import { ModelError } from "./types.js";
+import { callWithRetry } from "./retry.js";
 
 // Internal types for Ollama API contract
 type OllamaMessage = {
@@ -46,6 +50,15 @@ type OllamaChatRequest = {
     num_predict?: number;
     temperature?: number;
   };
+};
+
+type OllamaChatResponse = {
+  model: string;
+  message: OllamaMessage & { thinking?: string };
+  done: boolean;
+  done_reason?: "stop" | "length";
+  prompt_eval_count?: number;
+  eval_count?: number;
 };
 
 // Task 1: Tool definition translation
@@ -166,17 +179,113 @@ export function buildOllamaRequest(
   return ollamaRequest;
 }
 
-export function createOllamaAdapter(config: ModelConfig): ModelProvider {
+export function normalizeStopReason(
+  response: OllamaChatResponse
+): StopReason {
+  if (response.message.tool_calls && response.message.tool_calls.length > 0) {
+    return "tool_use";
+  }
+  if (response.done_reason === "length") {
+    return "max_tokens";
+  }
+  return "end_turn";
+}
+
+export function normalizeResponse(response: OllamaChatResponse): ModelResponse {
+  const content: Array<ContentBlock> = [];
+
+  if (response.message.content) {
+    content.push({
+      type: "text",
+      text: response.message.content,
+    });
+  }
+
+  if (response.message.tool_calls) {
+    for (const toolCall of response.message.tool_calls) {
+      content.push({
+        type: "tool_use",
+        id: crypto.randomUUID(),
+        name: toolCall.function.name,
+        input: toolCall.function.arguments,
+      });
+    }
+  }
+
+  if (content.length === 0) {
+    content.push({ type: "text", text: "" });
+  }
+
   return {
-    async complete(_request: ModelRequest): Promise<ModelResponse> {
-      throw new Error(
-        `Ollama adapter not yet implemented (model: ${config.name})`
+    content,
+    stop_reason: normalizeStopReason(response),
+    usage: {
+      input_tokens: response.prompt_eval_count ?? 0,
+      output_tokens: response.eval_count ?? 0,
+    },
+    reasoning_content: response.message.thinking ?? null,
+  };
+}
+
+export function classifyHttpError(status: number, body: string): ModelError {
+  if (status === 429) {
+    return new ModelError("rate_limit", true, `rate limit exceeded: ${body}`);
+  }
+  if (status === 500 || status === 502) {
+    return new ModelError("api_error", true, `server error (${status}): ${body}`);
+  }
+  return new ModelError("api_error", false, `request failed (${status}): ${body}`);
+}
+
+export function isRetryableOllamaError(error: unknown): boolean {
+  if (error instanceof ModelError) {
+    return error.retryable;
+  }
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    if (
+      message.includes("econnrefused") ||
+      message.includes("fetch failed") ||
+      message.includes("network") ||
+      message.includes("timeout")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const DEFAULT_BASE_URL = "http://localhost:11434";
+
+export function createOllamaAdapter(config: ModelConfig): ModelProvider {
+  const baseUrl = config.base_url ?? DEFAULT_BASE_URL;
+
+  return {
+    async complete(request: ModelRequest): Promise<ModelResponse> {
+      return callWithRetry(
+        async () => {
+          const ollamaRequest = buildOllamaRequest(request, false);
+
+          const response = await fetch(`${baseUrl}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(ollamaRequest),
+          });
+
+          if (!response.ok) {
+            const body = await response.text();
+            throw classifyHttpError(response.status, body);
+          }
+
+          const data = (await response.json()) as OllamaChatResponse;
+          return normalizeResponse(data);
+        },
+        isRetryableOllamaError
       );
     },
-    stream(_request: ModelRequest) {
-      throw new Error(
-        `Ollama adapter not yet implemented (model: ${config.name})`
-      );
+
+    async *stream(_request: ModelRequest): AsyncIterable<any> {
+      throw new Error("Ollama streaming not yet implemented");
     },
   };
 }

@@ -1164,13 +1164,13 @@ describe("createOllamaAdapter", () => {
 
       const adapter = createOllamaAdapter({
         provider: "ollama",
-        name: "llama3.2:1b",
+        name: "qwen3.5:0.8b-bf16",
         base_url: endpoint,
       });
 
       const response = await adapter.complete({
         messages: [{ role: "user", content: "Say hello" }],
-        model: "llama3.2:1b",
+        model: "qwen3.5:0.8b-bf16",
         max_tokens: 50,
       });
 
@@ -1191,14 +1191,14 @@ describe("createOllamaAdapter", () => {
 
       const adapter = createOllamaAdapter({
         provider: "ollama",
-        name: "llama3.2:1b",
+        name: "qwen3.5:0.8b-bf16",
         base_url: endpoint,
       });
 
       const events: Array<StreamEvent> = [];
       for await (const event of adapter.stream({
         messages: [{ role: "user", content: "Say hi" }],
-        model: "llama3.2:1b",
+        model: "qwen3.5:0.8b-bf16",
         max_tokens: 20,
       })) {
         events.push(event);

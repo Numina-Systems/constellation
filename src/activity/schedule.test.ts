@@ -20,6 +20,7 @@ describe('schedule helpers', () => {
         timezone: 'UTC',
       };
       const mode = currentMode(config);
+      // Time-dependent: we can't predict the mode, so we verify the function doesn't throw and returns a valid mode
       expect(['active', 'sleeping']).toContain(mode);
     });
 
@@ -39,6 +40,7 @@ describe('schedule helpers', () => {
         timezone: 'UTC',
       };
       const mode = currentMode(config);
+      // Time-dependent: we can't predict the mode, so we verify the function doesn't throw and returns a valid mode
       expect(['active', 'sleeping']).toContain(mode);
     });
   });

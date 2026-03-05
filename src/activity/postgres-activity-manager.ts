@@ -130,6 +130,8 @@ export function createActivityManager(
     },
 
     async *drainQueue(): AsyncGenerator<QueuedEvent> {
+      // Single-process assumption: one daemon per owner. No concurrent drainQueue() calls.
+      // If concurrency is ever needed, use UPDATE ... RETURNING with FOR UPDATE SKIP LOCKED.
       while (true) {
         const rows = await persistence.query<EventQueueRow>(
           `SELECT * FROM event_queue

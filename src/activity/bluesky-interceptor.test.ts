@@ -14,10 +14,10 @@ import type { ActivityManager, NewQueuedEvent } from './types.ts';
 function createMockActivityManager(overrides: {
   isActive?: boolean;
 }): ActivityManager & {
-  recordedEvents: NewQueuedEvent[];
+  recordedEvents: Array<NewQueuedEvent>;
 } {
   const isActiveValue = overrides.isActive ?? true;
-  const recordedEvents: NewQueuedEvent[] = [];
+  const recordedEvents: Array<NewQueuedEvent> = [];
 
   return {
     recordedEvents,

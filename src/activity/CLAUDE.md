@@ -27,6 +27,7 @@ Implements a circadian sleep/wake cycle for the agent. During sleep, external ev
 - `activity_state` mode is always `active` or `sleeping` (CHECK constraint)
 - Sleep tasks (`sleep-compaction`, `sleep-prediction-review`, `sleep-pattern-analysis`) always execute, even during sleep
 - Transition tasks (`transition-to-sleep`, `transition-to-wake`) always execute, never queued
+- Single daemon process per owner -- drainQueue and dispatch assume no concurrent consumers
 
 ## Key Files
 - `types.ts` -- Domain types and `ActivityManager` port interface

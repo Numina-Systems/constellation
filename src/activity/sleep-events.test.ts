@@ -127,7 +127,7 @@ describe('sleep-events', () => {
 
   describe('flagged events formatting', () => {
     it('should format each flagged event with source and ISO timestamp', () => {
-      const events: QueuedEvent[] = [
+      const events: Array<QueuedEvent> = [
         {
           id: '1',
           source: 'source-a',

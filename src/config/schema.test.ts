@@ -417,4 +417,84 @@ describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
       expect(() => AppConfigSchema.parse(config)).toThrow();
     });
   });
+
+  describe("ollama-adapter.AC1: Ollama model provider config validation", () => {
+    it("ollama-adapter.AC1.1: Config with provider='ollama' in [model] section parses without error", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "ollama",
+          name: "llama3.1:8b",
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.model.provider).toBe("ollama");
+      expect(result.model.name).toBe("llama3.1:8b");
+    });
+
+    it("ollama-adapter.AC1.2: Config with provider='ollama' in [summarization] section parses without error", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "ollama",
+          name: "llama3.1:8b",
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.summarization).toBeDefined();
+      expect(result.summarization!.provider).toBe("ollama");
+      expect(result.summarization!.name).toBe("llama3.1:8b");
+    });
+
+    it("ollama-adapter.AC1.3: Config with provider='ollama' and no base_url parses (base_url is optional at schema level)", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "ollama",
+          name: "llama3.1:8b",
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.model.provider).toBe("ollama");
+      expect(result.model.base_url).toBeUndefined();
+    });
+
+    it("ollama-adapter.AC1.4: Config with provider='ollama' and no api_key parses without error", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "ollama",
+          name: "llama3.1:8b",
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.model.provider).toBe("ollama");
+      expect(result.model.api_key).toBeUndefined();
+    });
+  });
 });

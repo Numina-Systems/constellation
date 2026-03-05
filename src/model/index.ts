@@ -22,4 +22,5 @@ export type {
 export { ModelError, type ModelProvider } from "./types.js";
 export { createAnthropicAdapter } from "./anthropic.js";
 export { createOpenAICompatAdapter } from "./openai-compat.js";
+export { createOllamaAdapter } from "./ollama.js";
 export { createModelProvider } from "./factory.js";

@@ -191,6 +191,7 @@ export function createShutdownHandler(
   persistence: PersistenceProvider,
   blueskySource?: BlueskyDataSource | null,
   scheduler?: { stop(): void } | null,
+  activityManager?: ActivityManager | null,
 ): () => Promise<void> {
   return async (): Promise<void> => {
     console.log('\nShutting down...');
@@ -205,6 +206,10 @@ export function createShutdownHandler(
       } catch (error) {
         console.error('error disconnecting bluesky:', error);
       }
+    }
+    if (activityManager) {
+      const finalState = await activityManager.getState();
+      console.log(`[activity] shutdown state: ${finalState.mode}, queued: ${finalState.queuedEventCount}`);
     }
     await performShutdown(rl, persistence);
     process.exit(0);
@@ -1002,7 +1007,7 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, schedulerWrapper);
+  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, schedulerWrapper, activityManager);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

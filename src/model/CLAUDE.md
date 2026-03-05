@@ -1,6 +1,6 @@
 # Model
 
-Last verified: 2026-03-01
+Last verified: 2026-03-05
 
 ## Purpose
 Abstracts LLM providers behind a unified `ModelProvider` port so the agent loop is provider-agnostic. Normalizes Anthropic and OpenAI-compatible APIs into a shared message/content-block format.

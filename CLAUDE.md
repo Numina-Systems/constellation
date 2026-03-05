@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-03-03
+Last verified: 2026-03-05
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -9,7 +9,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - Language: TypeScript 5.7+ (strict mode, `noUncheckedIndexedAccess`)
 - Database: PostgreSQL 17 with pgvector extension
 - Sandbox: Deno (subprocess with IPC bridge)
-- LLM: Anthropic SDK, OpenAI-compatible endpoints
+- LLM: Anthropic SDK, OpenAI-compatible endpoints, Ollama (native `/api/chat`)
 - Embeddings: OpenAI, Ollama
 - Config: TOML with Zod validation
 - Testing: `bun test`
@@ -24,7 +24,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 ## Project Structure
 - `src/config/` -- TOML config loading, Zod schemas
 - `src/persistence/` -- PostgreSQL adapter, migrations
-- `src/model/` -- LLM provider port (Anthropic, OpenAI-compat)
+- `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
 - `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling)

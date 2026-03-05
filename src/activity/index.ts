@@ -1,5 +1,3 @@
-// pattern: Functional Core (barrel export)
-
 export type {
   ActivityManager,
   ActivityState,

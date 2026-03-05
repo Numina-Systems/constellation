@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'bun:test';
 import { createWakeHandler } from './wake.ts';
 import { queuedEventToExternal } from './event-converter.ts';
-import type { ActivityManager, QueuedEvent, ActivityState } from './types.ts';
+import type { ActivityManager, QueuedEvent, ActivityState, ActivityMode } from './types.ts';
 
 /**
  * Mock ActivityManager for testing wake handler.
@@ -81,9 +81,19 @@ describe('createWakeHandler', () => {
   describe('AC5.1: Wake transition processes before queued events', () => {
     it('should call transitionTo("active") before onEvent', async () => {
       const callOrder: Array<string> = [];
-      const manager = createMockActivityManager({
+
+      // Create manager with wrapped transitionTo to track ordering
+      const baseManager = createMockActivityManager({
         queuedEvents: [createTestEvent()],
       });
+
+      const manager: ActivityManager = {
+        ...baseManager,
+        async transitionTo(mode: ActivityMode) {
+          callOrder.push('transition');
+          return baseManager.transitionTo(mode);
+        },
+      };
 
       const handler = createWakeHandler({
         activityManager: manager,
@@ -95,10 +105,8 @@ describe('createWakeHandler', () => {
 
       await handler();
 
-      expect(manager.transitionCalls.length).toBe(1);
-      expect(manager.transitionCalls[0]).toBe('active');
-      // onEvent is called after transition in the async loop
-      expect(callOrder).toEqual(['onEvent']);
+      // Both operations recorded in shared sequence
+      expect(callOrder).toEqual(['transition', 'onEvent']);
     });
 
     it('should transition to active even with empty queue', async () => {
@@ -123,11 +131,13 @@ describe('createWakeHandler', () => {
   describe('AC5.2: Queued events drain in priority order', () => {
     it('should process high-priority events before normal', async () => {
       const processedIds: Array<string> = [];
+      // drainQueue() yields events in priority order: high-priority first, then normal, FIFO within each group
+      // This reflects what the SQL query (Phase 2) yields: ORDER BY priority DESC, enqueued_at ASC
       const events = [
-        createTestEvent({ id: 'normal-1', priority: 'normal' }),
         createTestEvent({ id: 'high-1', priority: 'high' }),
-        createTestEvent({ id: 'normal-2', priority: 'normal' }),
         createTestEvent({ id: 'high-2', priority: 'high' }),
+        createTestEvent({ id: 'normal-1', priority: 'normal' }),
+        createTestEvent({ id: 'normal-2', priority: 'normal' }),
       ];
 
       const manager = createMockActivityManager({ queuedEvents: events });
@@ -142,13 +152,12 @@ describe('createWakeHandler', () => {
 
       await handler();
 
-      // Note: drainQueue() returns events in yielded order, which is defined by SQL query
-      // The test verifies the handler preserves that order
+      // Handler processes events in the order drainQueue() yields them (priority-ordered)
       expect(processedIds).toEqual([
-        'normal-1',
         'high-1',
-        'normal-2',
         'high-2',
+        'normal-1',
+        'normal-2',
       ]);
     });
 

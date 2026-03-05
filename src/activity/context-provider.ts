@@ -6,7 +6,7 @@
  * queue statistics, and flagged high-priority events during sleep.
  */
 
-import type { ActivityManager, QueuedEvent } from './types.ts';
+import type { ActivityManager, ActivityState, QueuedEvent } from './types.ts';
 import type { ContextProvider } from '../agent/types.ts';
 
 export function createActivityContextProvider(
@@ -41,7 +41,7 @@ export function createActivityContextProvider(
 }
 
 function formatActivityContext(
-  state: Awaited<ReturnType<import('./types.ts').ActivityManager['getState']>>,
+  state: ActivityState,
   flaggedEvents: ReadonlyArray<QueuedEvent>,
 ): string | undefined {
   if (state.mode === 'active') {

@@ -328,38 +328,40 @@ describe('Activity context provider', () => {
     it('logs warning and preserves cache on getState error', async () => {
       let errorLogged = false;
       const originalWarn = console.warn;
-      console.warn = (msg: string) => {
-        if (msg.includes('activity context provider')) {
-          errorLogged = true;
-        }
-      };
+      try {
+        console.warn = (msg: string) => {
+          if (msg.includes('activity context provider')) {
+            errorLogged = true;
+          }
+        };
 
-      const manager: ActivityManager = {
-        async getState() {
-          throw new Error('Database connection failed');
-        },
-        async getFlaggedEvents() {
-          return [];
-        },
-        async isActive() {
-          return true;
-        },
-        async transitionTo() {},
-        async queueEvent() {},
-        async flagEvent() {},
-        async *drainQueue() {},
-      };
+        const manager: ActivityManager = {
+          async getState() {
+            throw new Error('Database connection failed');
+          },
+          async getFlaggedEvents() {
+            return [];
+          },
+          async isActive() {
+            return true;
+          },
+          async transitionTo() {},
+          async queueEvent() {},
+          async flagEvent() {},
+          async *drainQueue() {},
+        };
 
-      const provider = createActivityContextProvider(manager);
-      provider();
-      await Bun.sleep(50);
+        const provider = createActivityContextProvider(manager);
+        provider();
+        await Bun.sleep(50);
 
-      const result = provider();
-      // Cache was not populated due to error
-      expect(result).toBeUndefined();
-      expect(errorLogged).toBe(true);
-
-      console.warn = originalWarn;
+        const result = provider();
+        // Cache was not populated due to error
+        expect(result).toBeUndefined();
+        expect(errorLogged).toBe(true);
+      } finally {
+        console.warn = originalWarn;
+      }
     });
   });
 

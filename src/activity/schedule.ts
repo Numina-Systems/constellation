@@ -47,3 +47,45 @@ export function validateCron(expression: string): string | null {
     return error instanceof Error ? error.message : 'Invalid cron expression';
   }
 }
+
+/**
+ * Compute a cron expression that fires at a fixed offset after the sleep schedule.
+ * E.g., if sleep is "0 22 * * *" (10 PM) and offset is 2, returns "0 0 * * *" (midnight).
+ */
+export function sleepTaskCron(sleepSchedule: string, offsetHours: number, timezone: string): string {
+  const nextSleep = new Cron(sleepSchedule, { timezone }).nextRun();
+  if (nextSleep === null) {
+    throw new Error(`No future occurrence for sleep schedule: ${sleepSchedule}`);
+  }
+
+  const offsetMs = offsetHours * 3600_000;
+  const taskTime = new Date(nextSleep.getTime() + offsetMs);
+
+  // Extract hour and minute in the given timezone
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+    timeZone: timezone,
+  }).formatToParts(taskTime);
+
+  const hourStr = parts.find((p) => p.type === 'hour')?.value ?? '0';
+  const minuteStr = parts.find((p) => p.type === 'minute')?.value ?? '0';
+
+  const hour = String(parseInt(hourStr, 10));
+  const minute = String(parseInt(minuteStr, 10));
+
+  return `${minute} ${hour} * * *`;
+}
+
+export const SLEEP_TASK_NAMES = ['sleep-compaction', 'sleep-prediction-review', 'sleep-pattern-analysis'] as const;
+
+export const TRANSITION_TASK_NAMES = ['transition-to-sleep', 'transition-to-wake'] as const;
+
+export function isSleepTask(taskName: string): boolean {
+  return (SLEEP_TASK_NAMES as ReadonlyArray<string>).includes(taskName);
+}
+
+export function isTransitionTask(taskName: string): boolean {
+  return (TRANSITION_TASK_NAMES as ReadonlyArray<string>).includes(taskName);
+}

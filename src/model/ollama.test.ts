@@ -1200,3 +1200,65 @@ describe("createOllamaAdapter", () => {
   });
 });
 
+// ollama-adapter.AC6: Composition tests
+describe("ollama-adapter.AC6: Composition", () => {
+  describe("ollama-adapter.AC6.1: Rate limiter wraps Ollama adapter", () => {
+    it("should wrap Ollama adapter with rate limiter without error", () => {
+      const { createRateLimitedProvider } = require("../rate-limit/provider.js");
+
+      const adapter = createOllamaAdapter({
+        provider: "ollama",
+        name: "llama3.1:8b",
+      });
+
+      const rateLimited = createRateLimitedProvider(adapter, {
+        requestsPerMinute: 30,
+        inputTokensPerMinute: 20000,
+        outputTokensPerMinute: 4000,
+      });
+
+      expect(rateLimited.complete).toBeFunction();
+      expect(rateLimited.stream).toBeDefined();
+      expect(rateLimited.getStatus).toBeFunction();
+    });
+  });
+});
+
+// ollama-adapter.AC6.2: Summarization provider creation
+describe("ollama-adapter.AC6.2: Summarization provider creation", () => {
+  it("should create working ModelProvider from summarization config with provider ollama", () => {
+    const { createModelProvider } = require("./factory.js");
+
+    const provider = createModelProvider({
+      provider: "ollama",
+      name: "llama3.1:8b",
+      base_url: "http://localhost:11434",
+    });
+
+    expect(provider.complete).toBeFunction();
+    expect(provider.stream).toBeDefined();
+  });
+
+  it("should create ModelProvider without base_url (uses default)", () => {
+    const { createModelProvider } = require("./factory.js");
+
+    const provider = createModelProvider({
+      provider: "ollama",
+      name: "llama3.1:8b",
+    });
+
+    expect(provider.complete).toBeFunction();
+  });
+
+  it("should create ModelProvider without api_key (no auth required)", () => {
+    const { createModelProvider } = require("./factory.js");
+
+    const provider = createModelProvider({
+      provider: "ollama",
+      name: "llama3.1:8b",
+    });
+
+    expect(provider.complete).toBeFunction();
+  });
+});
+

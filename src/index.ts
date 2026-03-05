@@ -956,6 +956,7 @@ async function main(): Promise<void> {
       activityManager: am,
       originalHandler: handleSystemSchedulerTaskWithActivity,
       onTransition: handleTransition,
+      suppressDuringSleep: ['review-predictions'],
     }));
 
     agentScheduler.onDue(createActivityDispatch({

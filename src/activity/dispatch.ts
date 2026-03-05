@@ -14,10 +14,12 @@ export type DispatchOptions = {
   readonly activityManager: ActivityManager;
   readonly originalHandler: (task: ScheduledTaskLike) => void;
   readonly onTransition: (task: ScheduledTaskLike) => void;
+  readonly suppressDuringSleep?: ReadonlyArray<string>;
 };
 
 export function createActivityDispatch(options: Readonly<DispatchOptions>): (task: ScheduledTaskLike) => void {
-  const { activityManager, originalHandler, onTransition } = options;
+  const { activityManager, originalHandler, onTransition, suppressDuringSleep = [] } = options;
+  const suppressedSet = new Set(suppressDuringSleep);
 
   return (task: ScheduledTaskLike) => {
     (async () => {
@@ -39,6 +41,9 @@ export function createActivityDispatch(options: Readonly<DispatchOptions>): (tas
       if (isActive) {
         // Active mode: dispatch normally
         originalHandler(task);
+      } else if (suppressedSet.has(task.name)) {
+        // Suppressed during sleep: drop silently (covered by sleep-specific tasks)
+        console.log(`[activity] suppressed task "${task.name}" during sleep`);
       } else {
         // Sleeping: queue the event instead of dispatching
         const event: NewQueuedEvent = {

@@ -434,6 +434,96 @@ describe('createActivityDispatch', () => {
     });
   });
 
+  describe('suppressDuringSleep', () => {
+    it('should drop suppressed tasks during sleep instead of queueing', async () => {
+      const mockManager = createMockActivityManager({ isActive: false });
+      let originalHandlerCalled = false;
+
+      const dispatch = createActivityDispatch({
+        activityManager: mockManager,
+        originalHandler: () => {
+          originalHandlerCalled = true;
+        },
+        onTransition: () => {
+          // no-op
+        },
+        suppressDuringSleep: ['review-predictions'],
+      });
+
+      const task: ScheduledTaskLike = {
+        id: 'task-1',
+        name: 'review-predictions',
+        schedule: '0 */6 * * *',
+        payload: {},
+      };
+
+      dispatch(task);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(originalHandlerCalled).toBe(false);
+      expect(mockManager.recordedQueue.length).toBe(0);
+    });
+
+    it('should dispatch suppressed tasks normally when active', async () => {
+      const mockManager = createMockActivityManager({ isActive: true });
+      let originalHandlerCalled = false;
+
+      const dispatch = createActivityDispatch({
+        activityManager: mockManager,
+        originalHandler: () => {
+          originalHandlerCalled = true;
+        },
+        onTransition: () => {
+          // no-op
+        },
+        suppressDuringSleep: ['review-predictions'],
+      });
+
+      const task: ScheduledTaskLike = {
+        id: 'task-1',
+        name: 'review-predictions',
+        schedule: '0 */6 * * *',
+        payload: {},
+      };
+
+      dispatch(task);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(originalHandlerCalled).toBe(true);
+    });
+
+    it('should still queue non-suppressed tasks during sleep', async () => {
+      const mockManager = createMockActivityManager({ isActive: false });
+
+      const dispatch = createActivityDispatch({
+        activityManager: mockManager,
+        originalHandler: () => {
+          // no-op
+        },
+        onTransition: () => {
+          // no-op
+        },
+        suppressDuringSleep: ['review-predictions'],
+      });
+
+      const task: ScheduledTaskLike = {
+        id: 'task-1',
+        name: 'some-other-task',
+        schedule: '0 */6 * * *',
+        payload: { data: true },
+      };
+
+      dispatch(task);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(mockManager.recordedQueue.length).toBe(1);
+      expect(mockManager.recordedQueue[0]!.source).toBe('scheduler:some-other-task');
+    });
+  });
+
   describe('all sleep task names', () => {
     const sleepTaskNames = ['sleep-compaction', 'sleep-prediction-review', 'sleep-pattern-analysis'];
 

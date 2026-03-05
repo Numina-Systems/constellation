@@ -10,9 +10,93 @@ import {
   classifyHttpError,
   isRetryableOllamaError,
   createOllamaAdapter,
+  parseNDJSON,
+  mapChunksToStreamEvents,
+  type OllamaStreamChunk,
 } from "./ollama.js";
-import type { Message, ToolDefinition, ModelRequest } from "./types.js";
+import type { Message, ToolDefinition, ModelRequest, StreamEvent } from "./types.js";
 import { ModelError } from "./types.js";
+
+// Test helper: convert string to ReadableStream
+function stringToStream(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    },
+  });
+}
+
+// Test helper: async generator from chunk array
+async function* chunksFrom(
+  chunks: Array<OllamaStreamChunk>
+): AsyncGenerator<OllamaStreamChunk> {
+  for (const chunk of chunks) {
+    yield chunk;
+  }
+}
+
+// Task 1: NDJSON parser tests (pure, no I/O)
+describe("parseNDJSON", () => {
+  it("should parse valid NDJSON lines", async () => {
+    const ndjson =
+      '{"message":{"role":"assistant","content":"hello"},"done":false}\n{"message":{"role":"assistant","content":" world"},"done":true}\n';
+    const chunks: Array<unknown> = [];
+    for await (const chunk of parseNDJSON(stringToStream(ndjson))) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+  });
+
+  it("should skip empty lines", async () => {
+    const ndjson =
+      '{"message":{"role":"assistant","content":"hi"},"done":false}\n\n\n{"message":{"role":"assistant","content":""},"done":true}\n';
+    const chunks: Array<unknown> = [];
+    for await (const chunk of parseNDJSON(stringToStream(ndjson))) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+  });
+
+  it("should throw on malformed JSON", async () => {
+    const ndjson = "not valid json\n";
+    const chunks: Array<unknown> = [];
+    try {
+      for await (const chunk of parseNDJSON(stringToStream(ndjson))) {
+        chunks.push(chunk);
+      }
+      expect(true).toBe(false); // should not reach
+    } catch (error) {
+      expect(error).toBeInstanceOf(ModelError);
+      expect((error as ModelError).code).toBe("api_error");
+      expect((error as ModelError).retryable).toBe(false);
+    }
+  });
+
+  it("should throw on mid-stream error object", async () => {
+    const ndjson = '{"error":"model not found"}\n';
+    try {
+      const chunks: Array<unknown> = [];
+      for await (const chunk of parseNDJSON(stringToStream(ndjson))) {
+        chunks.push(chunk);
+      }
+      expect(true).toBe(false);
+    } catch (error) {
+      expect(error).toBeInstanceOf(ModelError);
+    }
+  });
+
+  it("should process remaining buffer after stream ends", async () => {
+    const ndjson =
+      '{"message":{"role":"assistant","content":"hello"},"done":false}';
+    const chunks: Array<unknown> = [];
+    for await (const chunk of parseNDJSON(stringToStream(ndjson))) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(1);
+  });
+});
 
 // ollama-adapter.AC3.1: Tool definition translation
 describe("normalizeToolDefinitions", () => {
@@ -957,6 +1041,109 @@ describe("normalizeResponse - content invariant", () => {
   });
 });
 
+// Task 2: Stream event mapping tests (pure, no I/O)
+describe("mapChunksToStreamEvents", () => {
+  describe("ollama-adapter.AC2.2: StreamEvent sequence", () => {
+    it("should emit message_start, content events, message_stop for text-only response", async () => {
+      const chunks: Array<OllamaStreamChunk> = [
+        {
+          model: "m",
+          message: { role: "assistant", content: "hello" },
+          done: false,
+        },
+        {
+          model: "m",
+          message: { role: "assistant", content: " world" },
+          done: true,
+          done_reason: "stop",
+        },
+      ];
+      const events: Array<StreamEvent> = [];
+      for await (const event of mapChunksToStreamEvents(chunksFrom(chunks))) {
+        events.push(event);
+      }
+      expect(events[0]?.type).toBe("message_start");
+      expect(events[1]?.type).toBe("content_block_start");
+      expect(events[events.length - 1]?.type).toBe("message_stop");
+    });
+
+    it("should emit tool_use events for tool call response", async () => {
+      const chunks: Array<OllamaStreamChunk> = [
+        {
+          model: "m",
+          message: {
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              {
+                type: "function",
+                function: { name: "get_weather", arguments: { city: "Paris" } },
+              },
+            ],
+          },
+          done: true,
+          done_reason: "stop",
+        },
+      ];
+      const events: Array<StreamEvent> = [];
+      for await (const event of mapChunksToStreamEvents(chunksFrom(chunks))) {
+        events.push(event);
+      }
+      const toolStart = events.find(
+        (e) =>
+          e.type === "content_block_start" &&
+          e.content_block.type === "tool_use"
+      );
+      expect(toolStart).toBeDefined();
+      const stopEvent = events[events.length - 1];
+      expect(stopEvent?.type).toBe("message_stop");
+      if (stopEvent?.type === "message_stop") {
+        expect(stopEvent.message.stop_reason).toBe("tool_use");
+      }
+    });
+  });
+
+  describe("ollama-adapter.AC4.3: Thinking before content", () => {
+    it("should emit thinking block before text block with correct indices", async () => {
+      const chunks: Array<OllamaStreamChunk> = [
+        {
+          model: "m",
+          message: { role: "assistant", thinking: "Let me think..." },
+          done: false,
+        },
+        {
+          model: "m",
+          message: { role: "assistant", content: "The answer is 42" },
+          done: true,
+          done_reason: "stop",
+        },
+      ];
+      const events: Array<StreamEvent> = [];
+      for await (const event of mapChunksToStreamEvents(chunksFrom(chunks))) {
+        events.push(event);
+      }
+      const blockStarts = events.filter((e) => e.type === "content_block_start");
+      expect(blockStarts).toHaveLength(2);
+      expect(
+        blockStarts[0]?.type === "content_block_start" &&
+          blockStarts[0].content_block.type
+      ).toBe("thinking");
+      expect(
+        blockStarts[0]?.type === "content_block_start" &&
+          blockStarts[0].content_block.index
+      ).toBe(0);
+      expect(
+        blockStarts[1]?.type === "content_block_start" &&
+          blockStarts[1].content_block.type
+      ).toBe("text");
+      expect(
+        blockStarts[1]?.type === "content_block_start" &&
+          blockStarts[1].content_block.index
+      ).toBe(1);
+    });
+  });
+});
+
 // ollama-adapter.AC2.1: complete() returns ModelResponse with non-empty content
 // ollama-adapter.AC5.5: Retryable errors trigger retry
 describe("createOllamaAdapter", () => {
@@ -984,6 +1171,31 @@ describe("createOllamaAdapter", () => {
           response.stop_reason
         )
       ).toBe(true);
+    });
+  });
+
+  describe("stream method (integration)", () => {
+    it("should yield correct StreamEvent sequence", async () => {
+      const endpoint = process.env["OLLAMA_ENDPOINT"];
+      if (!endpoint) return;
+
+      const adapter = createOllamaAdapter({
+        provider: "ollama",
+        name: "llama3.2:1b",
+        base_url: endpoint,
+      });
+
+      const events: Array<StreamEvent> = [];
+      for await (const event of adapter.stream({
+        messages: [{ role: "user", content: "Say hi" }],
+        model: "llama3.2:1b",
+        max_tokens: 20,
+      })) {
+        events.push(event);
+      }
+
+      expect(events[0]?.type).toBe("message_start");
+      expect(events[events.length - 1]?.type).toBe("message_stop");
     });
   });
 });

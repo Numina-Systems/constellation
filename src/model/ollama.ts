@@ -13,7 +13,7 @@ import type {
   ContentBlock,
   StopReason,
 } from "./types.js";
-import { ModelError } from "./types.js";
+import { ModelError, type StreamEvent } from "./types.js";
 import { callWithRetry } from "./retry.js";
 
 // Internal types for Ollama API contract
@@ -55,6 +55,20 @@ type OllamaChatRequest = {
 type OllamaChatResponse = {
   model: string;
   message: OllamaMessage & { thinking?: string };
+  done: boolean;
+  done_reason?: "stop" | "length";
+  prompt_eval_count?: number;
+  eval_count?: number;
+};
+
+export type OllamaStreamChunk = {
+  model: string;
+  message: {
+    role: "assistant";
+    content?: string;
+    thinking?: string;
+    tool_calls?: Array<OllamaToolCall>;
+  };
   done: boolean;
   done_reason?: "stop" | "length";
   prompt_eval_count?: number;
@@ -255,6 +269,188 @@ export function isRetryableOllamaError(error: unknown): boolean {
   return false;
 }
 
+export async function* parseNDJSON(
+  body: ReadableStream<Uint8Array>
+): AsyncGenerator<OllamaStreamChunk> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          throw new ModelError(
+            "api_error",
+            false,
+            `malformed NDJSON line: ${trimmed}`
+          );
+        }
+
+        const chunk = parsed as OllamaStreamChunk;
+
+        if ((chunk as Record<string, unknown>)["error"]) {
+          throw new ModelError(
+            "api_error",
+            false,
+            `ollama streaming error: ${(chunk as Record<string, unknown>)["error"]}`
+          );
+        }
+
+        yield chunk;
+      }
+    }
+
+    // Process remaining buffer
+    const trimmed = buffer.trim();
+    if (trimmed) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        throw new ModelError(
+          "api_error",
+          false,
+          `malformed NDJSON line: ${trimmed}`
+        );
+      }
+
+      const remaining = parsed as OllamaStreamChunk;
+
+      if ((remaining as Record<string, unknown>)["error"]) {
+        throw new ModelError(
+          "api_error",
+          false,
+          `ollama streaming error: ${(remaining as Record<string, unknown>)["error"]}`
+        );
+      }
+
+      yield remaining;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function* mapChunksToStreamEvents(
+  chunks: AsyncIterable<OllamaStreamChunk>
+): AsyncGenerator<StreamEvent> {
+  let thinkingStarted = false;
+  let contentStarted = false;
+  let blockIndex = 0;
+  let lastChunk: OllamaStreamChunk | null = null;
+
+  // Emit MessageStart
+  yield {
+    type: "message_start",
+    message: {
+      id: crypto.randomUUID(),
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  };
+
+  for await (const chunk of chunks) {
+    lastChunk = chunk;
+
+    // Handle thinking content
+    if (chunk.message.thinking) {
+      if (!thinkingStarted) {
+        yield {
+          type: "content_block_start",
+          content_block: { type: "thinking", index: blockIndex },
+        };
+        thinkingStarted = true;
+      }
+      yield {
+        type: "content_block_delta",
+        delta: {
+          type: "thinking_delta",
+          text: chunk.message.thinking,
+          index: blockIndex,
+        },
+      };
+    }
+
+    // Handle text content
+    if (chunk.message.content) {
+      if (thinkingStarted && !contentStarted) {
+        // Transition from thinking to content — start new block
+        blockIndex++;
+      }
+      if (!contentStarted) {
+        yield {
+          type: "content_block_start",
+          content_block: { type: "text", index: blockIndex },
+        };
+        contentStarted = true;
+      }
+      yield {
+        type: "content_block_delta",
+        delta: {
+          type: "text_delta",
+          text: chunk.message.content,
+          index: blockIndex,
+        },
+      };
+    }
+
+    // Handle tool calls (arrive in final chunk with done: true)
+    if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
+      for (const toolCall of chunk.message.tool_calls) {
+        blockIndex++;
+        const toolId = crypto.randomUUID();
+
+        yield {
+          type: "content_block_start",
+          content_block: {
+            type: "tool_use",
+            index: blockIndex,
+            id: toolId,
+            name: toolCall.function.name,
+          },
+        };
+
+        yield {
+          type: "content_block_delta",
+          delta: {
+            type: "input_json_delta",
+            input: JSON.stringify(toolCall.function.arguments),
+            index: blockIndex,
+          },
+        };
+      }
+    }
+  }
+
+  // Emit MessageStop with stop reason from final chunk
+  const stopReason: StopReason = lastChunk
+    ? normalizeStopReason({
+        message: lastChunk.message as OllamaChatResponse["message"],
+        done: lastChunk.done,
+        done_reason: lastChunk.done_reason,
+        model: lastChunk.model,
+      } as OllamaChatResponse)
+    : "end_turn";
+
+  yield {
+    type: "message_stop",
+    message: { stop_reason: stopReason },
+  };
+}
+
 const DEFAULT_BASE_URL = "http://localhost:11434";
 
 export function createOllamaAdapter(config: ModelConfig): ModelProvider {
@@ -284,8 +480,32 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
       );
     },
 
-    async *stream(_request: ModelRequest): AsyncIterable<any> {
-      throw new Error("Ollama streaming not yet implemented");
+    async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+      const ollamaRequest = buildOllamaRequest(request, true);
+
+      const response = await callWithRetry(
+        async () => {
+          const res = await fetch(`${baseUrl}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(ollamaRequest),
+          });
+
+          if (!res.ok) {
+            const body = await res.text();
+            throw classifyHttpError(res.status, body);
+          }
+
+          return res;
+        },
+        isRetryableOllamaError
+      );
+
+      if (!response.body) {
+        throw new ModelError("api_error", false, "no response body for streaming");
+      }
+
+      yield* mapChunksToStreamEvents(parseNDJSON(response.body));
     },
   };
 }

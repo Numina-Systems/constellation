@@ -35,6 +35,91 @@ export type CreateCompactorOptions = {
 };
 
 /**
+ * Adjust the split index so tool call/result groups are never separated.
+ * Scans backward from splitIndex: if a tool-role message at the boundary
+ * references an assistant message on the compress side, the split moves
+ * back to include the entire group (assistant + all its tool results) in toKeep.
+ * Also handles the inverse: if an assistant with tool_calls is at the boundary
+ * but its tool results would be on the compress side, pulls them into toKeep.
+ */
+export function adjustSplitForToolPairs(
+  history: ReadonlyArray<ConversationMessage>,
+  splitIndex: number,
+  minIndex: number,
+): number {
+  if (splitIndex <= minIndex || splitIndex >= history.length) {
+    return splitIndex;
+  }
+
+  let adjusted = splitIndex;
+
+  // Check if the first message in toKeep is a tool result — if so,
+  // its owning assistant message must also be in toKeep
+  while (adjusted > minIndex) {
+    const firstKept = history[adjusted];
+    if (!firstKept || firstKept.role !== 'tool' || !firstKept.tool_call_id) {
+      break;
+    }
+
+    // Scan backward to find the assistant message that owns this tool result
+    let found = false;
+    for (let i = adjusted - 1; i >= minIndex; i--) {
+      const candidate = history[i];
+      if (!candidate) continue;
+
+      if (
+        candidate.role === 'assistant' &&
+        candidate.tool_calls &&
+        Array.isArray(candidate.tool_calls)
+      ) {
+        const toolCalls = candidate.tool_calls as Array<{ id: string }>;
+        const ownsResult = toolCalls.some(
+          (tc) => tc.id === firstKept.tool_call_id,
+        );
+        if (ownsResult) {
+          adjusted = i;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    if (!found) {
+      break;
+    }
+  }
+
+  // Also check the inverse: if the last message in toCompress is an assistant
+  // with tool_calls whose results are in toKeep, pull it into toKeep
+  if (adjusted > minIndex) {
+    const lastCompressed = history[adjusted - 1];
+    if (
+      lastCompressed &&
+      lastCompressed.role === 'assistant' &&
+      lastCompressed.tool_calls &&
+      Array.isArray(lastCompressed.tool_calls)
+    ) {
+      const toolCalls = lastCompressed.tool_calls as Array<{ id: string }>;
+      const hasResultInKeep = toolCalls.some((tc) => {
+        for (let i = adjusted; i < history.length; i++) {
+          const msg = history[i];
+          if (msg && msg.role === 'tool' && msg.tool_call_id === tc.id) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (hasResultInKeep) {
+        adjusted = adjusted - 1;
+      }
+    }
+  }
+
+  return adjusted;
+}
+
+/**
  * Split history into two parts: messages to compress and messages to keep.
  * If the first message is a prior compaction summary (role='system' and content starts with '[Context Summary —'),
  * extract it separately to avoid re-summarizing it.
@@ -74,7 +159,12 @@ export function splitHistory(
   // Split into toCompress and toKeep based on keepRecent
   const compressableCount = history.length - compressStartIndex;
   const toKeepCount = Math.min(keepRecent, compressableCount);
-  const splitIndex = compressStartIndex + compressableCount - toKeepCount;
+  let splitIndex = compressStartIndex + compressableCount - toKeepCount;
+
+  // GH-24: Adjust split point to avoid breaking tool call/result pairs.
+  // If the first message in toKeep is a tool result, pull the split back
+  // to include the assistant message that owns it (and any sibling tool results).
+  splitIndex = adjustSplitForToolPairs(history, splitIndex, compressStartIndex);
 
   // Score and sort compressible messages by importance (lowest first)
   const compressSlice = history.slice(compressStartIndex, splitIndex);

@@ -1,6 +1,6 @@
 # Scheduler
 
-Last verified: 2026-03-02
+Last verified: 2026-03-03
 
 ## Purpose
 Implements the `Scheduler` extension interface with PostgreSQL-backed cron scheduling. Polls for due tasks on a 60-second interval and dispatches them via a registered handler.
@@ -17,7 +17,7 @@ Implements the `Scheduler` extension interface with PostgreSQL-backed cron sched
 
 ## Dependencies
 - **Uses**: `src/persistence/` (query interface), `src/extensions/scheduler.ts` (Scheduler, ScheduledTask port interfaces), `croner` (cron parsing)
-- **Used by**: `src/index.ts` (composition root wires dual instances: agent-owned + system-owned), `src/tool/builtin/scheduling.ts` (agent scheduling tools)
+- **Used by**: `src/index.ts` (composition root wires dual instances: agent-owned + system-owned; onDue dispatches to `buildReviewEvent` or `buildAgentScheduledEvent` based on task name, both enriched with recent operation traces), `src/tool/builtin/scheduling.ts` (agent scheduling tools)
 - **Boundary**: The scheduler dispatches tasks but does not process them. Event handling is the caller's responsibility.
 
 ## Key Decisions

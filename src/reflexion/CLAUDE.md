@@ -1,6 +1,6 @@
 # Reflexion
 
-Last verified: 2026-03-02
+Last verified: 2026-03-03
 
 ## Purpose
 Enables agent self-observation and calibration through prediction journaling, operation tracing, and introspection. The agent records predictions about outcomes, traces every tool call, and periodically reviews its accuracy to improve decision-making.
@@ -17,7 +17,7 @@ Enables agent self-observation and calibration through prediction journaling, op
 
 ## Dependencies
 - **Uses**: `src/persistence/` (query interface), `src/tool/types.ts` (Tool interface), `src/agent/types.ts` (ContextProvider type)
-- **Used by**: `src/agent/` (traceRecorder in AgentDependencies, contextProviders), `src/index.ts` (composition root)
+- **Used by**: `src/agent/` (traceRecorder in AgentDependencies, contextProviders), `src/index.ts` (composition root: wiring + TraceStore for scheduled event context enrichment), `src/scheduled-context.ts` (formats OperationTrace into activity summaries)
 - **Boundary**: This module never calls the LLM directly. Introspection tools read traces; the agent decides how to act on them.
 
 ## Key Decisions

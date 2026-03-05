@@ -35,6 +35,7 @@ import { createSkillTools } from '@/skill/tools';
 import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
+import { formatTraceSummary } from '@/scheduled-context';
 import { createPostgresScheduler } from '@/scheduler';
 import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
@@ -99,21 +100,33 @@ export async function performShutdown(
 }
 
 /**
- * Build a review event from a scheduled task.
+ * Build a review event from a scheduled task with trace enrichment.
+ * Queries recent operation traces and includes them in the event content.
  * Extracted for testability - allows tests to verify the exact event shape
  * that the scheduler's onDue handler produces.
  */
-export function buildReviewEvent(task: {
-  id: string;
-  name: string;
-  schedule: string;
-  payload?: Record<string, unknown>;
-}): {
+export async function buildReviewEvent(
+  task: {
+    id: string;
+    name: string;
+    schedule: string;
+    payload?: Record<string, unknown>;
+  },
+  traceStore: TraceStore,
+  owner: string,
+): Promise<{
   source: string;
   content: string;
   metadata: Record<string, unknown>;
   timestamp: Date;
-} {
+}> {
+  const traces = await traceStore.queryTraces({
+    owner,
+    lookbackSince: new Date(Date.now() - 2 * 3600_000),
+    limit: 20,
+  });
+  const activitySection = formatTraceSummary(traces);
+
   return {
     source: 'review-job',
     content: [
@@ -125,6 +138,8 @@ export function buildReviewEvent(task: {
       'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
       '',
       'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
+      '',
+      activitySection,
     ].join('\n'),
     metadata: {
       taskId: task.id,
@@ -137,26 +152,43 @@ export function buildReviewEvent(task: {
 }
 
 /**
- * Build an agent-scheduled event from a scheduled task.
- * Extracted for testability - allows tests to verify the exact event shape
- * that the scheduler's onDue handler produces.
+ * Build an agent-scheduled event from a scheduled task with trace enrichment.
+ * Queries recent operation traces and includes them in the event content.
+ * For tasks scheduled by the agent itself (not system review tasks).
  */
-export function buildAgentScheduledEvent(task: {
-  id: string;
-  name: string;
-  schedule: string;
-  payload?: Record<string, unknown>;
-}): {
+export async function buildAgentScheduledEvent(
+  task: {
+    id: string;
+    name: string;
+    schedule: string;
+    payload?: Record<string, unknown>;
+  },
+  traceStore: TraceStore,
+  owner: string,
+): Promise<{
   source: string;
   content: string;
   metadata: Record<string, unknown>;
   timestamp: Date;
-} {
-  const prompt = (task.payload?.['prompt'] as string | undefined) ?? '';
+}> {
+  const traces = await traceStore.queryTraces({
+    owner,
+    lookbackSince: new Date(Date.now() - 2 * 3600_000),
+    limit: 20,
+  });
+  const activitySection = formatTraceSummary(traces);
+
+  const prompt = String(task.payload?.['prompt'] ?? '') || 'Execute this scheduled task.';
 
   return {
-    source: 'self-scheduled',
-    content: prompt,
+    source: 'agent-scheduled',
+    content: [
+      `Scheduled task "${task.name}" has fired.`,
+      '',
+      prompt,
+      '',
+      activitySection,
+    ].join('\n'),
     metadata: {
       taskId: task.id,
       taskName: task.name,
@@ -756,9 +788,12 @@ async function main(): Promise<void> {
         console.warn('review job: failed to expire stale predictions', error);
       }
 
-      const reviewEvent = buildReviewEvent(task);
+      const event =
+        task.name === 'review-predictions'
+          ? await buildReviewEvent(task, traceRecorder, AGENT_OWNER)
+          : await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
 
-      schedulerEventQueue.push(reviewEvent);
+      schedulerEventQueue.push(event);
       processSchedulerEvent().catch((error) => {
         console.error('scheduler event processing error:', error);
       });
@@ -769,7 +804,7 @@ async function main(): Promise<void> {
   agentScheduler.onDue((task) => {
     (async () => {
       try {
-        const event = buildAgentScheduledEvent(task);
+        const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
         schedulerEventQueue.push(event);
         processSchedulerEvent().catch((error) => {
           console.error('agent scheduler event processing error:', error);

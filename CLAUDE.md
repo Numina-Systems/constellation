@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-03-02
+Last verified: 2026-03-03
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -36,6 +36,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/scheduler/` -- PostgreSQL-backed cron scheduler with owner isolation (agent-owned vs system-owned tasks)
+- `src/scheduled-context.ts` -- Pure function: formats operation traces into compact `[Recent Activity]` summaries for scheduled task events
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)

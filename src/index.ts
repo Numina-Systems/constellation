@@ -5,7 +5,6 @@
  * Composition root that wires all adapters and starts the interactive REPL.
  */
 
-const DEFAULT_MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
 
 import * as readline from 'readline';
 import { readFileSync } from 'fs';
@@ -725,7 +724,7 @@ async function main(): Promise<void> {
     config: {
       max_tool_rounds: config.agent.max_tool_rounds,
       context_budget: config.agent.context_budget,
-      model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+      model_max_tokens: config.agent.max_context_tokens,
       model_name: config.model.name,
       max_skills_per_turn: config.skills?.max_per_turn,
       skill_threshold: config.skills?.similarity_threshold,
@@ -754,7 +753,7 @@ async function main(): Promise<void> {
         config: {
           max_tool_rounds: config.agent.max_tool_rounds,
           context_budget: config.agent.context_budget,
-          model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+          model_max_tokens: config.agent.max_context_tokens,
           model_name: config.model.name,
           max_skills_per_turn: config.skills?.max_per_turn,
           skill_threshold: config.skills?.similarity_threshold,

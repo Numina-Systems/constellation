@@ -88,6 +88,7 @@ describe('DenoExecutor Integration Tests', () => {
       max_tool_calls_per_exec: 25,
       max_tool_rounds: 20,
       context_budget: 0.8,
+      max_context_tokens: 200000,
     };
 
     executor = createDenoExecutor(config, createMockRegistry());

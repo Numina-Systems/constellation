@@ -39,6 +39,21 @@ import { createPostgresScheduler } from '@/scheduler';
 import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
+import {
+  createActivityManager,
+  createActivityContextProvider,
+  createActivityDispatch,
+  createBlueskyInterceptor,
+  createWakeHandler,
+  currentMode,
+  sleepTaskCron,
+  isSleepTask,
+  queuedEventToExternal,
+  buildCompactionEvent,
+  buildPredictionReviewEvent,
+  buildPatternAnalysisEvent,
+} from './activity/index.ts';
+import type { ActivityManager, ScheduleConfig } from './activity/index.ts';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -629,6 +644,38 @@ async function main(): Promise<void> {
     modelName: config.summarization?.name ?? config.model.name,
   });
 
+  // --- Activity Manager (opt-in) ---
+  let activityManager: ActivityManager | null = null;
+  let activityScheduleConfig: ScheduleConfig | null = null;
+
+  if (config.activity?.enabled) {
+    const activityConfig = config.activity;
+
+    // Guard: narrow optional fields to non-null (Zod superRefine guarantees presence when enabled)
+    if (!activityConfig.timezone || !activityConfig.sleep_schedule || !activityConfig.wake_schedule) {
+      throw new Error('activity config validation failed: missing required fields despite enabled=true');
+    }
+
+    activityScheduleConfig = {
+      sleepSchedule: activityConfig.sleep_schedule,
+      wakeSchedule: activityConfig.wake_schedule,
+      timezone: activityConfig.timezone,
+    };
+
+    // 1. Create activity manager
+    activityManager = createActivityManager(persistence, activityScheduleConfig, AGENT_OWNER);
+
+    // 2. Startup reconciliation: compute current mode from cron expressions
+    const expectedMode = currentMode(activityScheduleConfig);
+    await activityManager.transitionTo(expectedMode);
+    const state = await activityManager.getState();
+    console.log(`activity manager started (mode: ${state.mode}, next transition: ${state.nextTransitionAt?.toISOString() ?? 'unknown'})`);
+
+    // 3. Register context provider BEFORE agent creation
+    const activityContextProvider = createActivityContextProvider(activityManager);
+    contextProviders.push(activityContextProvider);
+  }
+
   const agent = createAgent({
     model,
     memory,
@@ -740,9 +787,9 @@ async function main(): Promise<void> {
     }
   }
 
-  // Register onDue handler for scheduled tasks
-  systemScheduler.onDue((task) => {
-    // AC3.4: Expire stale predictions older than 24h before sending review event
+  // --- Scheduler onDue handlers ---
+  // Extract handler logic into named functions for reuse
+  function handleSystemSchedulerTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
     (async () => {
       try {
         const expiredCount = await predictionStore.expireStalePredictions(
@@ -757,16 +804,14 @@ async function main(): Promise<void> {
       }
 
       const reviewEvent = buildReviewEvent(task);
-
       schedulerEventQueue.push(reviewEvent);
       processSchedulerEvent().catch((error) => {
         console.error('scheduler event processing error:', error);
       });
     })();
-  });
+  }
 
-  // Register onDue handler for agent-scheduled tasks
-  agentScheduler.onDue((task) => {
+  function handleAgentSchedulerTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
     (async () => {
       try {
         const event = buildAgentScheduledEvent(task);
@@ -778,7 +823,95 @@ async function main(): Promise<void> {
         console.error('agent scheduler onDue error:', error);
       }
     })();
-  });
+  }
+
+  if (activityManager) {
+    // Capture narrowed reference for use in closures (avoids activityManager! assertions)
+    const am = activityManager;
+
+    // Sleep task handler: routes sleep tasks to the correct event builder with flagged events
+    function handleSleepTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
+      (async () => {
+        const flaggedEvents = await am.getFlaggedEvents();
+        let event;
+
+        switch (task.name) {
+          case 'sleep-compaction':
+            event = buildCompactionEvent(flaggedEvents, new Date());
+            break;
+          case 'sleep-prediction-review':
+            event = buildPredictionReviewEvent(flaggedEvents, new Date());
+            break;
+          case 'sleep-pattern-analysis':
+            event = buildPatternAnalysisEvent(flaggedEvents, new Date());
+            break;
+          default:
+            console.warn(`[activity] unknown sleep task: ${task.name}`);
+            return;
+        }
+
+        schedulerEventQueue.push(event);
+        processSchedulerEvent().catch((error) => {
+          console.error(`sleep task event processing error (${task.name}):`, error);
+        });
+      })().catch((error) => {
+        console.error(`[activity] sleep task error (${task.name}):`, error);
+      });
+    }
+
+    // Activity-aware system handler: routes sleep tasks to handleSleepTask,
+    // all other tasks to the original handler
+    function handleSystemSchedulerTaskWithActivity(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
+      if (isSleepTask(task.name)) {
+        handleSleepTask(task);
+      } else {
+        handleSystemSchedulerTask(task);
+      }
+    }
+
+    // Activity-aware dispatch: wraps original handlers
+    const wakeHandler = createWakeHandler({
+      activityManager: am,
+      onEvent: async (event) => {
+        const externalEvent = queuedEventToExternal(event);
+        schedulerEventQueue.push(externalEvent);
+        processSchedulerEvent().catch((error) => {
+          console.error('wake drain event processing error:', error);
+        });
+      },
+      trickleDelayMs: 5000,
+    });
+
+    const handleTransition = (task: { name: string }): void => {
+      (async () => {
+        if (task.name === 'transition-to-sleep') {
+          await am.transitionTo('sleeping');
+          console.log('[activity] transitioned to sleeping mode');
+        } else if (task.name === 'transition-to-wake') {
+          await wakeHandler();
+        }
+      })().catch((error) => {
+        console.error('[activity] transition error:', error);
+      });
+    };
+
+    // Register activity-aware handlers BEFORE scheduler.start()
+    systemScheduler.onDue(createActivityDispatch({
+      activityManager: am,
+      originalHandler: handleSystemSchedulerTaskWithActivity,
+      onTransition: handleTransition,
+    }));
+
+    agentScheduler.onDue(createActivityDispatch({
+      activityManager: am,
+      originalHandler: handleAgentSchedulerTask,
+      onTransition: handleTransition,
+    }));
+  } else {
+    // No activity: register original handlers directly
+    systemScheduler.onDue(handleSystemSchedulerTask);
+    agentScheduler.onDue(handleAgentSchedulerTask);
+  }
 
   // Register hourly review job if not already scheduled
   const existingTasks = await persistence.query<{ id: string }>(
@@ -802,6 +935,37 @@ async function main(): Promise<void> {
   agentScheduler.start();
   systemScheduler.start();
   console.log('schedulers started (agent + system)');
+
+  // --- Activity task registration (after schedulers started) ---
+  if (activityManager && activityScheduleConfig) {
+    const { sleepSchedule, wakeSchedule, timezone } = activityScheduleConfig;
+
+    const activityTasks = [
+      { name: 'transition-to-sleep', schedule: sleepSchedule },
+      { name: 'transition-to-wake', schedule: wakeSchedule },
+      { name: 'sleep-compaction', schedule: sleepTaskCron(sleepSchedule, 2, timezone) },
+      { name: 'sleep-prediction-review', schedule: sleepTaskCron(sleepSchedule, 4, timezone) },
+      { name: 'sleep-pattern-analysis', schedule: sleepTaskCron(sleepSchedule, 6, timezone) },
+    ];
+
+    for (const task of activityTasks) {
+      const existing = await persistence.query<{ id: string }>(
+        `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+        ['system', task.name],
+      );
+      if (existing.length === 0) {
+        await systemScheduler.schedule({
+          id: crypto.randomUUID(),
+          name: task.name,
+          schedule: task.schedule,
+          payload: { type: 'activity', sleepTask: true },
+        });
+        console.log(`[activity] registered task: ${task.name} (${task.schedule})`);
+      }
+    }
+
+    console.log('[activity] all activity tasks registered');
+  }
 
   // Set up readline interface for REPL
   const rl = readline.createInterface({

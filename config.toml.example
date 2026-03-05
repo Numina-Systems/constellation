@@ -82,6 +82,16 @@ jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
 # from_address = "spirit@mg.example.com"
 # allowed_recipients = ["operator@example.com"]
 
+# Activity-based sleep/wake cycle. When enabled, the agent sleeps and wakes on
+# a cron schedule. During sleep, non-critical events are queued and sleep tasks
+# (compaction, prediction review, pattern analysis) run at staggered offsets.
+# On wake, queued events drain in priority order with trickle delay.
+# [activity]
+# enabled = true
+# timezone = "America/Toronto"
+# sleep_schedule = "0 22 * * *"   # 10 PM daily
+# wake_schedule = "0 6 * * *"     # 6 AM daily
+
 # Web search and fetch tools. Requires at least one search provider API key.
 # For production, use environment variables: BRAVE_API_KEY, TAVILY_API_KEY
 [web]

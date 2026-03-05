@@ -52,8 +52,8 @@ import {
   buildCompactionEvent,
   buildPredictionReviewEvent,
   buildPatternAnalysisEvent,
-} from './activity/index.ts';
-import type { ActivityManager, ScheduleConfig } from './activity/index.ts';
+} from '@/activity/index.ts';
+import type { ActivityManager, ScheduleConfig } from '@/activity/index.ts';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';

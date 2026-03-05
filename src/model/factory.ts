@@ -4,6 +4,7 @@ import type { ModelConfig } from "../config/schema.js";
 import type { ModelProvider } from "./types.js";
 import { createAnthropicAdapter } from "./anthropic.js";
 import { createOpenAICompatAdapter } from "./openai-compat.js";
+import { createOllamaAdapter } from "./ollama.js";
 
 export function createModelProvider(config: ModelConfig): ModelProvider {
   switch (config.provider) {
@@ -11,9 +12,11 @@ export function createModelProvider(config: ModelConfig): ModelProvider {
       return createAnthropicAdapter(config);
     case "openai-compat":
       return createOpenAICompatAdapter(config);
+    case "ollama":
+      return createOllamaAdapter(config);
     default:
       throw new Error(
-        `Unknown model provider: ${config.provider}. Valid providers are: 'anthropic', 'openai-compat'`
+        `Unknown model provider: ${config.provider}. Valid providers are: 'anthropic', 'openai-compat', 'ollama'`
       );
   }
 }

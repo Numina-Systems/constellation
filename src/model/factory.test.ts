@@ -35,6 +35,19 @@ describe("createModelProvider", () => {
       expect(provider).toHaveProperty("stream");
     });
 
+    it("returns Ollama adapter for 'ollama' provider", () => {
+      const config: ModelConfig = {
+        provider: "ollama",
+        name: "llama3.1:8b",
+      };
+
+      const provider = createModelProvider(config);
+
+      expect(provider).toBeDefined();
+      expect(provider).toHaveProperty("complete");
+      expect(provider).toHaveProperty("stream");
+    });
+
     it("throws descriptive error for unknown provider", () => {
       const config = {
         provider: "unknown-provider",
@@ -46,7 +59,7 @@ describe("createModelProvider", () => {
         /Unknown model provider: unknown-provider/
       );
       expect(() => createModelProvider(config)).toThrow(
-        /Valid providers are: 'anthropic', 'openai-compat'/
+        /Valid providers are: 'anthropic', 'openai-compat', 'ollama'/
       );
     });
   });

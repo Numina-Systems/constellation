@@ -12,7 +12,7 @@ const AgentConfigSchema = z.object({
 });
 
 const ModelConfigSchema = z.object({
-  provider: z.enum(["anthropic", "openai-compat"]),
+  provider: z.enum(["anthropic", "openai-compat", "ollama"]),
   name: z.string(),
   api_key: z.string().optional(),
   base_url: z.string().url().optional(),
@@ -67,7 +67,7 @@ const BlueskyConfigSchema = z
   });
 
 const SummarizationConfigSchema = z.object({
-  provider: z.enum(["anthropic", "openai-compat"]),
+  provider: z.enum(["anthropic", "openai-compat", "ollama"]),
   name: z.string(),
   api_key: z.string().optional(),
   base_url: z.string().url().optional(),

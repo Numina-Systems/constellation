@@ -15,3 +15,6 @@ export { createActivityDispatch } from './dispatch.ts';
 export type { DispatchOptions, ScheduledTaskLike } from './dispatch.ts';
 export { buildCompactionEvent, buildPredictionReviewEvent, buildPatternAnalysisEvent } from './sleep-events.ts';
 export type { SleepTaskEvent } from './sleep-events.ts';
+export { createWakeHandler } from './wake.ts';
+export type { WakeHandlerOptions } from './wake.ts';
+export { queuedEventToExternal } from './event-converter.ts';

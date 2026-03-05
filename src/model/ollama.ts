@@ -75,7 +75,6 @@ export type OllamaStreamChunk = {
   eval_count?: number;
 };
 
-// Task 1: Tool definition translation
 export function normalizeToolDefinitions(
   tools: ReadonlyArray<ToolDefinition>
 ): Array<OllamaTool> {
@@ -89,7 +88,6 @@ export function normalizeToolDefinitions(
   }));
 }
 
-// Task 2: Message normalization
 export function normalizeMessages(
   msgs: ReadonlyArray<Message>
 ): Array<OllamaMessage> {
@@ -155,7 +153,6 @@ export function normalizeMessages(
   return result;
 }
 
-// Task 2: Request building
 export function buildOllamaRequest(
   request: ModelRequest,
   stream: boolean
@@ -180,7 +177,7 @@ export function buildOllamaRequest(
   }
 
   const options: OllamaChatRequest["options"] = {};
-  if (request.max_tokens) {
+  if (request.max_tokens !== undefined) {
     options.num_predict = request.max_tokens;
   }
   if (request.temperature !== undefined) {

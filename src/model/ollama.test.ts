@@ -14,8 +14,16 @@ import {
   mapChunksToStreamEvents,
   type OllamaStreamChunk,
 } from "./ollama.js";
-import type { Message, ToolDefinition, ModelRequest, StreamEvent } from "./types.js";
+import type {
+  Message,
+  ToolDefinition,
+  ModelRequest,
+  StreamEvent,
+  ToolUseBlock,
+} from "./types.js";
 import { ModelError } from "./types.js";
+import { createRateLimitedProvider } from "../rate-limit/provider.js";
+import { createModelProvider } from "./factory.js";
 
 // Test helper: convert string to ReadableStream
 function stringToStream(text: string): ReadableStream<Uint8Array> {
@@ -542,10 +550,10 @@ describe("buildOllamaRequest", () => {
     expect(result.options!.temperature).toBeUndefined();
   });
 
-  it("should not include options if only max_tokens is undefined", () => {
+  it("should include max_tokens of 0 in options", () => {
     const request: ModelRequest = {
       model: "neural-chat",
-      max_tokens: 0, // Falsy value
+      max_tokens: 0,
       messages: [
         {
           role: "user",
@@ -556,8 +564,8 @@ describe("buildOllamaRequest", () => {
 
     const result = buildOllamaRequest(request, false);
 
-    // max_tokens of 0 is falsy, so it won't be included
-    expect(result.options).toBeUndefined();
+    expect(result.options).toBeDefined();
+    expect(result.options?.num_predict).toBe(0);
   });
 
   it("should include tools in request when provided", () => {
@@ -721,12 +729,12 @@ describe("normalizeResponse - tool calls", () => {
 
     const result = normalizeResponse(response);
 
-    const toolUseBlocks = result.content.filter((b) => b.type === "tool_use");
+    const toolUseBlocks = result.content.filter(
+      (b): b is ToolUseBlock => b.type === "tool_use"
+    );
     expect(toolUseBlocks).toHaveLength(2);
 
-    const ids = toolUseBlocks
-      .filter((b) => b.type === "tool_use")
-      .map((b) => (b as any).id);
+    const ids = toolUseBlocks.map((b) => b.id);
     expect(ids[0]).not.toBe(ids[1]);
   });
 });
@@ -834,15 +842,17 @@ describe("normalizeResponse - multiple tool calls", () => {
 
     const result = normalizeResponse(response);
 
-    const toolUseBlocks = result.content.filter((b) => b.type === "tool_use");
+    const toolUseBlocks = result.content.filter(
+      (b): b is ToolUseBlock => b.type === "tool_use"
+    );
     expect(toolUseBlocks).toHaveLength(3);
 
-    expect((toolUseBlocks[0] as any).name).toBe("search");
-    expect((toolUseBlocks[1] as any).name).toBe("get_weather");
-    expect((toolUseBlocks[2] as any).name).toBe("calculate");
+    expect(toolUseBlocks[0]!.name).toBe("search");
+    expect(toolUseBlocks[1]!.name).toBe("get_weather");
+    expect(toolUseBlocks[2]!.name).toBe("calculate");
 
     // Verify all IDs are unique
-    const ids = toolUseBlocks.map((b) => (b as any).id);
+    const ids = toolUseBlocks.map((b) => b.id);
     const uniqueIds = new Set(ids);
     expect(uniqueIds.size).toBe(3);
   });
@@ -1204,8 +1214,6 @@ describe("createOllamaAdapter", () => {
 describe("ollama-adapter.AC6: Composition", () => {
   describe("ollama-adapter.AC6.1: Rate limiter wraps Ollama adapter", () => {
     it("should wrap Ollama adapter with rate limiter without error", () => {
-      const { createRateLimitedProvider } = require("../rate-limit/provider.js");
-
       const adapter = createOllamaAdapter({
         provider: "ollama",
         name: "llama3.1:8b",
@@ -1227,8 +1235,6 @@ describe("ollama-adapter.AC6: Composition", () => {
 // ollama-adapter.AC6.2: Summarization provider creation
 describe("ollama-adapter.AC6.2: Summarization provider creation", () => {
   it("should create working ModelProvider from summarization config with provider ollama", () => {
-    const { createModelProvider } = require("./factory.js");
-
     const provider = createModelProvider({
       provider: "ollama",
       name: "llama3.1:8b",
@@ -1240,8 +1246,6 @@ describe("ollama-adapter.AC6.2: Summarization provider creation", () => {
   });
 
   it("should create ModelProvider without base_url (uses default)", () => {
-    const { createModelProvider } = require("./factory.js");
-
     const provider = createModelProvider({
       provider: "ollama",
       name: "llama3.1:8b",
@@ -1251,8 +1255,6 @@ describe("ollama-adapter.AC6.2: Summarization provider creation", () => {
   });
 
   it("should create ModelProvider without api_key (no auth required)", () => {
-    const { createModelProvider } = require("./factory.js");
-
     const provider = createModelProvider({
       provider: "ollama",
       name: "llama3.1:8b",

@@ -225,7 +225,10 @@ export function createShutdownHandler(
   scheduler?: { stop(): void } | null,
   activityManager?: ActivityManager | null,
 ): () => Promise<void> {
+  let shuttingDown = false;
   return async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log('\nShutting down...');
     if (scheduler) {
       scheduler.stop();

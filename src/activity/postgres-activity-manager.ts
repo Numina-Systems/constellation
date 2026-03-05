@@ -19,7 +19,7 @@ function parseActivityState(
   flaggedEventCount: number,
 ): ActivityState {
   return {
-    mode: row.mode as ActivityMode,
+    mode: row.mode as ActivityMode, // CHECK constraint guarantees valid values
     transitionedAt: row.transitioned_at,
     nextTransitionAt: row.next_transition_at,
     queuedEventCount,
@@ -32,7 +32,7 @@ function parseQueuedEvent(row: EventQueueRow): QueuedEvent {
     id: row.id,
     source: row.source,
     payload: row.payload,
-    priority: row.priority as 'normal' | 'high',
+    priority: row.priority as 'normal' | 'high', // CHECK constraint guarantees valid values
     enqueuedAt: row.enqueued_at,
     flagged: row.flagged,
   };
@@ -134,7 +134,7 @@ export function createActivityManager(
         const rows = await persistence.query<EventQueueRow>(
           `SELECT * FROM event_queue
            WHERE owner = $1 AND processed_at IS NULL
-           ORDER BY priority DESC, enqueued_at ASC
+           ORDER BY CASE WHEN priority = 'high' THEN 0 ELSE 1 END, enqueued_at ASC
            LIMIT 1`,
           [owner],
         );

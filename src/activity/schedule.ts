@@ -53,6 +53,8 @@ export function validateCron(expression: string): string | null {
  * E.g., if sleep is "0 22 * * *" (10 PM) and offset is 2, returns "0 0 * * *" (midnight).
  */
 export function sleepTaskCron(sleepSchedule: string, offsetHours: number, timezone: string): string {
+  // Note: nextRun() depends on current time, but we only extract hour:minute
+  // from the offset result, so output is deterministic for daily schedules.
   const nextSleep = new Cron(sleepSchedule, { timezone }).nextRun();
   if (nextSleep === null) {
     throw new Error(`No future occurrence for sleep schedule: ${sleepSchedule}`);

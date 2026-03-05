@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import { createActivityDispatch } from './dispatch.ts';
-import type { ActivityManager, ActivityState } from './types.ts';
+import type { ActivityManager, ActivityState, NewQueuedEvent } from './types.ts';
 import type { ScheduledTaskLike } from './dispatch.ts';
 
 /**
@@ -59,6 +59,7 @@ function createMockActivityManager(overrides: {
 }
 
 describe('createActivityDispatch', () => {
+  // dispatch() fires an async IIFE internally; 50ms is ample for mock operations to settle
   describe('when active', () => {
     it('should call originalHandler for regular tasks', async () => {
       const mockManager = createMockActivityManager({ isActive: true });
@@ -366,7 +367,7 @@ describe('createActivityDispatch', () => {
   describe('task priority and queueing', () => {
     it('should queue with normal priority for non-flagged events', async () => {
       const mockManager = createMockActivityManager({ isActive: false });
-      let queuedEvent: any = {};
+      let queuedEvent: NewQueuedEvent | undefined;
 
       mockManager.queueEvent = async (event) => {
         queuedEvent = event;
@@ -394,13 +395,13 @@ describe('createActivityDispatch', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(queuedEvent).toBeDefined();
-      expect(queuedEvent.priority).toBe('normal');
-      expect(queuedEvent.flagged).toBe(false);
+      expect(queuedEvent!.priority).toBe('normal');
+      expect(queuedEvent!.flagged).toBe(false);
     });
 
     it('should preserve task payload when queueing', async () => {
       const mockManager = createMockActivityManager({ isActive: false });
-      let queuedEvent: any = {};
+      let queuedEvent: NewQueuedEvent | undefined;
 
       mockManager.queueEvent = async (event) => {
         queuedEvent = event;
@@ -428,7 +429,8 @@ describe('createActivityDispatch', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(queuedEvent.payload).toEqual(originalPayload);
+      expect(queuedEvent).toBeDefined();
+      expect(queuedEvent!.payload).toEqual(originalPayload);
     });
   });
 

@@ -11,6 +11,7 @@ export type SleepTaskEvent = {
 
 export function buildCompactionEvent(
   flaggedEvents: ReadonlyArray<QueuedEvent>,
+  timestamp: Date,
 ): SleepTaskEvent {
   const lines = [
     'Sleep task: Context Compaction',
@@ -27,12 +28,13 @@ export function buildCompactionEvent(
     source: 'sleep-task',
     content: lines.join('\n'),
     metadata: { taskType: 'compaction', sleepTask: true },
-    timestamp: new Date(),
+    timestamp,
   };
 }
 
 export function buildPredictionReviewEvent(
   flaggedEvents: ReadonlyArray<QueuedEvent>,
+  timestamp: Date,
 ): SleepTaskEvent {
   const lines = [
     'Sleep task: Prediction Review',
@@ -50,12 +52,13 @@ export function buildPredictionReviewEvent(
     source: 'sleep-task',
     content: lines.join('\n'),
     metadata: { taskType: 'prediction-review', sleepTask: true },
-    timestamp: new Date(),
+    timestamp,
   };
 }
 
 export function buildPatternAnalysisEvent(
   flaggedEvents: ReadonlyArray<QueuedEvent>,
+  timestamp: Date,
 ): SleepTaskEvent {
   const lines = [
     'Sleep task: Pattern Analysis',
@@ -73,7 +76,7 @@ export function buildPatternAnalysisEvent(
     source: 'sleep-task',
     content: lines.join('\n'),
     metadata: { taskType: 'pattern-analysis', sleepTask: true },
-    timestamp: new Date(),
+    timestamp,
   };
 }
 

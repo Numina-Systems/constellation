@@ -10,3 +10,4 @@ export type {
 export { createActivityManager } from './postgres-activity-manager.ts';
 export { currentMode, nextTransitionTime, validateCron } from './schedule.ts';
 export type { ScheduleConfig } from './schedule.ts';
+export { createActivityContextProvider } from './context-provider.ts';

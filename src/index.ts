@@ -756,6 +756,21 @@ async function main(): Promise<void> {
         });
       });
 
+      // --- Activity-aware Bluesky handler (after Bluesky setup) ---
+      if (activityManager && blueskySource) {
+        blueskySource.onMessage(createBlueskyInterceptor({
+          activityManager,
+          originalHandler: (message) => {
+            eventQueue.push(message);
+            processNextEvent().catch((error) => {
+              console.error('bluesky event processing error:', error);
+            });
+          },
+          highPriorityDids: config.bluesky.schedule_dids,
+        }));
+        console.log('[activity] bluesky handler wrapped with activity interceptor');
+      }
+
       console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
   }
 

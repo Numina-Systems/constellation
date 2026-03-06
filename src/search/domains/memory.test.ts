@@ -507,4 +507,101 @@ describe('Memory Search Domain', () => {
       expect(results[0]?.id).toBe(oldBlock.id);
     });
   });
+
+  describe('Edge case: Null embedding handling', () => {
+    it('semantic mode throws error when embedding is null', async () => {
+      const domain = createMemorySearchDomain(persistence, TEST_OWNER);
+
+      const block = {
+        id: randomUUID(),
+        owner: TEST_OWNER,
+        tier: 'working',
+        label: 'test-block',
+        content: 'test content',
+        embedding: null,
+        permission: 'readwrite' as const,
+        pinned: false,
+      };
+
+      await persistence.query(
+        `INSERT INTO memory_blocks (id, owner, tier, label, content, embedding, permission, pinned)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          block.id,
+          block.owner,
+          block.tier,
+          block.label,
+          block.content,
+          block.embedding,
+          block.permission,
+          block.pinned,
+        ],
+      );
+
+      try {
+        await domain.search({
+          query: 'test',
+          mode: 'semantic',
+          domains: ['memory'],
+          embedding: null,
+          limit: 10,
+          startTime: null,
+          endTime: null,
+          role: null,
+          tier: null,
+        });
+        expect.unreachable('should have thrown an error');
+      } catch (err) {
+        expect((err as Error).message).toContain('Semantic search requires an embedding');
+      }
+    });
+
+    it('hybrid mode degrades to keyword-only when embedding is null', async () => {
+      const domain = createMemorySearchDomain(persistence, TEST_OWNER);
+
+      // Insert keyword-matchable block
+      const block = {
+        id: randomUUID(),
+        owner: TEST_OWNER,
+        tier: 'working',
+        label: 'test-block',
+        content: 'This block contains database keywords',
+        embedding: null,
+        permission: 'readwrite' as const,
+        pinned: false,
+      };
+
+      await persistence.query(
+        `INSERT INTO memory_blocks (id, owner, tier, label, content, embedding, permission, pinned)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          block.id,
+          block.owner,
+          block.tier,
+          block.label,
+          block.content,
+          block.embedding,
+          block.permission,
+          block.pinned,
+        ],
+      );
+
+      // Search in hybrid mode with null embedding should fall back to keyword-only
+      const results = await domain.search({
+        query: 'database',
+        mode: 'hybrid',
+        domains: ['memory'],
+        embedding: null,
+        limit: 10,
+        startTime: null,
+        endTime: null,
+        role: null,
+        tier: null,
+      });
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0]?.id).toBe(block.id);
+      expect(results[0]?.content).toContain('database');
+    });
+  });
 });

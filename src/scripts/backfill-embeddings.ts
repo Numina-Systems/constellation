@@ -85,6 +85,7 @@ async function main(): Promise<void> {
       }
 
       // Update messages in transaction
+      let batchEmbedded = 0;
       await persistence.withTransaction(async (query: QueryFunction) => {
         for (let i = 0; i < batch.length; i++) {
           const msg = batch[i];
@@ -96,10 +97,11 @@ async function main(): Promise<void> {
               `UPDATE messages SET embedding = $1::vector WHERE id = $2`,
               [embeddingSql, msg.id],
             );
-            embedded++;
+            batchEmbedded++;
           }
         }
       });
+      embedded += batchEmbedded;
 
       processed += batch.length;
       console.log(`Batch ${batchNumber}: processed ${batch.length} messages (${processed}/${totalCount} total)`);

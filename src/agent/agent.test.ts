@@ -1435,13 +1435,28 @@ describe('Skill integration', () => {
     });
 
     it('GH-23.AC3.5: system and tool messages stored with null embeddings', async () => {
-      const modelResponse: ModelResponse = {
+      // First response: tool_use to trigger tool message persistence
+      const toolUseResponse: ModelResponse = {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-1',
+            name: 'test_tool',
+            input: { arg: 'value' },
+          },
+        ],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      // Second response: final response after tool execution
+      const finalResponse: ModelResponse = {
         content: [{ type: 'text', text: 'Response' }],
         stop_reason: 'end_turn',
         usage: { input_tokens: 100, output_tokens: 50 },
       };
 
-      const mockModel = createMockModelProvider([modelResponse]);
+      const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
       const mockEmbedding = createMockEmbeddingProvider();
       const mockPersistence = createMockPersistenceProvider();
 
@@ -1458,18 +1473,27 @@ describe('Skill integration', () => {
       const agent = createAgent(deps);
       await agent.processMessage('Test message');
 
-      // System and tool messages are persisted internally by the agent loop
-      // We verify they would be stored with null embeddings by checking the logic
-      // (They're created inside processMessage via persistMessage with role='system' or 'tool')
-
-      // For now, verify that user and assistant messages work
+      // Verify user message has non-null embedding
       const userInsert = mockPersistence.capturedInserts.find((params) => params[1] === 'user');
       expect(userInsert).toBeDefined();
       expect(userInsert?.[6]).not.toBeNull();
 
+      // Verify assistant message has non-null embedding
+      const assistantInsert = mockPersistence.capturedInserts.find((params) => params[1] === 'assistant');
+      expect(assistantInsert).toBeDefined();
+      expect(assistantInsert?.[6]).not.toBeNull();
+
+      // Verify tool role messages are persisted with null embedding
+      const toolInserts = mockPersistence.capturedInserts.filter((params) => params[1] === 'tool');
+      expect(toolInserts.length).toBeGreaterThan(0);
+      for (const toolInsert of toolInserts) {
+        // param[6] is the embedding column - should be null for tool messages
+        expect(toolInsert[6]).toBeNull();
+      }
+
       // Verify we have persisted messages
       const history = await agent.getConversationHistory();
-      expect(history.length).toBeGreaterThanOrEqual(2);
+      expect(history.length).toBeGreaterThanOrEqual(3); // user, assistant with tool call, tool result, final assistant
     });
   });
 });

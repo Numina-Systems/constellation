@@ -101,6 +101,7 @@ describe('Conversation Search Domain', () => {
 
       expect(results.length).toBeGreaterThan(0);
       expect(results.some((r) => r.id === msgWithKeyword.id)).toBe(true);
+      expect(results.some((r) => r.id === msgWithEmbedding.id)).toBe(true);
       expect(results[0]?.domain).toBe('conversations');
     });
   });

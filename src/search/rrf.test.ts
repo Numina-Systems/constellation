@@ -327,7 +327,7 @@ describe('mergeWithRRF', () => {
     });
 
     it('should respect custom smoothing constant k', () => {
-      const results: DomainSearchResult[] = [
+      const results: Array<DomainSearchResult> = [
         {
           id: 'item-1',
           domain: 'memory',
@@ -347,7 +347,7 @@ describe('mergeWithRRF', () => {
     });
 
     it('should sort results by RRF score descending', () => {
-      const list1: DomainSearchResult[] = [
+      const list1: Array<DomainSearchResult> = [
         {
           id: 'a',
           domain: 'memory',

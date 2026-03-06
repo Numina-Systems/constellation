@@ -12,3 +12,5 @@ export type {
 } from './types.ts';
 
 export type { SearchStore } from './store.ts';
+
+export { mergeWithRRF } from './rrf.ts';

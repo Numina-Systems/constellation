@@ -35,6 +35,91 @@ export type CreateCompactorOptions = {
 };
 
 /**
+ * Adjust the split index so tool call/result groups are never separated.
+ * Scans backward from splitIndex: if a tool-role message at the boundary
+ * references an assistant message on the compress side, the split moves
+ * back to include the entire group (assistant + all its tool results) in toKeep.
+ * Also handles the inverse: if an assistant with tool_calls is at the boundary
+ * but its tool results would be on the compress side, pulls them into toKeep.
+ */
+export function adjustSplitForToolPairs(
+  history: ReadonlyArray<ConversationMessage>,
+  splitIndex: number,
+  minIndex: number,
+): number {
+  if (splitIndex <= minIndex || splitIndex >= history.length) {
+    return splitIndex;
+  }
+
+  let adjusted = splitIndex;
+
+  // Check if the first message in toKeep is a tool result — if so,
+  // its owning assistant message must also be in toKeep
+  while (adjusted > minIndex) {
+    const firstKept = history[adjusted];
+    if (!firstKept || firstKept.role !== 'tool' || !firstKept.tool_call_id) {
+      break;
+    }
+
+    // Scan backward to find the assistant message that owns this tool result
+    let found = false;
+    for (let i = adjusted - 1; i >= minIndex; i--) {
+      const candidate = history[i];
+      if (!candidate) continue;
+
+      if (
+        candidate.role === 'assistant' &&
+        candidate.tool_calls &&
+        Array.isArray(candidate.tool_calls)
+      ) {
+        const toolCalls = candidate.tool_calls as Array<{ id: string }>;
+        const ownsResult = toolCalls.some(
+          (tc) => tc.id === firstKept.tool_call_id,
+        );
+        if (ownsResult) {
+          adjusted = i;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    if (!found) {
+      break;
+    }
+  }
+
+  // Also check the inverse: if the last message in toCompress is an assistant
+  // with tool_calls whose results are in toKeep, pull it into toKeep
+  if (adjusted > minIndex) {
+    const lastCompressed = history[adjusted - 1];
+    if (
+      lastCompressed &&
+      lastCompressed.role === 'assistant' &&
+      lastCompressed.tool_calls &&
+      Array.isArray(lastCompressed.tool_calls)
+    ) {
+      const toolCalls = lastCompressed.tool_calls as Array<{ id: string }>;
+      const hasResultInKeep = toolCalls.some((tc) => {
+        for (let i = adjusted; i < history.length; i++) {
+          const msg = history[i];
+          if (msg && msg.role === 'tool' && msg.tool_call_id === tc.id) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (hasResultInKeep) {
+        adjusted = adjusted - 1;
+      }
+    }
+  }
+
+  return adjusted;
+}
+
+/**
  * Split history into two parts: messages to compress and messages to keep.
  * If the first message is a prior compaction summary (role='system' and content starts with '[Context Summary —'),
  * extract it separately to avoid re-summarizing it.
@@ -74,7 +159,12 @@ export function splitHistory(
   // Split into toCompress and toKeep based on keepRecent
   const compressableCount = history.length - compressStartIndex;
   const toKeepCount = Math.min(keepRecent, compressableCount);
-  const splitIndex = compressStartIndex + compressableCount - toKeepCount;
+  let splitIndex = compressStartIndex + compressableCount - toKeepCount;
+
+  // GH-24: Adjust split point to avoid breaking tool call/result pairs.
+  // If the first message in toKeep is a tool result, pull the split back
+  // to include the assistant message that owns it (and any sibling tool results).
+  splitIndex = adjustSplitForToolPairs(history, splitIndex, compressStartIndex);
 
   // Score and sort compressible messages by importance (lowest first)
   const compressSlice = history.slice(compressStartIndex, splitIndex);
@@ -558,8 +648,11 @@ export function createCompactor(
       // 8. Rebuild batch list after potential re-summarization
       const finalBatches = await getCompactionBatches(memory, conversationId);
 
-      // 9. Delete old messages from database
+      // 9. Delete old messages from database (including prior clip-archive if present)
       const idsToDelete = toCompress.map((m) => m.id);
+      if (priorSummary) {
+        idsToDelete.push(priorSummary.id);
+      }
       await persistence.query(
         'DELETE FROM messages WHERE id = ANY($1)',
         [idsToDelete],
@@ -572,12 +665,15 @@ export function createCompactor(
         toCompress.length,
       );
 
-      // 11. Insert clip-archive as a system message
+      // 11. Insert clip-archive as a system message.
+      // Use a timestamp just before the first kept message so the clip-archive
+      // sorts before kept messages (and any in-flight tool call messages) on reload.
       const clipArchiveId = randomUUID();
-      const now = new Date();
+      const firstKeptTime = toKeep[0]?.created_at ?? new Date();
+      const clipArchiveTime = new Date(firstKeptTime.getTime() - 1);
       await persistence.query(
         'INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [clipArchiveId, conversationId, 'system', clipArchiveContent, now],
+        [clipArchiveId, conversationId, 'system', clipArchiveContent, clipArchiveTime],
       );
 
       // 12. Build the clip-archive ConversationMessage object
@@ -586,7 +682,7 @@ export function createCompactor(
         conversation_id: conversationId,
         role: 'system',
         content: clipArchiveContent,
-        created_at: now,
+        created_at: clipArchiveTime,
       };
 
       // 13. Calculate token estimates

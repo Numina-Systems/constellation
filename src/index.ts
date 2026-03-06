@@ -5,7 +5,6 @@
  * Composition root that wires all adapters and starts the interactive REPL.
  */
 
-const DEFAULT_MODEL_MAX_TOKENS = 200000; // Claude 3 Sonnet context window
 
 import * as readline from 'readline';
 import { readFileSync } from 'fs';
@@ -40,6 +39,8 @@ import { createPostgresScheduler } from '@/scheduler';
 import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
+import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
+import { createSearchTools } from '@/tool/builtin/search';
 import {
   createActivityManager,
   createActivityContextProvider,
@@ -568,6 +569,19 @@ async function main(): Promise<void> {
     console.log('email tools registered');
   }
 
+  // Search tools (always available — uses existing persistence and embedding providers)
+  const searchStore = createSearchStore(embedding);
+  const memorySearchDomain = createMemorySearchDomain(persistence, AGENT_OWNER);
+  const conversationSearchDomain = createConversationSearchDomain(persistence);
+  searchStore.registerDomain(memorySearchDomain);
+  searchStore.registerDomain(conversationSearchDomain);
+
+  const searchTools = createSearchTools(searchStore);
+  for (const tool of searchTools) {
+    registry.register(tool);
+  }
+  console.log('search tools registered');
+
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
 
   // Skills system (optional)
@@ -722,10 +736,11 @@ async function main(): Promise<void> {
     registry,
     runtime,
     persistence,
+    embedding,
     config: {
       max_tool_rounds: config.agent.max_tool_rounds,
       context_budget: config.agent.context_budget,
-      model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+      model_max_tokens: config.agent.max_context_tokens,
       model_name: config.model.name,
       max_skills_per_turn: config.skills?.max_per_turn,
       skill_threshold: config.skills?.similarity_threshold,
@@ -751,10 +766,11 @@ async function main(): Promise<void> {
         registry,
         runtime,
         persistence,
+        embedding,
         config: {
           max_tool_rounds: config.agent.max_tool_rounds,
           context_budget: config.agent.context_budget,
-          model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
+          model_max_tokens: config.agent.max_context_tokens,
           model_name: config.model.name,
           max_skills_per_turn: config.skills?.max_per_turn,
           skill_threshold: config.skills?.similarity_threshold,

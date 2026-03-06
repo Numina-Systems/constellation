@@ -7,6 +7,7 @@
  */
 
 // UUID generation is built-in to Bun via crypto
+import { toSql } from 'pgvector/utils';
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
@@ -302,6 +303,20 @@ export function createAgent(
   };
 
   /**
+   * Generate an embedding for a message, with graceful null fallback on provider absence or error.
+   * Pattern: Follow MemoryManager.generateEmbedding() for consistent error handling.
+   */
+  async function generateMessageEmbedding(text: string): Promise<Array<number> | null> {
+    if (!deps.embedding) return null;
+    try {
+      return await deps.embedding.embed(text);
+    } catch (error) {
+      console.warn('embedding provider failed for message, storing with null embedding', error);
+      return null;
+    }
+  }
+
+  /**
    * Persist a message to the database.
    * Returns the message ID.
    */
@@ -313,11 +328,20 @@ export function createAgent(
     tool_call_id?: string;
     reasoning_content?: string | null;
   }): Promise<string> {
+    // Generate embedding for user/assistant messages, null for system/tool
+    let embedding: Array<number> | null = null;
+    if (msg.role === 'user' || msg.role === 'assistant') {
+      embedding = await generateMessageEmbedding(msg.content);
+    }
+
+    // Format embedding for SQL: use toSql for non-null, null otherwise
+    const embeddingValue = embedding ? toSql(embedding) : null;
+
     const result = await deps.persistence.query(
-      `INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, reasoning_content, created_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW())
+      `INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, reasoning_content, embedding, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW())
        RETURNING id`,
-      [msg.conversation_id, msg.role, msg.content, msg.tool_calls ? JSON.stringify(msg.tool_calls) : null, msg.tool_call_id || null, msg.reasoning_content || null],
+      [msg.conversation_id, msg.role, msg.content, msg.tool_calls ? JSON.stringify(msg.tool_calls) : null, msg.tool_call_id || null, msg.reasoning_content || null, embeddingValue],
     );
 
     const row = result[0];

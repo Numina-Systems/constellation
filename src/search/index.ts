@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 export type {
   SearchMode,
   SearchDomainName,

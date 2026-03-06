@@ -8,7 +8,7 @@ describe('mergeWithRRF', () => {
   describe('GH-23.AC2.1: Results in both lists rank higher than results in only one', () => {
     it('should score results appearing in both keyword and vector lists higher than exclusive results', () => {
       // Simulate keyword search results
-      const keywordResults: DomainSearchResult[] = [
+      const keywordResults: Array<DomainSearchResult> = [
         {
           id: 'result-1',
           domain: 'memory',
@@ -36,7 +36,7 @@ describe('mergeWithRRF', () => {
       ];
 
       // Simulate vector search results with overlapping items
-      const vectorResults: DomainSearchResult[] = [
+      const vectorResults: Array<DomainSearchResult> = [
         {
           id: 'result-1',
           domain: 'memory',
@@ -94,7 +94,7 @@ describe('mergeWithRRF', () => {
   describe('GH-23.AC2.2: Results are interleaved by RRF score, not grouped by domain', () => {
     it('should interleave results from different domains based on score, not domain grouping', () => {
       // Memory domain results
-      const memoryResults: DomainSearchResult[] = [
+      const memoryResults: Array<DomainSearchResult> = [
         {
           id: 'mem-1',
           domain: 'memory',
@@ -114,7 +114,7 @@ describe('mergeWithRRF', () => {
       ];
 
       // Conversations domain results
-      const conversationResults: DomainSearchResult[] = [
+      const conversationResults: Array<DomainSearchResult> = [
         {
           id: 'conv-1',
           domain: 'conversations',
@@ -160,7 +160,7 @@ describe('mergeWithRRF', () => {
 
   describe('GH-23.AC2.3: Results in only one list still appear with appropriate lower score', () => {
     it('should include exclusive results in output with lower scores than overlapping results', () => {
-      const list1: DomainSearchResult[] = [
+      const list1: Array<DomainSearchResult> = [
         {
           id: 'shared-1',
           domain: 'memory',
@@ -179,7 +179,7 @@ describe('mergeWithRRF', () => {
         },
       ];
 
-      const list2: DomainSearchResult[] = [
+      const list2: Array<DomainSearchResult> = [
         {
           id: 'shared-1',
           domain: 'memory',
@@ -238,7 +238,7 @@ describe('mergeWithRRF', () => {
     });
 
     it('should handle single result list', () => {
-      const results: DomainSearchResult[] = [
+      const results: Array<DomainSearchResult> = [
         {
           id: 'item-1',
           domain: 'memory',
@@ -279,7 +279,7 @@ describe('mergeWithRRF', () => {
     });
 
     it('should correctly merge duplicate IDs across lists with summed scores', () => {
-      const list1: DomainSearchResult[] = [
+      const list1: Array<DomainSearchResult> = [
         {
           id: 'dup-1',
           domain: 'memory',
@@ -290,7 +290,7 @@ describe('mergeWithRRF', () => {
         },
       ];
 
-      const list2: DomainSearchResult[] = [
+      const list2: Array<DomainSearchResult> = [
         {
           id: 'dup-1',
           domain: 'memory',
@@ -301,7 +301,7 @@ describe('mergeWithRRF', () => {
         },
       ];
 
-      const list3: DomainSearchResult[] = [
+      const list3: Array<DomainSearchResult> = [
         {
           id: 'dup-1',
           domain: 'memory',

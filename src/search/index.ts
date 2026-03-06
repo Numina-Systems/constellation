@@ -14,3 +14,5 @@ export type {
 export type { SearchStore } from './store.ts';
 
 export { mergeWithRRF } from './rrf.ts';
+
+export { createMemorySearchDomain } from './domains/memory.ts';

@@ -15,5 +15,7 @@ export type { SearchStore } from './store.ts';
 
 export { mergeWithRRF } from './rrf.ts';
 
+export { createSearchStore } from './postgres-store.ts';
+
 export { createMemorySearchDomain } from './domains/memory.ts';
 export { createConversationSearchDomain } from './domains/conversations.ts';

@@ -721,6 +721,7 @@ async function main(): Promise<void> {
     registry,
     runtime,
     persistence,
+    embedding,
     config: {
       max_tool_rounds: config.agent.max_tool_rounds,
       context_budget: config.agent.context_budget,
@@ -750,6 +751,7 @@ async function main(): Promise<void> {
         registry,
         runtime,
         persistence,
+        embedding,
         config: {
           max_tool_rounds: config.agent.max_tool_rounds,
           context_budget: config.agent.context_budget,

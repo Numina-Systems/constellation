@@ -1,22 +1,22 @@
 # Tool
 
-Last verified: 2026-03-02
+Last verified: 2026-03-05
 
 ## Purpose
-Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, and agent scheduling.
+Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, agent scheduling, and unified search.
 
 ## Contracts
-- **Exposes**: `ToolRegistry` interface (`register`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
+- **Exposes**: `ToolRegistry` interface (`register`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
 - **Guarantees**:
   - `dispatch` validates required params, types, and enum values before calling handler
   - `dispatch` returns `ToolResult` (never throws); errors captured in `error` field
   - `generateStubs()` produces TypeScript function stubs that call `__callTool__` for the Deno IPC bridge
   - `toModelTools()` converts definitions to Anthropic tool format (JSON Schema)
   - Duplicate tool names are rejected at registration
-- **Expects**: Tools registered before dispatch. `MemoryManager` injected for memory tools. `SearchFn` and `FetchFn` injected for web tools. `Scheduler`, `owner`, and `PersistenceProvider` injected for scheduling tools.
+- **Expects**: Tools registered before dispatch. `MemoryManager` injected for memory tools. `SearchFn` and `FetchFn` injected for web tools. `Scheduler`, `owner`, and `PersistenceProvider` injected for scheduling tools. `SearchStore` injected for search tools.
 
 ## Dependencies
-- **Uses**: `src/memory/` (for built-in memory tools), `src/web/` (for built-in web tools), `src/extensions/scheduler.ts` and `src/persistence/` (for scheduling tools)
+- **Uses**: `src/memory/` (for built-in memory tools), `src/web/` (for built-in web tools), `src/extensions/scheduler.ts` and `src/persistence/` (for scheduling tools), `src/search/` (for built-in search tool)
 - **Used by**: `src/agent/`, `src/runtime/` (stubs for Deno bridge), `src/skill/` (ToolParameter, Tool types for skill tool definitions), `src/index.ts`
 - **Boundary**: Tool handlers are pure functions returning `ToolResult`. Side effects go through injected dependencies.
 
@@ -40,6 +40,7 @@ Provides a tool registry that manages registration, parameter validation, dispat
 - `schedule_task(name, schedule, prompt)` -- Schedule a one-shot or recurring task with a self-instruction prompt
 - `cancel_task(task_id)` -- Cancel a scheduled task (owner-scoped)
 - `list_tasks(include_cancelled?)` -- List agent-owned scheduled tasks
+- `search(query, mode?, domain?, limit?, start_time?, end_time?, role?, tier?)` -- Hybrid search across memory and conversations
 
 ## Key Files
 - `types.ts` -- `Tool`, `ToolRegistry`, `ToolResult`, `ToolDefinition` types
@@ -49,3 +50,4 @@ Provides a tool registry that manages registration, parameter validation, dispat
 - `builtin/compaction.ts` -- Context compaction tool definition
 - `builtin/web.ts` -- Web search and fetch tool definitions
 - `builtin/scheduling.ts` -- Scheduling tool implementations (schedule, cancel, list)
+- `builtin/search.ts` -- Unified search tool (delegates to SearchStore)

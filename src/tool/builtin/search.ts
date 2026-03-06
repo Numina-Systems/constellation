@@ -97,7 +97,7 @@ export function createSearchTools(searchStore: SearchStore): Array<Tool> {
           query,
           mode: mode as 'semantic' | 'keyword' | 'hybrid',
           domains,
-          embedding: null, // SearchStore will generate if needed
+          embedding: null,
           limit,
           startTime,
           endTime,

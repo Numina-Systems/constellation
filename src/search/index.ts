@@ -9,6 +9,6 @@ export type {
   DomainSearchResult,
   SearchResult,
   SearchDomain,
-} from './types.js';
+} from './types.ts';
 
-export type { SearchStore } from './store.js';
+export type { SearchStore } from './store.ts';

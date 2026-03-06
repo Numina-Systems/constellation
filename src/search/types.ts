@@ -16,17 +16,7 @@ export type SearchParams = {
   readonly tier: string | null;
 };
 
-export type DomainSearchParams = {
-  readonly query: string;
-  readonly mode: SearchMode;
-  readonly domains: ReadonlyArray<SearchDomainName>;
-  readonly embedding: ReadonlyArray<number> | null;
-  readonly limit: number;
-  readonly startTime: Date | null;
-  readonly endTime: Date | null;
-  readonly role: string | null;
-  readonly tier: string | null;
-};
+export type DomainSearchParams = SearchParams;
 
 export type SearchResultMetadata = {
   readonly tier: string | null;

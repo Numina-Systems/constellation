@@ -32,7 +32,7 @@ import { hasRateLimitConfig, buildRateLimiterConfig, createRateLimitContextProvi
 import { createPostgresSkillStore } from '@/skill/postgres-store';
 import { createSkillRegistry } from '@/skill/registry';
 import { createSkillTools } from '@/skill/tools';
-import { createPredictionStore, createTraceRecorder } from '@/reflexion';
+import { createPredictionStore, createTraceRecorder, shouldSkipReview } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { formatTraceSummary } from '@/scheduled-context';
@@ -856,6 +856,20 @@ async function main(): Promise<void> {
         }
       } catch (error) {
         console.warn('review job: failed to expire stale predictions', error);
+      }
+
+      // Before building the review event, check if there's been any activity
+      if (task.name === 'review-predictions') {
+        const recentTraces = await traceRecorder.queryTraces({
+          owner: AGENT_OWNER,
+          lookbackSince: new Date(Date.now() - 2 * 3600_000),
+          limit: 1,
+        });
+
+        if (shouldSkipReview(recentTraces.length)) {
+          console.log('[review-gate] skipping review-predictions: no agent-initiated traces since last window');
+          return;
+        }
       }
 
       const event =

@@ -13,7 +13,7 @@
 import { describe, it, expect, mock } from 'bun:test';
 import { createShutdownHandler, processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
 import { createPostgresScheduler } from '@/scheduler';
-import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider } from '@/reflexion';
+import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider, shouldSkipReview } from '@/reflexion';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { Cron } from 'croner';
@@ -719,6 +719,55 @@ describe('composition root wiring: onDue branching (AC4.1, AC4.3)', () => {
 
     expect(agentEvent.metadata['type']).toBe('agent-scheduled');
     expect(agentEvent.metadata['extraField']).toBe('agent-value');
+  });
+});
+
+// ============================================================================
+// composition root wiring: review gate (efficient-agent-loop.AC1)
+// Verify dynamic review gate logic for skipping idle reviews
+// ============================================================================
+
+describe('composition root wiring: review gate (efficient-agent-loop.AC1)', () => {
+  it('AC1.1: review proceeds when traces exist in lookback window', async () => {
+    const mockTrace: OperationTrace = {
+      id: 'trace-gate-1',
+      owner: 'test-owner',
+      conversationId: 'conv-1',
+      toolName: 'memory_write',
+      input: {},
+      outputSummary: 'Wrote block',
+      durationMs: 50,
+      success: true,
+      error: null,
+      createdAt: new Date(),
+    };
+    const traceStore = createMockTraceStore([mockTrace]);
+
+    // Gate check: traces exist, should NOT skip
+    const traces = await traceStore.queryTraces({
+      owner: 'test-owner',
+      lookbackSince: new Date(Date.now() - 2 * 3600_000),
+      limit: 1,
+    });
+    expect(shouldSkipReview(traces.length)).toBe(false);
+
+    // Review event should be built successfully
+    const task = { id: 'task-1', name: 'review-predictions', schedule: '0 * * * *' };
+    const event = await buildReviewEvent(task, traceStore, 'test-owner');
+    expect(event.source).toBe('review-job');
+  });
+
+  it('AC1.2: review skips when zero traces in lookback window', async () => {
+    const traceStore = createMockTraceStore([]);
+
+    const traces = await traceStore.queryTraces({
+      owner: 'test-owner',
+      lookbackSince: new Date(Date.now() - 2 * 3600_000),
+      limit: 1,
+    });
+    expect(shouldSkipReview(traces.length)).toBe(true);
+    // When shouldSkipReview returns true, handleSystemSchedulerTask
+    // returns early — no event is pushed, no LLM call is made
   });
 });
 

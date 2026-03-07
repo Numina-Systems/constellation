@@ -44,7 +44,7 @@ import {
   createActivityManager,
   createActivityContextProvider,
   createActivityDispatch,
-  createBlueskyInterceptor,
+  createActivityInterceptor,
   createWakeHandler,
   currentMode,
   sleepTaskCron,
@@ -798,7 +798,9 @@ async function main(): Promise<void> {
 
       // --- Activity-aware Bluesky handler (after Bluesky setup) ---
       if (activityManager && blueskySource) {
-        blueskySource.onMessage(createBlueskyInterceptor({
+        const highPriorityDids = new Set(config.bluesky.schedule_dids);
+
+        blueskySource.onMessage(createActivityInterceptor({
           activityManager,
           originalHandler: (message) => {
             eventQueue.push(message);
@@ -806,7 +808,13 @@ async function main(): Promise<void> {
               console.error('bluesky event processing error:', error);
             });
           },
-          highPriorityDids: config.bluesky.schedule_dids,
+          sourcePrefix: 'bluesky',
+          highPriorityFilter: highPriorityDids.size > 0
+            ? (message) => {
+                const authorDid = message.metadata['authorDid'] as string | undefined;
+                return authorDid !== undefined && highPriorityDids.has(authorDid);
+              }
+            : undefined,
         }));
         console.log('[activity] bluesky handler wrapped with activity interceptor');
       }

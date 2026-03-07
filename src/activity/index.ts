@@ -16,5 +16,7 @@ export type { SleepTaskEvent } from './sleep-events.ts';
 export { createWakeHandler } from './wake.ts';
 export type { WakeHandlerOptions } from './wake.ts';
 export { queuedEventToExternal } from './event-converter.ts';
+export { createActivityInterceptor } from './activity-interceptor.ts';
+export type { ActivityInterceptorOptions } from './activity-interceptor.ts';
 export { createBlueskyInterceptor } from './bluesky-interceptor.ts';
 export type { BlueskyInterceptorOptions } from './bluesky-interceptor.ts';

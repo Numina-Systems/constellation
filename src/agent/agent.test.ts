@@ -1064,6 +1064,9 @@ describe('processEvent', () => {
       },
     };
 
+    const sourceInstructions = new Map<string, string>();
+    sourceInstructions.set('bluesky', 'To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.');
+
     const deps: AgentDependencies = {
       model: mockModel,
       memory: mockMemory,
@@ -1071,6 +1074,7 @@ describe('processEvent', () => {
       runtime: mockRuntime,
       persistence: mockPersistence,
       config,
+      sourceInstructions,
     };
 
     const agent = createAgent(deps);
@@ -1218,6 +1222,9 @@ describe('processEvent', () => {
       },
     };
 
+    const sourceInstructions = new Map<string, string>();
+    sourceInstructions.set('bluesky', 'To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.');
+
     const deps: AgentDependencies = {
       model: mockModel,
       memory: mockMemory,
@@ -1225,6 +1232,7 @@ describe('processEvent', () => {
       runtime: mockRuntime,
       persistence: mockPersistence,
       config,
+      sourceInstructions,
     };
 
     const agent = createAgent(deps);

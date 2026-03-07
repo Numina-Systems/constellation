@@ -872,6 +872,8 @@ describe('composition root wiring: review gate (efficient-agent-loop.AC1)', () =
 
 describe('composition root wiring: event queue processing', () => {
   it('exports processEventQueue function', () => {
+    // Structural/smoke check: Verify the function is exported.
+    // This is a thin assertion but confirms export exists in the composition root.
     expect(typeof processEventQueue).toBe('function');
   });
 });
@@ -899,7 +901,8 @@ describe('composition root wiring: structural verification (AC2.2)', () => {
   });
 
   it('processEventQueue is called with single main agent for external events', () => {
-    // Verify the function is exported and designed for unified queue
+    // Structural/smoke check: Verify the function is exported and designed for unified queue.
+    // This is a thin assertion but confirms export exists in the composition root.
     expect(typeof processEventQueue).toBe('function');
   });
 });
@@ -941,8 +944,9 @@ describe('composition root wiring: source instructions (AC4.2, AC4.3)', () => {
   });
 
   it('processEventQueue accepts external events and routes them to agent', () => {
-    // Verify the function signature supports routing external events
-    // from the registry's event queue to the main agent
+    // Structural/smoke check: Verify the function signature supports routing external events
+    // from the registry's event queue to the main agent.
+    // This is a thin assertion but confirms export exists in the composition root.
     expect(typeof processEventQueue).toBe('function');
   });
 });

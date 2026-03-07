@@ -716,9 +716,8 @@ async function main(): Promise<void> {
     contextProviders.push(activityContextProvider);
   }
 
-  // Step 1: Build DataSource registrations array and source instructions map (BEFORE agent creation)
+  // Step 1: Build DataSource registrations array (BEFORE agent creation)
   const registrations: Array<DataSourceRegistration> = [];
-  const sourceInstructions = new Map<string, string>();
 
   if (blueskyConnected && blueskySource) {
     const highPriorityDids = new Set(config.bluesky.schedule_dids);
@@ -734,8 +733,14 @@ async function main(): Promise<void> {
           }
         : undefined,
     });
+  }
 
-    sourceInstructions.set('bluesky', blueskyInstructions);
+  // Derive source instructions map from registrations array
+  const sourceInstructions = new Map<string, string>();
+  for (const reg of registrations) {
+    if (reg.instructions) {
+      sourceInstructions.set(reg.source.name, reg.instructions);
+    }
   }
 
   // Step 2: Create agent with source instructions
@@ -777,7 +782,7 @@ async function main(): Promise<void> {
   }
 
   // Step 4: Build and create DataSource registry
-  const registry_: DataSourceRegistry | null = registrations.length > 0
+  const dataSourceRegistry: DataSourceRegistry | null = registrations.length > 0
     ? createDataSourceRegistry({
         registrations,
         eventSink: externalEventQueue,
@@ -786,7 +791,7 @@ async function main(): Promise<void> {
       })
     : null;
 
-  if (registry_ && blueskySource) {
+  if (dataSourceRegistry && blueskySource) {
     console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
   }
 
@@ -1037,7 +1042,7 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, registry_, schedulerWrapper, activityManager);
+  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

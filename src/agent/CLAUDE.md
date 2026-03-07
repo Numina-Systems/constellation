@@ -19,7 +19,7 @@ Implements the core agent loop: receives user messages, builds context from memo
   - Optional `contextProviders` are called during system prompt construction, and their output (if non-empty) is appended to the prompt
   - Relevant skills are injected into the system prompt per turn (requires `skills` in deps; uses `max_skills_per_turn` and `skill_threshold` config)
   - If `traceRecorder` is present, every tool dispatch (including execute_code and compact_context) is traced fire-and-forget with timing, success/failure, and output summary
-- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for dynamic system prompt sections, optional `skills` for per-turn skill injection, optional `traceRecorder` for operation tracing, optional `owner` for trace identity). Database connected with migrations applied.
+- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for dynamic system prompt sections, optional `skills` for per-turn skill injection, optional `traceRecorder` for operation tracing, optional `owner` for trace identity, optional `sourceInstructions` map for per-source context injection). Database connected with migrations applied.
 
 ## Dependencies
 - **Uses**: `src/model/` (LLM calls), `src/memory/` (context building), `src/tool/` (tool definitions, dispatch), `src/runtime/` (code execution), `src/persistence/` (message persistence), `src/compaction/` (optional, via `Compactor` interface), `src/skill/` (optional, skill retrieval and formatting), `src/reflexion/` (optional, via `TraceRecorder` interface)
@@ -37,7 +37,7 @@ Implements the core agent loop: receives user messages, builds context from memo
 - Compressed messages are archived to memory before deletion
 
 ## Key Files
-- `types.ts` -- `Agent`, `AgentConfig` (includes `max_skills_per_turn`, `skill_threshold`), `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `owner`, `contextProviders`, `skills`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
-- `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression, skill injection, trace recording)
+- `types.ts` -- `Agent`, `AgentConfig` (includes `max_skills_per_turn`, `skill_threshold`), `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `owner`, `contextProviders`, `skills`, `sourceInstructions`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
+- `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression, skill injection, trace recording, external event formatting with per-source instructions)
 - `context.ts` -- System prompt building, message conversion, token estimation, context provider integration
 - `scheduling-context.ts` -- Scheduling context provider (DID authority injection into system prompt)

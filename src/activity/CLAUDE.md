@@ -7,7 +7,7 @@ Implements a circadian sleep/wake cycle for the agent. During sleep, external ev
 
 ## Contracts
 - **Exposes**: `ActivityManager` port interface (`getState`, `isActive`, `transitionTo`, `queueEvent`, `flagEvent`, `drainQueue`, `getFlaggedEvents`), `createActivityManager(persistence, scheduleConfig, owner)`, `createActivityContextProvider(activityManager)`, `createActivityDispatch(options)`, `createActivityInterceptor(options)`, `createWakeHandler(options)`, schedule utilities (`currentMode`, `nextTransitionTime`, `validateCron`, `sleepTaskCron`, `isSleepTask`, `isTransitionTask`), sleep event builders (`buildCompactionEvent`, `buildPredictionReviewEvent`, `buildPatternAnalysisEvent`), `queuedEventToExternal`
-- **Guarantees**: `drainQueue` yields events in priority order (high first, then FIFO). Transition tasks and sleep tasks always execute regardless of mode. Non-activity tasks are queued during sleep, dispatched during active. Activity interceptor flags events matching a configurable `highPriorityFilter` predicate. Context provider caches state with 60s TTL. Dispatch falls through to original handler on error (never loses events).
+- **Guarantees**: `drainQueue` yields events in priority order (high first, then FIFO). Transition tasks and sleep tasks always execute regardless of mode. Non-activity tasks are queued during sleep, dispatched during active. Activity interceptor wraps event handlers transparently and flags events matching a configurable `highPriorityFilter` predicate (generic event filter, not Bluesky-specific). Context provider caches state with 60s TTL. Dispatch falls through to original handler on error (never loses events).
 - **Expects**: `PersistenceProvider` with migration 006 applied. Valid cron expressions in `ScheduleConfig`. Owner string for isolation.
 
 ## Dependencies
@@ -36,6 +36,6 @@ Implements a circadian sleep/wake cycle for the agent. During sleep, external ev
 - `dispatch.ts` -- Activity-aware task dispatch wrapper
 - `context-provider.ts` -- Cached context provider for agent system prompt
 - `wake.ts` -- Wake transition handler with trickle drain
-- `activity-interceptor.ts` -- Activity-aware event handler with configurable priority filtering
+- `activity-interceptor.ts` -- Generic activity-aware event handler wrapper with configurable priority filtering (used by DataSource registry)
 - `sleep-events.ts` -- Sleep task event builders (Functional Core)
 - `event-converter.ts` -- QueuedEvent to external event format (Functional Core)

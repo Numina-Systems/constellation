@@ -15,3 +15,4 @@ export { createTraceRecorder } from './trace-recorder.ts';
 export { createPredictionTools } from './tools.ts';
 export { createIntrospectionTools } from './introspection-tools.ts';
 export { createPredictionContextProvider } from './context-provider.ts';
+export { shouldSkipReview } from './review-gate.ts';

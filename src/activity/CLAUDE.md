@@ -1,13 +1,13 @@
 # Activity
 
-Last verified: 2026-03-04
+Last verified: 2026-03-07
 
 ## Purpose
 Implements a circadian sleep/wake cycle for the agent. During sleep, external events are queued instead of dispatched, and the agent runs reflective tasks (compaction, prediction review, pattern analysis). On wake, queued events trickle-drain back into the agent loop.
 
 ## Contracts
-- **Exposes**: `ActivityManager` port interface (`getState`, `isActive`, `transitionTo`, `queueEvent`, `flagEvent`, `drainQueue`, `getFlaggedEvents`), `createActivityManager(persistence, scheduleConfig, owner)`, `createActivityContextProvider(activityManager)`, `createActivityDispatch(options)`, `createBlueskyInterceptor(options)`, `createWakeHandler(options)`, schedule utilities (`currentMode`, `nextTransitionTime`, `validateCron`, `sleepTaskCron`, `isSleepTask`, `isTransitionTask`), sleep event builders (`buildCompactionEvent`, `buildPredictionReviewEvent`, `buildPatternAnalysisEvent`), `queuedEventToExternal`
-- **Guarantees**: `drainQueue` yields events in priority order (high first, then FIFO). Transition tasks and sleep tasks always execute regardless of mode. Non-activity tasks are queued during sleep, dispatched during active. Bluesky interceptor flags events from high-priority DIDs. Context provider caches state with 60s TTL. Dispatch falls through to original handler on error (never loses events).
+- **Exposes**: `ActivityManager` port interface (`getState`, `isActive`, `transitionTo`, `queueEvent`, `flagEvent`, `drainQueue`, `getFlaggedEvents`), `createActivityManager(persistence, scheduleConfig, owner)`, `createActivityContextProvider(activityManager)`, `createActivityDispatch(options)`, `createActivityInterceptor(options)`, `createWakeHandler(options)`, schedule utilities (`currentMode`, `nextTransitionTime`, `validateCron`, `sleepTaskCron`, `isSleepTask`, `isTransitionTask`), sleep event builders (`buildCompactionEvent`, `buildPredictionReviewEvent`, `buildPatternAnalysisEvent`), `queuedEventToExternal`
+- **Guarantees**: `drainQueue` yields events in priority order (high first, then FIFO). Transition tasks and sleep tasks always execute regardless of mode. Non-activity tasks are queued during sleep, dispatched during active. Activity interceptor flags events matching a configurable `highPriorityFilter` predicate. Context provider caches state with 60s TTL. Dispatch falls through to original handler on error (never loses events).
 - **Expects**: `PersistenceProvider` with migration 006 applied. Valid cron expressions in `ScheduleConfig`. Owner string for isolation.
 
 ## Dependencies
@@ -36,6 +36,6 @@ Implements a circadian sleep/wake cycle for the agent. During sleep, external ev
 - `dispatch.ts` -- Activity-aware task dispatch wrapper
 - `context-provider.ts` -- Cached context provider for agent system prompt
 - `wake.ts` -- Wake transition handler with trickle drain
-- `bluesky-interceptor.ts` -- Activity-aware Bluesky event handler
+- `activity-interceptor.ts` -- Activity-aware event handler with configurable priority filtering
 - `sleep-events.ts` -- Sleep task event builders (Functional Core)
 - `event-converter.ts` -- QueuedEvent to external event format (Functional Core)

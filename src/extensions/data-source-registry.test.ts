@@ -45,7 +45,7 @@ function createMockActivityManager(): ActivityManager {
 describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
   describe('efficient-agent-loop.AC2.3: event routing', () => {
     it('should route messages from registered DataSources to the event sink', async () => {
-      const events: IncomingMessage[] = [];
+      const events: Array<IncomingMessage> = [];
       const eventSink = {
         push(event: IncomingMessage) {
           events.push(event);
@@ -58,7 +58,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
       };
 
       const mockSource = createMockDataSource('test-source');
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: mockSource },
       ];
 
@@ -90,7 +90,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
     });
 
     it('should route messages from multiple DataSources to the same sink', async () => {
-      const events: IncomingMessage[] = [];
+      const events: Array<IncomingMessage> = [];
       const eventSink = {
         push(event: IncomingMessage) {
           events.push(event);
@@ -102,7 +102,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
       const source1 = createMockDataSource('source1');
       const source2 = createMockDataSource('source2');
 
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: source1 },
         { source: source2 },
       ];
@@ -148,7 +148,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
       };
 
       const mockSource = createMockDataSource('test');
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: mockSource },
       ];
 
@@ -188,7 +188,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
         source2Disconnected = true;
       };
 
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: source1 },
         { source: source2 },
       ];
@@ -227,7 +227,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
         source3Disconnected = true;
       };
 
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: source1 },
         { source: source2 },
         { source: source3 },
@@ -250,7 +250,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
 
   describe('activity interceptor wrapping', () => {
     it('should wrap handler with activity interceptor when activityManager is provided', async () => {
-      const events: IncomingMessage[] = [];
+      const events: Array<IncomingMessage> = [];
       const eventSink = {
         push(event: IncomingMessage) {
           events.push(event);
@@ -260,7 +260,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
       const mockSource = createMockDataSource('test');
       const activityManager = createMockActivityManager();
 
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: mockSource },
       ];
 
@@ -284,11 +284,14 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
 
       mockSource.handler?.(msg);
 
+      // Due to async nature of the interceptor, use a condition-based wait
+      // to verify the message arrives in the event sink
+      await new Promise(resolve => setTimeout(resolve, 10));
+
       // With mocked isActive returning true, message should be pushed to event sink
       // (the interceptor calls originalHandler when isActive is true)
-      // Due to async nature of interceptor, we'd need to await or check with a delay
-      // For now, just verify the handler was set
-      expect(mockSource.handler).toBeDefined();
+      expect(events.length).toBe(1);
+      expect(events[0]).toEqual(msg);
     });
 
     it('should call handler directly when activityManager is not provided', async () => {
@@ -301,7 +304,7 @@ describe('createDataSourceRegistry (efficient-agent-loop.AC2)', () => {
 
       const mockSource = createMockDataSource('test');
 
-      const registrations: DataSourceRegistration[] = [
+      const registrations: Array<DataSourceRegistration> = [
         { source: mockSource },
       ];
 

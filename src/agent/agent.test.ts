@@ -1104,6 +1104,60 @@ describe('processEvent', () => {
     expect(content).toContain('execute_code');
   });
 
+  it('AC2.4: instructions are absent when source is not in sourceInstructions map', async () => {
+    const event: ExternalEvent = {
+      source: 'discord',
+      content: 'Message from discord',
+      metadata: { user_id: 'user123' },
+      timestamp: new Date('2026-02-28T12:00:00.000Z'),
+    };
+
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Got it' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    let capturedRequest: ModelRequest | null = null;
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        capturedRequest = request;
+        return modelResponse;
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    // sourceInstructions map contains only bluesky, not discord
+    const sourceInstructions = new Map<string, string>();
+    sourceInstructions.set('bluesky', 'Bluesky instructions');
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+      sourceInstructions,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processEvent(event);
+
+    // Verify the message does NOT contain instructions
+    expect(capturedRequest).not.toBeNull();
+    const messages = (capturedRequest as unknown as { messages: Array<{ content?: string }> })?.messages || [];
+    const lastMessage = messages[messages.length - 1];
+    const content = String(lastMessage?.content || '');
+
+    expect(content).toContain('[External Event: discord]');
+    expect(content).toContain('Message from discord');
+    // Instructions should NOT be present for discord source
+    expect(content).not.toContain('[Instructions:');
+  });
+
   it('AC2.3: agent can use tools during event processing', async () => {
     let toolDispatched = false;
 

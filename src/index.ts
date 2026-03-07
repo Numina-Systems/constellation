@@ -716,6 +716,12 @@ async function main(): Promise<void> {
     contextProviders.push(activityContextProvider);
   }
 
+  // Build source instructions map for external event formatting
+  const sourceInstructions = new Map<string, string>();
+  if (config.bluesky?.enabled) {
+    sourceInstructions.set('bluesky', 'To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.');
+  }
+
   const agent = createAgent({
     model,
     memory,
@@ -736,6 +742,7 @@ async function main(): Promise<void> {
     owner: AGENT_OWNER,
     contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
+    sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
   }, mainConversationId);
 
   if (blueskyConnected && blueskySource) {
@@ -764,6 +771,7 @@ async function main(): Promise<void> {
         owner: AGENT_OWNER,
         contextProviders: blueskyContextProviders.length > 0 ? blueskyContextProviders : undefined,
         skills: skillRegistry,
+        sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop

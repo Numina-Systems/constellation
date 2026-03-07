@@ -19,7 +19,10 @@ const DEFAULT_MAX_TOKENS = 24576; // Default token limit per request
  * Format an external event as a structured user message with metadata header.
  * Pure function for testability.
  */
-function formatExternalEvent(event: ExternalEvent): string {
+function formatExternalEvent(
+  event: ExternalEvent,
+  sourceInstructions?: ReadonlyMap<string, string>,
+): string {
   const header = `[External Event: ${event.source}]`;
   const from = event.metadata['handle'] ? `From: @${event.metadata['handle']} (${event.metadata['did']})` : '';
   const post = event.metadata['uri'] ? `Post: ${event.metadata['uri']}` : '';
@@ -41,10 +44,11 @@ function formatExternalEvent(event: ExternalEvent): string {
 
   parts.push('', event.content);
 
-  // For bluesky events, add instructions so the agent knows to use execute_code
-  if (event.source === 'bluesky') {
+  // Append source-specific instructions if available
+  const instructions = sourceInstructions?.get(event.source);
+  if (instructions) {
     parts.push('');
-    parts.push('[Instructions: To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.]');
+    parts.push(`[Instructions: ${instructions}]`);
   }
 
   return parts.filter(Boolean).join('\n');
@@ -290,7 +294,7 @@ export function createAgent(
   }
 
   async function processEvent(event: ExternalEvent): Promise<string> {
-    const formattedMessage = formatExternalEvent(event);
+    const formattedMessage = formatExternalEvent(event, deps.sourceInstructions);
     return processMessage(formattedMessage);
   }
 

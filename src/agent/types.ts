@@ -58,6 +58,7 @@ export type AgentDependencies = {
   owner?: string;
   contextProviders?: ReadonlyArray<ContextProvider>;
   skills?: SkillRegistry;
+  sourceInstructions?: ReadonlyMap<string, string>;
 };
 
 export type Agent = {

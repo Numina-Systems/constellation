@@ -44,7 +44,6 @@ import {
   createActivityManager,
   createActivityContextProvider,
   createActivityDispatch,
-  createActivityInterceptor,
   createWakeHandler,
   currentMode,
   sleepTaskCron,
@@ -61,7 +60,6 @@ import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
 import type { ExecutionContext } from '@/runtime/types';
-import type { IncomingMessage } from '@/extensions/data-source';
 import type { EventQueue } from '@/extensions/bluesky';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
@@ -70,6 +68,8 @@ import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
 import type { ContextProvider } from '@/agent/types';
+import { createDataSourceRegistry } from '@/extensions/data-source-registry';
+import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 
 const AGENT_OWNER = 'spirit';
 
@@ -221,7 +221,7 @@ export async function buildAgentScheduledEvent(
 export function createShutdownHandler(
   rl: readline.Interface,
   persistence: PersistenceProvider,
-  blueskySource?: BlueskyDataSource | null,
+  dataSourceRegistry?: DataSourceRegistry | null,
   scheduler?: { stop(): void } | null,
   activityManager?: ActivityManager | null,
 ): () => Promise<void> {
@@ -234,12 +234,12 @@ export function createShutdownHandler(
       scheduler.stop();
       console.log('scheduler stopped');
     }
-    if (blueskySource) {
+    if (dataSourceRegistry) {
       try {
-        await blueskySource.disconnect();
-        console.log('bluesky datasource disconnected');
+        await dataSourceRegistry.shutdown();
+        console.log('data sources disconnected');
       } catch (error) {
-        console.error('error disconnecting bluesky:', error);
+        console.error('error disconnecting data sources:', error);
       }
     }
     if (activityManager) {
@@ -716,12 +716,29 @@ async function main(): Promise<void> {
     contextProviders.push(activityContextProvider);
   }
 
-  // Build source instructions map for external event formatting
+  // Step 1: Build DataSource registrations array and source instructions map (BEFORE agent creation)
+  const registrations: Array<DataSourceRegistration> = [];
   const sourceInstructions = new Map<string, string>();
-  if (config.bluesky?.enabled) {
-    sourceInstructions.set('bluesky', 'To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.');
+
+  if (blueskyConnected && blueskySource) {
+    const highPriorityDids = new Set(config.bluesky.schedule_dids);
+    const blueskyInstructions = 'To respond to this post, use memory_read to find your bluesky templates (e.g. "bluesky reply" or "bluesky post"), then use execute_code with the template. Bluesky credentials (BSKY_SERVICE, BSKY_ACCESS_TOKEN, BSKY_REFRESH_TOKEN, BSKY_DID, BSKY_HANDLE) are automatically available in your sandbox. Replace placeholder text with your actual response.';
+
+    registrations.push({
+      source: blueskySource,
+      instructions: blueskyInstructions,
+      highPriorityFilter: highPriorityDids.size > 0
+        ? (message) => {
+            const authorDid = message.metadata['authorDid'] as string | undefined;
+            return authorDid !== undefined && highPriorityDids.has(authorDid);
+          }
+        : undefined,
+    });
+
+    sourceInstructions.set('bluesky', blueskyInstructions);
   }
 
+  // Step 2: Create agent with source instructions
   const agent = createAgent({
     model,
     memory,
@@ -745,89 +762,32 @@ async function main(): Promise<void> {
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
   }, mainConversationId);
 
-  if (blueskyConnected && blueskySource) {
-      // Create dedicated Bluesky agent with deterministic conversation ID
-      // Zod validates that did is present when enabled, but TypeScript doesn't know it
-      const blueskyConversationId = `bluesky-${config.bluesky.did!}`;
+  // Step 3: Create shared external event queue and processing loop (for all DataSource events)
+  const externalEventQueue = createEventQueue(50);
+  let externalProcessing = false;
 
-      const blueskyContextProviders = [...contextProviders, schedulingContextProvider];
+  async function processExternalEvent(): Promise<void> {
+    if (externalProcessing) return;
+    externalProcessing = true;
+    try {
+      await processEventQueue(externalEventQueue, agent, 'external');
+    } finally {
+      externalProcessing = false;
+    }
+  }
 
-      const blueskyAgent = createAgent({
-        model,
-        memory,
-        registry,
-        runtime,
-        persistence,
-        config: {
-          max_tool_rounds: config.agent.max_tool_rounds,
-          context_budget: config.agent.context_budget,
-          model_max_tokens: DEFAULT_MODEL_MAX_TOKENS,
-          model_name: config.model.name,
-          max_skills_per_turn: config.skills?.max_per_turn,
-          skill_threshold: config.skills?.similarity_threshold,
-        },
-        getExecutionContext,
-        traceRecorder,
-        owner: AGENT_OWNER,
-        contextProviders: blueskyContextProviders.length > 0 ? blueskyContextProviders : undefined,
-        skills: skillRegistry,
-        sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
-      }, blueskyConversationId);
+  // Step 4: Build and create DataSource registry
+  const registry_: DataSourceRegistry | null = registrations.length > 0
+    ? createDataSourceRegistry({
+        registrations,
+        eventSink: externalEventQueue,
+        processEvents: processExternalEvent,
+        activityManager: activityManager ?? undefined,
+      })
+    : null;
 
-      // Set up event queue and processing loop
-      const eventQueue = createEventQueue(50);
-      let processing = false;
-
-      async function processNextEvent(): Promise<void> {
-        if (processing) return;
-        processing = true;
-
-        try {
-          // AC6.4: Drain the queue in a loop. Events that arrive while we're processing
-          // the current batch will be processed in the same call (not dropped). The queue
-          // is bounded to prevent unbounded growth. Subsequent calls to processNextEvent()
-          // are no-ops (guarded by the processing flag) until this one completes.
-          await processEventQueue(eventQueue, blueskyAgent);
-        } finally {
-          processing = false;
-        }
-      }
-
-      blueskySource.onMessage((message: IncomingMessage) => {
-        // IncomingMessage (from DataSource) and ExternalEvent (agent input type) are
-        // structurally identical: { source, content, metadata, timestamp }. Both are
-        // passed as-is to processEvent without conversion; TypeScript confirms structural
-        // compatibility across module boundaries.
-        eventQueue.push(message);
-        processNextEvent().catch((error) => {
-          console.error('bluesky event processing error:', error);
-        });
-      });
-
-      // --- Activity-aware Bluesky handler (after Bluesky setup) ---
-      if (activityManager && blueskySource) {
-        const highPriorityDids = new Set(config.bluesky.schedule_dids);
-
-        blueskySource.onMessage(createActivityInterceptor({
-          activityManager,
-          originalHandler: (message) => {
-            eventQueue.push(message);
-            processNextEvent().catch((error) => {
-              console.error('bluesky event processing error:', error);
-            });
-          },
-          sourcePrefix: 'bluesky',
-          highPriorityFilter: highPriorityDids.size > 0
-            ? (message) => {
-                const authorDid = message.metadata['authorDid'] as string | undefined;
-                return authorDid !== undefined && highPriorityDids.has(authorDid);
-              }
-            : undefined,
-        }));
-        console.log('[activity] bluesky handler wrapped with activity interceptor');
-      }
-
-      console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
+  if (registry_ && blueskySource) {
+    console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
   }
 
   // Set up scheduler for periodic tasks
@@ -1077,7 +1037,7 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, blueskySource, schedulerWrapper, activityManager);
+  const shutdownHandler = createShutdownHandler(rl, persistence, registry_, schedulerWrapper, activityManager);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

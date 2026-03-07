@@ -1,6 +1,6 @@
 # Extensions
 
-Last verified: 2026-03-02
+Last verified: 2026-03-07
 
 ## Purpose
 Defines extension point interfaces and hosts concrete implementations. Extension interfaces are contracts that plugins implement to extend the agent's capabilities.
@@ -12,7 +12,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 
 ## Dependencies
 - **Uses**: `src/tool/types.ts` (ToolProvider references ToolDefinition/ToolResult)
-- **Used by**: `src/index.ts` (composition root imports Bluesky source), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port)
+- **Used by**: `src/index.ts` (composition root imports Bluesky source and DataSource registry), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port), `src/activity/` (activity interceptor consumes `IncomingMessage` type)
 - **Boundary**: Extension interfaces live here. Implementations live in `src/extensions/<name>/`.
 
 ## Extension Points
@@ -27,7 +27,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 - **DataSource Registry** (`data-source-registry.ts`): Routes all registered sources through unified event handling with activity awareness.
 
 ## Key Files
-- `data-source.ts` -- DataSource, IncomingMessage, OutgoingMessage, DataSourceRegistration, DataSourceRegistry, createDataSourceRegistry
+- `data-source.ts` -- DataSource, IncomingMessage, OutgoingMessage, DataSourceRegistration, DataSourceRegistry
 - `coordinator.ts` -- Coordinator, CoordinationPattern, AgentRef, AgentResponse
 - `scheduler.ts` -- Scheduler, ScheduledTask
 - `tool-provider.ts` -- ToolProvider

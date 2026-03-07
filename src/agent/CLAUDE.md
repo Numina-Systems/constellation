@@ -1,6 +1,6 @@
 # Agent
 
-Last verified: 2026-03-02
+Last verified: 2026-03-07
 
 ## Purpose
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency, injects relevant skills into the system prompt per turn via optional `SkillRegistry` dependency, and optionally records operation traces for every tool dispatch via `TraceRecorder`.

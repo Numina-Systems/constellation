@@ -12,8 +12,15 @@ const AgentConfigSchema = z.object({
   max_context_tokens: z.number().int().positive().default(200000),
 });
 
+const OpenRouterConfigSchema = z.object({
+  sort: z.enum(["price", "throughput", "latency"]).optional(),
+  allow_fallbacks: z.boolean().optional(),
+  referer: z.string().optional(),
+  title: z.string().optional(),
+});
+
 const ModelConfigSchema = z.object({
-  provider: z.enum(["anthropic", "openai-compat", "ollama"]),
+  provider: z.enum(["anthropic", "openai-compat", "ollama", "openrouter"]),
   name: z.string(),
   api_key: z.string().optional(),
   base_url: z.string().url().optional(),
@@ -21,6 +28,7 @@ const ModelConfigSchema = z.object({
   input_tokens_per_minute: z.number().int().positive().optional(),
   output_tokens_per_minute: z.number().int().positive().optional(),
   min_output_reserve: z.number().int().positive().optional(),
+  openrouter: OpenRouterConfigSchema.optional(),
 });
 
 const EmbeddingConfigSchema = z.object({
@@ -68,7 +76,7 @@ const BlueskyConfigSchema = z
   });
 
 const SummarizationConfigSchema = z.object({
-  provider: z.enum(["anthropic", "openai-compat", "ollama"]),
+  provider: z.enum(["anthropic", "openai-compat", "ollama", "openrouter"]),
   name: z.string(),
   api_key: z.string().optional(),
   base_url: z.string().url().optional(),
@@ -198,6 +206,7 @@ const AppConfigSchema = z.object({
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export type OpenRouterConfig = z.infer<typeof OpenRouterConfigSchema>;
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
@@ -208,4 +217,4 @@ export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema };

@@ -1,42 +1,40 @@
 // pattern: Functional Core
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 
 describe("openrouter-provider.AC1.3: OPENROUTER_API_KEY env override", () => {
   let configPath: string;
-  let originalEnv: Record<string, string | undefined> = {};
+  const originalEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     // Create a temp config file
     configPath = join(tmpdir(), `test-config-${Date.now()}.toml`);
 
     // Save original env vars
-    originalEnv = {
-      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-      OPENAI_COMPAT_API_KEY: process.env.OPENAI_COMPAT_API_KEY,
-    };
+    originalEnv["OPENROUTER_API_KEY"] = process.env["OPENROUTER_API_KEY"];
+    originalEnv["ANTHROPIC_API_KEY"] = process.env["ANTHROPIC_API_KEY"];
+    originalEnv["OPENAI_COMPAT_API_KEY"] = process.env["OPENAI_COMPAT_API_KEY"];
   });
 
   afterEach(() => {
     // Restore original env vars
-    if (originalEnv.OPENROUTER_API_KEY === undefined) {
-      delete process.env.OPENROUTER_API_KEY;
+    if (originalEnv["OPENROUTER_API_KEY"] === undefined) {
+      delete process.env["OPENROUTER_API_KEY"];
     } else {
-      process.env.OPENROUTER_API_KEY = originalEnv.OPENROUTER_API_KEY;
+      process.env["OPENROUTER_API_KEY"] = originalEnv["OPENROUTER_API_KEY"];
     }
-    if (originalEnv.ANTHROPIC_API_KEY === undefined) {
-      delete process.env.ANTHROPIC_API_KEY;
+    if (originalEnv["ANTHROPIC_API_KEY"] === undefined) {
+      delete process.env["ANTHROPIC_API_KEY"];
     } else {
-      process.env.ANTHROPIC_API_KEY = originalEnv.ANTHROPIC_API_KEY;
+      process.env["ANTHROPIC_API_KEY"] = originalEnv["ANTHROPIC_API_KEY"];
     }
-    if (originalEnv.OPENAI_COMPAT_API_KEY === undefined) {
-      delete process.env.OPENAI_COMPAT_API_KEY;
+    if (originalEnv["OPENAI_COMPAT_API_KEY"] === undefined) {
+      delete process.env["OPENAI_COMPAT_API_KEY"];
     } else {
-      process.env.OPENAI_COMPAT_API_KEY = originalEnv.OPENAI_COMPAT_API_KEY;
+      process.env["OPENAI_COMPAT_API_KEY"] = originalEnv["OPENAI_COMPAT_API_KEY"];
     }
 
     // Clean up temp file
@@ -61,7 +59,7 @@ model = "text-embedding-3-small"
 url = "postgresql://localhost/test"
 `;
     writeFileSync(configPath, tomlContent);
-    process.env.OPENROUTER_API_KEY = "sk-or-test-key-12345";
+    process.env["OPENROUTER_API_KEY"] = "sk-or-test-key-12345";
 
     const config = loadConfig(configPath);
 
@@ -83,8 +81,8 @@ model = "text-embedding-3-small"
 url = "postgresql://localhost/test"
 `;
     writeFileSync(configPath, tomlContent);
-    process.env.ANTHROPIC_API_KEY = "sk-ant-anthropic-key";
-    process.env.OPENROUTER_API_KEY = "sk-or-ignored-key";
+    process.env["ANTHROPIC_API_KEY"] = "sk-ant-anthropic-key";
+    process.env["OPENROUTER_API_KEY"] = "sk-or-ignored-key";
 
     const config = loadConfig(configPath);
 
@@ -107,8 +105,8 @@ model = "text-embedding-3-small"
 url = "postgresql://localhost/test"
 `;
     writeFileSync(configPath, tomlContent);
-    process.env.OPENAI_COMPAT_API_KEY = "sk-openai-compat-key";
-    process.env.OPENROUTER_API_KEY = "sk-or-ignored-key";
+    process.env["OPENAI_COMPAT_API_KEY"] = "sk-openai-compat-key";
+    process.env["OPENROUTER_API_KEY"] = "sk-or-ignored-key";
 
     const config = loadConfig(configPath);
 
@@ -131,7 +129,7 @@ model = "text-embedding-3-small"
 url = "postgresql://localhost/test"
 `;
     writeFileSync(configPath, tomlContent);
-    delete process.env.OPENROUTER_API_KEY;
+    delete process.env["OPENROUTER_API_KEY"];
 
     const config = loadConfig(configPath);
 

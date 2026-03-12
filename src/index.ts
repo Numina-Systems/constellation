@@ -28,6 +28,8 @@ import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
 import { createRateLimitedProvider } from '@/rate-limit/provider.js';
 import { hasRateLimitConfig, buildRateLimiterConfig, createRateLimitContextProvider } from '@/rate-limit/context.js';
+import { createOpenRouterAdapter } from '@/model/openrouter.js';
+import type { ServerRateLimitSync } from '@/rate-limit/types.js';
 import { createPostgresSkillStore } from '@/skill/postgres-store';
 import { createSkillRegistry } from '@/skill/registry';
 import { createSkillTools } from '@/skill/tools';
@@ -434,7 +436,15 @@ async function main(): Promise<void> {
 
   // Create providers
   const persistence = createPostgresProvider(config.database);
-  const rawModel = createModelProvider(config.model);
+
+  // For OpenRouter, use an indirect callback reference so the adapter captures
+  // a proxy that gets wired to the rate-limited provider's syncFromServer after creation
+  let syncFromServerCallback: ServerRateLimitSync | undefined;
+
+  const rawModel = config.model.provider === "openrouter"
+    ? createOpenRouterAdapter(config.model, (status) => syncFromServerCallback?.(status))
+    : createModelProvider(config.model);
+
   const contextProviders: Array<ContextProvider> = [];
 
   const model = hasRateLimitConfig(config.model)
@@ -443,6 +453,9 @@ async function main(): Promise<void> {
           rawModel,
           buildRateLimiterConfig(config.model),
         );
+        if (config.model.provider === "openrouter") {
+          syncFromServerCallback = rateLimitedModel.syncFromServer;
+        }
         contextProviders.push(createRateLimitContextProvider(() => rateLimitedModel.getStatus()));
         console.log(`rate limiting active for model ${config.model.name} (${config.model.requests_per_minute} RPM, ${config.model.input_tokens_per_minute} ITPM, ${config.model.output_tokens_per_minute} OTPM)`);
         return rateLimitedModel;
@@ -454,19 +467,26 @@ async function main(): Promise<void> {
   // Create summarization model provider
   // If summarization config exists, create a dedicated provider from it
   // Otherwise, reuse the main model provider
+  let summarizationSyncFromServerCallback: ServerRateLimitSync | undefined;
+
   const summarizationModel: ModelProvider = config.summarization
     ? (() => {
-        const rawSummarizationModel = createModelProvider({
-          provider: config.summarization.provider,
-          name: config.summarization.name,
-          api_key: config.summarization.api_key,
-          base_url: config.summarization.base_url,
-        });
+        const rawSummarizationModel = config.summarization.provider === "openrouter"
+          ? createOpenRouterAdapter(config.summarization, (status) => summarizationSyncFromServerCallback?.(status))
+          : createModelProvider({
+              provider: config.summarization.provider,
+              name: config.summarization.name,
+              api_key: config.summarization.api_key,
+              base_url: config.summarization.base_url,
+            });
         if (hasRateLimitConfig(config.summarization)) {
           const rateLimited = createRateLimitedProvider(
             rawSummarizationModel,
             buildRateLimiterConfig(config.summarization),
           );
+          if (config.summarization.provider === "openrouter") {
+            summarizationSyncFromServerCallback = rateLimited.syncFromServer;
+          }
           console.log(`rate limiting active for summarization model ${config.summarization.name}`);
           return rateLimited;
         }

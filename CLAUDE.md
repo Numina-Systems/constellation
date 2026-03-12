@@ -19,6 +19,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `bun run build` -- Type-check (`tsc --noEmit`)
 - `bun test` -- Run all tests
 - `bun run migrate` -- Run database migrations
+- `bun run backfill-embeddings` -- Backfill embeddings for existing messages
 - `docker compose up -d` -- Start pgvector PostgreSQL
 
 ## Project Structure
@@ -27,7 +28,8 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
-- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling)
+- `src/search/` -- Hybrid search (semantic + keyword + RRF) across memory and conversations
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers

@@ -14,6 +14,7 @@ import type { PersistenceProvider } from '../persistence/types.ts';
 import type { Compactor } from '../compaction/types.ts';
 import type { TraceRecorder } from '../reflexion/types.ts';
 import type { SkillRegistry } from '../skill/types.ts';
+import type { EmbeddingProvider } from '../embedding/types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -52,6 +53,7 @@ export type AgentDependencies = {
   runtime: CodeRuntime;
   persistence: PersistenceProvider;
   config: AgentConfig;
+  embedding?: EmbeddingProvider;
   getExecutionContext?: () => ExecutionContext;
   compactor?: Compactor;
   traceRecorder?: TraceRecorder;

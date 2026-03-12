@@ -1,6 +1,6 @@
 # Persistence
 
-Last verified: 2026-03-04
+Last verified: 2026-03-05
 
 ## Purpose
 Provides a PostgreSQL adapter behind a port interface so all database access flows through a single abstraction. Owns schema migrations.
@@ -12,7 +12,7 @@ Provides a PostgreSQL adapter behind a port interface so all database access flo
 
 ## Dependencies
 - **Uses**: `pg` (node-postgres), `src/config/`
-- **Used by**: `src/memory/postgres-store.ts`, `src/agent/agent.ts` (message persistence), `src/skill/postgres-store.ts` (skill embeddings), `src/reflexion/` (prediction store, trace recorder), `src/scheduler/` (scheduled tasks), `src/activity/` (activity state, event queue), `src/tool/builtin/scheduling.ts` (owner-scoped task queries), `src/index.ts`
+- **Used by**: `src/memory/postgres-store.ts`, `src/agent/agent.ts` (message persistence), `src/skill/postgres-store.ts` (skill embeddings), `src/search/` (memory and conversation search domains), `src/reflexion/` (prediction store, trace recorder), `src/scheduler/` (scheduled tasks), `src/activity/` (activity state, event queue), `src/tool/builtin/scheduling.ts` (owner-scoped task queries), `src/index.ts`
 - **Boundary**: No module should import `pg` directly. All SQL goes through `PersistenceProvider.query`.
 
 ## Key Decisions

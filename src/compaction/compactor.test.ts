@@ -41,6 +41,43 @@ function createMessage(
   };
 }
 
+function createToolCallMessage(
+  id: string,
+  content: string,
+  toolCalls: Array<{ id: string; name: string }>,
+  offset: number = 0,
+): ConversationMessage {
+  return {
+    id,
+    conversation_id: 'test-conv',
+    role: 'assistant',
+    content,
+    tool_calls: toolCalls.map((tc) => ({
+      type: 'tool_use',
+      id: tc.id,
+      name: tc.name,
+      input: {},
+    })),
+    created_at: new Date(1000 + offset),
+  };
+}
+
+function createToolResultMessage(
+  id: string,
+  toolCallId: string,
+  content: string,
+  offset: number = 0,
+): ConversationMessage {
+  return {
+    id,
+    conversation_id: 'test-conv',
+    role: 'tool',
+    content,
+    tool_call_id: toolCallId,
+    created_at: new Date(1000 + offset),
+  };
+}
+
 function createBatch(index: number, depth: number = 0): SummaryBatch {
   const startTime = new Date(2000 + index * 1000);
   const endTime = new Date(2000 + index * 1000 + 900);
@@ -474,6 +511,118 @@ describe('Pure helper functions', () => {
 
       // keepRecent is 10, but only 2 messages total, so nothing to compress
       expect(toCompress.length).toBe(0);
+    });
+
+    it('GH-24: keeps assistant tool_calls with their tool results in toKeep', () => {
+      // History: user, assistant+tool_call, tool_result, user, assistant
+      // With keepRecent=3, naive split puts assistant+tool_call in toCompress
+      // but tool_result in toKeep — orphaning the tool result
+      const messages = [
+        createMessage('1', 'user', 'hello', 0),
+        createToolCallMessage('2', '[Tool calls]', [{ id: 'tc-1', name: 'memory_read' }], 100),
+        createToolResultMessage('3', 'tc-1', 'result', 200),
+        createMessage('4', 'user', 'thanks', 300),
+        createMessage('5', 'assistant', 'welcome', 400),
+      ];
+
+      const { toCompress, toKeep } = splitHistory(messages, 3);
+
+      // The tool result (id=3) references tool call in assistant (id=2).
+      // Both must be on the same side of the split.
+      const keepIds = toKeep.map((m) => m.id);
+      const compressIds = toCompress.map((m) => m.id);
+
+      // If the tool result is in toKeep, its assistant must also be in toKeep
+      if (keepIds.includes('3')) {
+        expect(keepIds).toContain('2');
+      }
+      // If the assistant is in toCompress, its tool result must also be in toCompress
+      if (compressIds.includes('2')) {
+        expect(compressIds).toContain('3');
+      }
+    });
+
+    it('GH-24: keeps assistant tool_calls with their tool results in toCompress', () => {
+      // History with tool pair early on, lots of messages after
+      // The tool pair should stay together even when both end up in toCompress
+      const messages = [
+        createMessage('1', 'user', 'start', 0),
+        createToolCallMessage('2', '[Tool calls]', [{ id: 'tc-1', name: 'web_search' }], 100),
+        createToolResultMessage('3', 'tc-1', 'search results', 200),
+        createMessage('4', 'user', 'msg4', 300),
+        createMessage('5', 'assistant', 'msg5', 400),
+        createMessage('6', 'user', 'msg6', 500),
+        createMessage('7', 'assistant', 'msg7', 600),
+        createMessage('8', 'user', 'msg8', 700),
+        createMessage('9', 'assistant', 'msg9', 800),
+      ];
+
+      const { toCompress, toKeep } = splitHistory(messages, 4);
+
+      const keepIds = toKeep.map((m) => m.id);
+      const compressIds = toCompress.map((m) => m.id);
+
+      // Tool pair (2, 3) must stay together
+      if (compressIds.includes('2')) {
+        expect(compressIds).toContain('3');
+      }
+      if (keepIds.includes('3')) {
+        expect(keepIds).toContain('2');
+      }
+    });
+
+    it('GH-24: handles multiple tool calls in a single assistant message', () => {
+      // Assistant makes two tool calls, both results must stay with it
+      const messages = [
+        createMessage('1', 'user', 'do two things', 0),
+        createToolCallMessage('2', '[Tool calls]', [
+          { id: 'tc-1', name: 'memory_read' },
+          { id: 'tc-2', name: 'web_search' },
+        ], 100),
+        createToolResultMessage('3', 'tc-1', 'memory result', 200),
+        createToolResultMessage('4', 'tc-2', 'search result', 300),
+        createMessage('5', 'user', 'ok', 400),
+        createMessage('6', 'assistant', 'done', 500),
+      ];
+
+      const { toCompress, toKeep } = splitHistory(messages, 2);
+
+      const keepIds = toKeep.map((m) => m.id);
+      const compressIds = toCompress.map((m) => m.id);
+
+      // All three (assistant + 2 tool results) must be on the same side
+      if (keepIds.includes('3') || keepIds.includes('4')) {
+        expect(keepIds).toContain('2');
+        expect(keepIds).toContain('3');
+        expect(keepIds).toContain('4');
+      }
+      if (compressIds.includes('2')) {
+        expect(compressIds).toContain('3');
+        expect(compressIds).toContain('4');
+      }
+    });
+
+    it('GH-24: split never produces orphaned tool results at toKeep boundary', () => {
+      // The exact scenario from the bug: compact_context tool call split from result
+      const messages = [
+        createMessage('1', 'user', 'hello', 0),
+        createMessage('2', 'assistant', 'hi', 100),
+        createMessage('3', 'user', 'do something', 200),
+        createToolCallMessage('4', '[Tool calls]', [{ id: 'tc-compact', name: 'compact_context' }], 300),
+        createToolResultMessage('5', 'tc-compact', '{"messagesCompressed":2}', 400),
+        createMessage('6', 'user', 'continue', 500),
+        createMessage('7', 'assistant', 'ok', 600),
+      ];
+
+      // keepRecent=3 would naively keep [5,6,7], orphaning tool result 5 from its call in 4
+      const { toKeep } = splitHistory(messages, 3);
+
+      const keepIds = toKeep.map((m) => m.id);
+
+      // If tool result 5 is in toKeep, its assistant 4 must be too
+      if (keepIds.includes('5')) {
+        expect(keepIds).toContain('4');
+      }
     });
   });
 
@@ -1232,6 +1381,84 @@ describe('Compaction pipeline with mocked dependencies', () => {
     // (depends on batch accumulation, but principle is: depth increases with cycles)
     expect(blocks2.length).toBeGreaterThan(0);
     expect(maxDepth2).toBeGreaterThanOrEqual(maxDepth1);
+  });
+
+  it('GH-24: clip-archive created_at sorts before kept messages', async () => {
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(50), i * 100),
+    );
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summary 1']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 20,
+      keepRecent: 3,
+      maxSummaryTokens: 500,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // The clip-archive should be the first message in the result
+    const clipArchive = result.history[0];
+    expect(clipArchive?.role).toBe('system');
+    expect(clipArchive?.content).toContain('[Context Summary');
+
+    // Its created_at should be before the first kept message
+    const firstKept = result.history[1];
+    if (clipArchive && firstKept) {
+      expect(clipArchive.created_at.getTime()).toBeLessThan(firstKept.created_at.getTime());
+    }
+  });
+
+  it('GH-24: prior clip-archive is deleted from DB during recompaction', async () => {
+    const messages = [
+      createMessage('prior-summary', 'system', '[Context Summary — 50 messages compressed across 1 compaction cycle]', 0),
+      createMessage('1', 'user', 'msg1', 100),
+      createMessage('2', 'assistant', 'msg2', 200),
+      createMessage('3', 'user', 'msg3', 300),
+      createMessage('4', 'assistant', 'msg4', 400),
+      createMessage('5', 'user', 'msg5', 500),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summary']);
+    const mockMemory = createMockMemoryManager();
+
+    const config = {
+      chunkSize: 20,
+      keepRecent: 2,
+      maxSummaryTokens: 500,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+    };
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    // The prior summary ID should be in the deleted set
+    const persistence = mockPersistence as unknown as { _deletedIds: string[] };
+    expect(persistence._deletedIds).toContain('prior-summary');
   });
 });
 

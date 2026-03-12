@@ -296,6 +296,43 @@ allowed_recipients = ["user@example.com"]
   });
 });
 
+describe("GH-24: agent max_context_tokens configuration", () => {
+  let tempPath: string;
+
+  beforeEach(() => {
+    tempPath = getTempConfigPath();
+  });
+
+  afterEach(() => {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // file might not exist
+    }
+  });
+
+  it("defaults to 200000 when not specified", () => {
+    writeFileSync(tempPath, baseTomlContent);
+
+    const config = loadConfig(tempPath);
+
+    expect(config.agent.max_context_tokens).toBe(200000);
+  });
+
+  it("uses configured value when specified", () => {
+    const tomlContent = `
+${baseTomlContent}
+[agent]
+max_context_tokens = 131072
+`;
+    writeFileSync(tempPath, tomlContent);
+
+    const config = loadConfig(tempPath);
+
+    expect(config.agent.max_context_tokens).toBe(131072);
+  });
+});
+
 describe("skills.AC3: Skill configuration", () => {
   let tempPath: string;
 

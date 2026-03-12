@@ -35,3 +35,9 @@ export type RateLimitStatus = {
   readonly outputTokens: BucketStatus;
   readonly queueDepth: number;
 };
+
+export type ServerRateLimitSync = (status: {
+  readonly limit: number;
+  readonly remaining: number;
+  readonly resetAt: number; // unix timestamp in ms
+}) => void;

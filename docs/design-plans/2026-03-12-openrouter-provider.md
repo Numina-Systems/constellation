@@ -234,7 +234,7 @@ This design follows established patterns from the existing model provider archit
 
 **Done when:** `complete()` returns normalized `ModelResponse`. Cost logged at info level in `[openrouter] cost=$X model=Y tokens=I/O` format. Rate limit headers extracted and synced via callback. Attribution headers (referer, title) sent when configured. Provider routing params (sort, allow_fallbacks) included in request body. Error classification matches existing pattern (auth, rate_limit, api_error). Tests cover happy path, cost logging, rate limit sync, attribution, routing, and error cases.
 
-**Covers:** `openrouter-provider.AC2.1`, `openrouter-provider.AC2.2`, `openrouter-provider.AC2.3`, `openrouter-provider.AC3.1`, `openrouter-provider.AC3.2`, `openrouter-provider.AC5.1`, `openrouter-provider.AC5.2`, `openrouter-provider.AC6.1`, `openrouter-provider.AC6.2`
+**Covers:** `openrouter-provider.AC2.1`, `openrouter-provider.AC2.2`, `openrouter-provider.AC2.3`, `openrouter-provider.AC3.1`, `openrouter-provider.AC5.1`, `openrouter-provider.AC5.2`, `openrouter-provider.AC6.1`, `openrouter-provider.AC6.2`
 <!-- END_PHASE_4 -->
 
 <!-- START_PHASE_5 -->

@@ -196,12 +196,164 @@ export function createOpenRouterAdapter(
       };
     },
 
-    async *stream(): AsyncIterable<StreamEvent> {
-      throw new ModelError(
-        "api_error",
-        false,
-        "streaming not yet implemented for openrouter adapter"
-      );
+    async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+      const stream = await callWithRetry(async () => {
+        try {
+          const messages: Array<OpenAI.Chat.ChatCompletionMessageParam> = [];
+
+          if (request.system) {
+            messages.push({
+              role: "system",
+              content: request.system,
+            });
+          }
+
+          messages.push(...normalizeMessages(request.messages));
+
+          const body: Record<string, unknown> = {
+            model: request.model,
+            max_tokens: request.max_tokens,
+            tools: request.tools
+              ? normalizeToolDefinitions(request.tools)
+              : undefined,
+            temperature: request.temperature,
+            messages,
+            stream: true,
+          };
+
+          // Add OpenRouter provider routing
+          if (
+            config.openrouter?.sort ||
+            config.openrouter?.allow_fallbacks !== undefined
+          ) {
+            body["provider"] = {
+              ...(config.openrouter.sort
+                ? { sort: config.openrouter.sort }
+                : {}),
+              ...(config.openrouter.allow_fallbacks !== undefined
+                ? { allow_fallbacks: config.openrouter.allow_fallbacks }
+                : {}),
+            };
+          }
+
+          return await client.chat.completions.create(
+            body as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming
+          );
+        } catch (error) {
+          classifyError(error);
+        }
+      }, isRetryableError);
+
+      // Log cost from initial response headers (captured by custom fetch)
+      extractAndLogHeaders(request.model, { input_tokens: 0, output_tokens: 0 });
+
+      let messageId = "";
+      const toolCallMap = new Map<number, { name: string; arguments: string }>();
+
+      for await (const event of stream) {
+        // Extract message ID from first chunk
+        if (!messageId && event.id) {
+          messageId = event.id;
+          yield {
+            type: "message_start",
+            message: {
+              id: messageId,
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+              },
+            },
+          };
+        }
+
+        const choice = event.choices[0];
+        if (!choice) continue;
+
+        // Mid-stream error detection (AC7.1)
+        // OpenRouter may return finish_reason: "error" which is not in standard OpenAI types
+        const finishReason = choice.finish_reason as string | null;
+        if (finishReason === "error") {
+          throw new ModelError(
+            "api_error",
+            true,
+            "openrouter upstream provider error during streaming"
+          );
+        }
+
+        // Handle content blocks
+        if (choice.delta.content) {
+          if (!toolCallMap.has(0)) {
+            yield {
+              type: "content_block_start",
+              content_block: {
+                type: "text",
+                index: 0,
+              },
+            };
+            toolCallMap.set(0, { name: "", arguments: "" });
+          }
+
+          yield {
+            type: "content_block_delta",
+            delta: {
+              type: "text_delta",
+              text: choice.delta.content,
+              index: 0,
+            },
+          };
+        }
+
+        // Handle tool calls
+        if (choice.delta.tool_calls) {
+          for (const toolCall of choice.delta.tool_calls) {
+            const index = toolCall.index;
+
+            if (!toolCallMap.has(index)) {
+              toolCallMap.set(index, { name: "", arguments: "" });
+
+              yield {
+                type: "content_block_start",
+                content_block: {
+                  type: "tool_use",
+                  index,
+                  id: toolCall.id,
+                  name: toolCall.function?.name || "",
+                },
+              };
+            }
+
+            const current = toolCallMap.get(index);
+            if (current) {
+              if (toolCall.function?.name) {
+                current.name = toolCall.function.name;
+              }
+              if (toolCall.function?.arguments) {
+                const chunk = toolCall.function.arguments;
+                current.arguments += chunk;
+
+                yield {
+                  type: "content_block_delta",
+                  delta: {
+                    type: "input_json_delta",
+                    input: chunk,
+                    index,
+                  },
+                };
+              }
+            }
+          }
+        }
+
+        // Handle finish reason
+        if (choice.finish_reason) {
+          yield {
+            type: "message_stop",
+            message: {
+              stop_reason: normalizeStopReason(choice.finish_reason),
+            },
+          };
+        }
+      }
     },
   };
 }

@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createOpenRouterAdapter } from "./openrouter.js";
 import { ModelError } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
+import type { StreamEvent } from "./types.js";
 
 describe("createOpenRouterAdapter", () => {
   let mockServerUrl = "";
@@ -125,6 +126,224 @@ describe("createOpenRouterAdapter", () => {
               total_tokens: 23,
             },
           };
+        } else if (responseType === "stream") {
+          // For streaming responses, return SSE format
+          const sseChunks = [
+            `data: ${JSON.stringify({
+              id: "msg-stream-1",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", content: "" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-1",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: "Hello" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-1",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: " world!" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-1",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: "stop",
+                },
+              ],
+            })}\n\n`,
+            `data: [DONE]\n\n`,
+          ];
+
+          responseHeaders["content-type"] = "text/event-stream";
+          const sseBody = sseChunks.join("");
+
+          return new Response(sseBody, {
+            status: 200,
+            headers: responseHeaders,
+          });
+        } else if (responseType === "stream_tool_call") {
+          // Streaming with tool calls split across chunks
+          const sseChunks = [
+            `data: ${JSON.stringify({
+              id: "msg-stream-2",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", content: "" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-2",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call-stream-1",
+                        type: "function",
+                        function: { name: "test_to", arguments: "" },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-2",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        function: { name: "ol", arguments: '{"k' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-2",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        function: { arguments: 'ey": "value"}' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-2",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: "tool_calls",
+                },
+              ],
+            })}\n\n`,
+            `data: [DONE]\n\n`,
+          ];
+
+          responseHeaders["content-type"] = "text/event-stream";
+          const sseBody = sseChunks.join("");
+
+          return new Response(sseBody, {
+            status: 200,
+            headers: responseHeaders,
+          });
+        } else if (responseType === "stream_error") {
+          // Streaming with mid-stream error
+          const sseChunks = [
+            `data: ${JSON.stringify({
+              id: "msg-stream-3",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", content: "" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-3",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: "Partial " },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-3",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: "error",
+                },
+              ],
+            })}\n\n`,
+            `data: [DONE]\n\n`,
+          ];
+
+          responseHeaders["content-type"] = "text/event-stream";
+          const sseBody = sseChunks.join("");
+
+          return new Response(sseBody, {
+            status: 200,
+            headers: responseHeaders,
+          });
         }
 
         return new Response(JSON.stringify(responseBody), {
@@ -503,7 +722,11 @@ describe("createOpenRouterAdapter", () => {
       expect(body["provider"]).toBeUndefined();
     });
 
-    it("stream() should throw 'not yet implemented' error", async () => {
+  });
+
+  describe("stream method", () => {
+    it("AC2.4: should emit correct StreamEvent sequence (message_start -> content_block_start -> content_block_delta -> message_stop)", async () => {
+      nextResponseType = "stream";
       const config: ModelConfig = {
         provider: "openrouter",
         name: "gpt-4",
@@ -512,6 +735,88 @@ describe("createOpenRouterAdapter", () => {
       };
       const adapter = createOpenRouterAdapter(config);
 
+      const events: Array<{ type: string }> = [];
+      for await (const event of adapter.stream({
+        model: "gpt-4",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "Say hello",
+          },
+        ],
+      })) {
+        events.push({ type: event.type });
+      }
+
+      expect(events.length).toBeGreaterThanOrEqual(4);
+      expect(events[0]?.type).toBe("message_start");
+      expect(events[1]?.type).toBe("content_block_start");
+      expect(events[2]?.type).toBe("content_block_delta");
+      expect(events[events.length - 1]?.type).toBe("message_stop");
+    });
+
+    it("AC2.5: should assemble tool calls across multiple chunks", async () => {
+      nextResponseType = "stream_tool_call";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      const events: StreamEvent[] = [];
+      for await (const event of adapter.stream({
+        model: "gpt-4",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "Call test_tool",
+          },
+        ],
+        tools: [
+          {
+            name: "test_tool",
+            description: "A test tool",
+            input_schema: {
+              type: "object",
+              properties: {
+                key: { type: "string" },
+              },
+            },
+          },
+        ],
+      })) {
+        events.push(event);
+      }
+
+      const toolUseStartEvent = events.find((e) => e.type === "content_block_start");
+      expect(toolUseStartEvent).toBeDefined();
+      if (toolUseStartEvent && toolUseStartEvent.type === "content_block_start") {
+        expect(toolUseStartEvent.content_block.type).toBe("tool_use");
+        expect(toolUseStartEvent.content_block.id).toBe("call-stream-1");
+        expect(toolUseStartEvent.content_block.name).toMatch(/test_to|ol/);
+      }
+
+      const toolUseDeltas = events.filter(
+        (e) => e.type === "content_block_delta" && e.delta.type === "input_json_delta"
+      );
+      expect(toolUseDeltas.length).toBeGreaterThan(0);
+    });
+
+    it("AC7.1: should throw ModelError with retryable=true on finish_reason: error", async () => {
+      nextResponseType = "stream_error";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      let error: Error | null = null;
       try {
         for await (const _event of adapter.stream({
           model: "gpt-4",
@@ -525,12 +830,87 @@ describe("createOpenRouterAdapter", () => {
         })) {
           // Should not reach here
         }
-        expect(true).toBe(false); // Should have thrown
-      } catch (error) {
-        expect(error).toBeInstanceOf(ModelError);
-        if (error instanceof ModelError) {
-          expect(error.message).toContain("not yet implemented");
+      } catch (e) {
+        error = e as Error;
+      }
+
+      expect(error).toBeInstanceOf(ModelError);
+      if (error instanceof ModelError) {
+        expect(error.code).toBe("api_error");
+        expect(error.retryable).toBe(true);
+      }
+    });
+
+    it("AC7.2: mid-stream error has retryable=true for retry wrapper", async () => {
+      nextResponseType = "stream_error";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      let thrownError: ModelError | null = null;
+      try {
+        for await (const _event of adapter.stream({
+          model: "gpt-4",
+          max_tokens: 100,
+          messages: [
+            {
+              role: "user",
+              content: "Hello",
+            },
+          ],
+        })) {
+          // Should not reach here
         }
+      } catch (e) {
+        if (e instanceof ModelError) {
+          thrownError = e;
+        }
+      }
+
+      expect(thrownError).not.toBeNull();
+      expect(thrownError?.retryable).toBe(true);
+    });
+
+    it("AC3.2: should log cost from initial response headers after stream completes", async () => {
+      nextResponseType = "stream";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      const originalConsoleInfo = console.info;
+      let logOutput = "";
+      console.info = (msg: unknown) => {
+        logOutput = String(msg);
+      };
+
+      try {
+        for await (const _event of adapter.stream({
+          model: "gpt-4",
+          max_tokens: 100,
+          messages: [
+            {
+              role: "user",
+              content: "Say hello",
+            },
+          ],
+        })) {
+          // Consume all events
+        }
+
+        expect(logOutput).toContain("[openrouter]");
+        expect(logOutput).toContain("cost=");
+        expect(logOutput).toContain("model=gpt-4");
+        expect(logOutput).toContain("tokens=0/0");
+      } finally {
+        console.info = originalConsoleInfo;
       }
     });
   });

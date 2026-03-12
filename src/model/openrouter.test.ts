@@ -344,6 +344,74 @@ describe("createOpenRouterAdapter", () => {
             status: 200,
             headers: responseHeaders,
           });
+        } else if (responseType === "stream_keepalive") {
+          // Streaming with keepalive comments (`: OPENROUTER PROCESSING`)
+          // These comments are sent by OpenRouter to keep the connection alive
+          const sseChunks = [
+            `data: ${JSON.stringify({
+              id: "msg-stream-keepalive",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", content: "" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `: OPENROUTER PROCESSING\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-keepalive",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: "Processing" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `: OPENROUTER PROCESSING\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-keepalive",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: " complete" },
+                  finish_reason: null,
+                },
+              ],
+            })}\n\n`,
+            `data: ${JSON.stringify({
+              id: "msg-stream-keepalive",
+              object: "chat.completion.chunk",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: "stop",
+                },
+              ],
+            })}\n\n`,
+            `data: [DONE]\n\n`,
+          ];
+
+          responseHeaders["content-type"] = "text/event-stream";
+          const sseBody = sseChunks.join("");
+
+          return new Response(sseBody, {
+            status: 200,
+            headers: responseHeaders,
+          });
         }
 
         return new Response(JSON.stringify(responseBody), {
@@ -840,6 +908,44 @@ describe("createOpenRouterAdapter", () => {
         expect(error.code).toBe("api_error");
         expect(error.retryable).toBe(true);
       }
+    });
+
+    it("AC7.3: should handle SSE keepalive comments and complete successfully with expected event sequence", async () => {
+      nextResponseType = "stream_keepalive";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      const events: StreamEvent[] = [];
+      for await (const event of adapter.stream({
+        model: "gpt-4",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "Say hello",
+          },
+        ],
+      })) {
+        events.push(event);
+      }
+
+      // Verify we got the expected event sequence despite keepalive comments
+      expect(events.length).toBeGreaterThanOrEqual(4);
+      expect(events[0]?.type).toBe("message_start");
+      expect(events[1]?.type).toBe("content_block_start");
+      expect(events[2]?.type).toBe("content_block_delta");
+
+      // Check for multiple content deltas (from interleaved keepalive comments)
+      const deltaEvents = events.filter((e) => e.type === "content_block_delta");
+      expect(deltaEvents.length).toBeGreaterThanOrEqual(2);
+
+      // Verify final event is message_stop
+      expect(events[events.length - 1]?.type).toBe("message_stop");
     });
 
     it("AC3.2: should log cost from initial response headers after stream completes", async () => {

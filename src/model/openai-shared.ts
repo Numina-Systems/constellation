@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Functional Core (throws on malformed input)
 
 import OpenAI from "openai";
 import type {

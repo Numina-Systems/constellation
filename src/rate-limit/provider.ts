@@ -140,6 +140,11 @@ export function createRateLimitedProvider(
     const windowMs = Math.max(serverStatus.resetAt - now, 1000); // at least 1s window
     const refillRate = serverStatus.limit / windowMs;
 
+    // Mutex is not needed for this mutation in single-threaded JavaScript.
+    // syncFromServer is called from within complete()'s withMutex block, which
+    // already holds the lock. Object reference assignment is atomic, so concurrent
+    // reads of rpmBucketState will see either the old or new value, never a
+    // partially-written intermediate state.
     rpmBucketState = {
       capacity: serverStatus.limit,
       tokens: serverStatus.remaining,

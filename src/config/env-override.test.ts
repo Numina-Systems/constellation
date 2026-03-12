@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

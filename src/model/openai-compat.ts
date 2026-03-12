@@ -159,6 +159,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
       }, isRetryableError);
 
       let messageId = "";
+      // TODO: toolCallMap is overloaded for text block tracking — introduce separate textBlockStarted flag (fix in both openrouter.ts and openai-compat.ts)
       const toolCallMap = new Map<number, { name: string; arguments: string }>();
 
       for await (const event of stream) {

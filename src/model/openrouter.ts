@@ -248,6 +248,7 @@ export function createOpenRouterAdapter(
       extractAndLogHeaders(request.model, { input_tokens: 0, output_tokens: 0 });
 
       let messageId = "";
+      // TODO: toolCallMap is overloaded for text block tracking — introduce separate textBlockStarted flag (fix in both openrouter.ts and openai-compat.ts)
       const toolCallMap = new Map<number, { name: string; arguments: string }>();
 
       for await (const event of stream) {

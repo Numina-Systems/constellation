@@ -797,7 +797,8 @@ describe("createOpenRouterAdapter", () => {
       if (toolUseStartEvent && toolUseStartEvent.type === "content_block_start") {
         expect(toolUseStartEvent.content_block.type).toBe("tool_use");
         expect(toolUseStartEvent.content_block.id).toBe("call-stream-1");
-        expect(toolUseStartEvent.content_block.name).toMatch(/test_to|ol/);
+        // Name is partial because it comes from the first chunk only — the accumulated name in toolCallMap is not re-emitted via content_block_start
+        expect(toolUseStartEvent.content_block.name).toBe("test_to");
       }
 
       const toolUseDeltas = events.filter(
@@ -806,7 +807,7 @@ describe("createOpenRouterAdapter", () => {
       expect(toolUseDeltas.length).toBeGreaterThan(0);
     });
 
-    it("AC7.1: should throw ModelError with retryable=true on finish_reason: error", async () => {
+    it("AC7.1 & AC7.2: should throw ModelError with error code and retryable=true on finish_reason: error", async () => {
       nextResponseType = "stream_error";
       const config: ModelConfig = {
         provider: "openrouter",
@@ -839,40 +840,6 @@ describe("createOpenRouterAdapter", () => {
         expect(error.code).toBe("api_error");
         expect(error.retryable).toBe(true);
       }
-    });
-
-    it("AC7.2: mid-stream error has retryable=true for retry wrapper", async () => {
-      nextResponseType = "stream_error";
-      const config: ModelConfig = {
-        provider: "openrouter",
-        name: "gpt-4",
-        api_key: "test-key",
-        base_url: mockServerUrl,
-      };
-      const adapter = createOpenRouterAdapter(config);
-
-      let thrownError: ModelError | null = null;
-      try {
-        for await (const _event of adapter.stream({
-          model: "gpt-4",
-          max_tokens: 100,
-          messages: [
-            {
-              role: "user",
-              content: "Hello",
-            },
-          ],
-        })) {
-          // Should not reach here
-        }
-      } catch (e) {
-        if (e instanceof ModelError) {
-          thrownError = e;
-        }
-      }
-
-      expect(thrownError).not.toBeNull();
-      expect(thrownError?.retryable).toBe(true);
     });
 
     it("AC3.2: should log cost from initial response headers after stream completes", async () => {

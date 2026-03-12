@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-03-05
+Last verified: 2026-03-12
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -9,7 +9,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - Language: TypeScript 5.7+ (strict mode, `noUncheckedIndexedAccess`)
 - Database: PostgreSQL 17 with pgvector extension
 - Sandbox: Deno (subprocess with IPC bridge)
-- LLM: Anthropic SDK, OpenAI-compatible endpoints, Ollama (native `/api/chat`)
+- LLM: Anthropic SDK, OpenAI-compatible endpoints, Ollama (native `/api/chat`), OpenRouter
 - Embeddings: OpenAI, Ollama
 - Config: TOML with Zod validation
 - Testing: `bun test`
@@ -25,7 +25,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 ## Project Structure
 - `src/config/` -- TOML config loading, Zod schemas
 - `src/persistence/` -- PostgreSQL adapter, migrations
-- `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama)
+- `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama, OpenRouter)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
 - `src/search/` -- Hybrid search (semantic + keyword + RRF) across memory and conversations
@@ -51,7 +51,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - **Barrel exports**: Each module has `index.ts` exporting public API
 - **Factory functions over classes**: `createFoo()` returns interface, no `new`
 - **Path aliases**: `@/*` maps to `./src/*` (tsconfig paths)
-- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` override config.toml values
+- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `OPENROUTER_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` override config.toml values
 
 ## Boundaries
 - Safe to edit: `src/`

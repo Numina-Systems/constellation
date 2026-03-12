@@ -1,7 +1,7 @@
 // pattern: Imperative Shell
 
 import type { ModelProvider, ModelRequest, ModelResponse, StreamEvent } from '../model/types.js';
-import type { RateLimiterConfig, RateLimitStatus } from './types.js';
+import type { RateLimiterConfig, RateLimitStatus, ServerRateLimitSync } from './types.js';
 import { createTokenBucket, tryConsume, recordConsumption, getStatus, refill } from './bucket.js';
 import { estimateInputTokens } from './estimate.js';
 
@@ -10,7 +10,7 @@ const DEFAULT_MIN_OUTPUT_RESERVE = 1024;
 export function createRateLimitedProvider(
   provider: ModelProvider,
   config: RateLimiterConfig,
-): ModelProvider & { getStatus(): RateLimitStatus } {
+): ModelProvider & { getStatus(): RateLimitStatus; syncFromServer: ServerRateLimitSync } {
   const now = Date.now();
 
   // Create three independent token buckets
@@ -133,9 +133,25 @@ export function createRateLimitedProvider(
     };
   }
 
+  function syncFromServer(serverStatus: { readonly limit: number; readonly remaining: number; readonly resetAt: number }): void {
+    if (serverStatus.limit === 0 && serverStatus.remaining === 0) return;
+
+    const now = Date.now();
+    const windowMs = Math.max(serverStatus.resetAt - now, 1000); // at least 1s window
+    const refillRate = serverStatus.limit / windowMs;
+
+    rpmBucketState = {
+      capacity: serverStatus.limit,
+      tokens: serverStatus.remaining,
+      refillRate,
+      lastRefill: now,
+    };
+  }
+
   return {
     complete,
     stream,
     getStatus: status,
+    syncFromServer,
   };
 }

@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createOpenRouterAdapter } from "./openrouter.js";
@@ -213,6 +213,7 @@ describe("createOpenRouterAdapter", () => {
       expect(response.usage).toBeDefined();
       expect(response.usage.input_tokens).toBe(10);
       expect(response.usage.output_tokens).toBe(5);
+      expect(response.reasoning_content).toBeNull();
     });
 
     it("AC2.2: should normalize tool call responses with correct id, name, and arguments", async () => {
@@ -344,12 +345,10 @@ describe("createOpenRouterAdapter", () => {
         ],
       });
 
-      expect(lastRequest).toBeDefined();
-      if (lastRequest) {
-        expect(lastRequest.headers["http-referer"]).toBe(
-          "https://myapp.example.com"
-        );
-      }
+      expect(lastRequest).not.toBeNull();
+      expect(lastRequest!.headers["http-referer"]).toBe(
+        "https://myapp.example.com"
+      );
     });
 
     it("AC5.2: should send X-Title header when title is configured", async () => {
@@ -375,10 +374,8 @@ describe("createOpenRouterAdapter", () => {
         ],
       });
 
-      expect(lastRequest).toBeDefined();
-      if (lastRequest) {
-        expect(lastRequest.headers["x-title"]).toBe("my-awesome-app");
-      }
+      expect(lastRequest).not.toBeNull();
+      expect(lastRequest!.headers["x-title"]).toBe("my-awesome-app");
     });
 
     it("AC6.1: should include provider.sort in request body when sort is configured", async () => {
@@ -404,13 +401,13 @@ describe("createOpenRouterAdapter", () => {
         ],
       });
 
-      expect(lastRequest).toBeDefined();
-      if (lastRequest && typeof lastRequest.body === "object" && lastRequest.body !== null) {
-        const body = lastRequest.body as Record<string, unknown>;
-        expect(body["provider"]).toBeDefined();
-        const provider = body["provider"] as Record<string, unknown>;
-        expect(provider["sort"]).toBe("price");
-      }
+      expect(lastRequest).not.toBeNull();
+      expect(typeof lastRequest!.body).toBe("object");
+      expect(lastRequest!.body).not.toBeNull();
+      const body = lastRequest!.body as Record<string, unknown>;
+      expect(body["provider"]).toBeDefined();
+      const provider = body["provider"] as Record<string, unknown>;
+      expect(provider["sort"]).toBe("price");
     });
 
     it("AC6.2: should include provider.allow_fallbacks in request body when configured", async () => {
@@ -436,13 +433,13 @@ describe("createOpenRouterAdapter", () => {
         ],
       });
 
-      expect(lastRequest).toBeDefined();
-      if (lastRequest && typeof lastRequest.body === "object" && lastRequest.body !== null) {
-        const body = lastRequest.body as Record<string, unknown>;
-        expect(body["provider"]).toBeDefined();
-        const provider = body["provider"] as Record<string, unknown>;
-        expect(provider["allow_fallbacks"]).toBe(false);
-      }
+      expect(lastRequest).not.toBeNull();
+      expect(typeof lastRequest!.body).toBe("object");
+      expect(lastRequest!.body).not.toBeNull();
+      const body = lastRequest!.body as Record<string, unknown>;
+      expect(body["provider"]).toBeDefined();
+      const provider = body["provider"] as Record<string, unknown>;
+      expect(provider["allow_fallbacks"]).toBe(false);
     });
 
     it("should include both sort and allow_fallbacks when both configured", async () => {
@@ -469,14 +466,14 @@ describe("createOpenRouterAdapter", () => {
         ],
       });
 
-      expect(lastRequest).toBeDefined();
-      if (lastRequest && typeof lastRequest.body === "object" && lastRequest.body !== null) {
-        const body = lastRequest.body as Record<string, unknown>;
-        expect(body["provider"]).toBeDefined();
-        const provider = body["provider"] as Record<string, unknown>;
-        expect(provider["sort"]).toBe("latency");
-        expect(provider["allow_fallbacks"]).toBe(true);
-      }
+      expect(lastRequest).not.toBeNull();
+      expect(typeof lastRequest!.body).toBe("object");
+      expect(lastRequest!.body).not.toBeNull();
+      const body = lastRequest!.body as Record<string, unknown>;
+      expect(body["provider"]).toBeDefined();
+      const provider = body["provider"] as Record<string, unknown>;
+      expect(provider["sort"]).toBe("latency");
+      expect(provider["allow_fallbacks"]).toBe(true);
     });
 
     it("should not include provider field when no routing config", async () => {
@@ -499,11 +496,11 @@ describe("createOpenRouterAdapter", () => {
         ],
       });
 
-      expect(lastRequest).toBeDefined();
-      if (lastRequest && typeof lastRequest.body === "object" && lastRequest.body !== null) {
-        const body = lastRequest.body as Record<string, unknown>;
-        expect(body["provider"]).toBeUndefined();
-      }
+      expect(lastRequest).not.toBeNull();
+      expect(typeof lastRequest!.body).toBe("object");
+      expect(lastRequest!.body).not.toBeNull();
+      const body = lastRequest!.body as Record<string, unknown>;
+      expect(body["provider"]).toBeUndefined();
     });
 
     it("stream() should throw 'not yet implemented' error", async () => {
@@ -566,12 +563,10 @@ describe("createOpenRouterAdapter", () => {
       });
 
       expect(syncCalled).toBe(true);
-      expect(syncData).toBeDefined();
-      if (syncData) {
-        expect((syncData as { limit: number; remaining: number; resetAt: number }).limit).toBe(1000);
-        expect((syncData as { limit: number; remaining: number; resetAt: number }).remaining).toBe(999);
-        expect((syncData as { limit: number; remaining: number; resetAt: number }).resetAt).toBe(1678886400000);
-      }
+      expect(syncData).not.toBeNull();
+      expect(syncData!.limit).toBe(1000);
+      expect(syncData!.remaining).toBe(999);
+      expect(syncData!.resetAt).toBe(1678886400000);
     });
   });
 });

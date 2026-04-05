@@ -1087,11 +1087,11 @@ async function main(): Promise<void> {
     // TUI mode: render Ink application
     const { renderApp, createMutationPromptViaBus } = await import('@/tui');
 
-    const mutationCallback = createMutationPromptViaBus(eventBus!);
+    const mutationCallback = createMutationPromptViaBus(eventBus!); // guaranteed by shouldUseTui guard
 
     const { waitUntilExit } = renderApp({
       agent,
-      bus: eventBus!,
+      bus: eventBus!, // guaranteed by shouldUseTui guard
       modelName: config.model.name,
       onProcessMutations: async () => {
         await processPendingMutations(memory, mutationCallback);

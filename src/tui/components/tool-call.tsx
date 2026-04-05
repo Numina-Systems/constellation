@@ -8,11 +8,18 @@ export type ToolCallStatus = 'running' | 'complete' | 'error';
 
 type ToolCallProps = {
   toolName: string;
-  toolId: string;
   status: ToolCallStatus;
   resultSummary?: string;
   errorMessage?: string;
+  toolId?: string;
 };
+
+function truncateSummary(text: string, maxLength = 80): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.slice(0, maxLength) + '...';
+}
 
 export function ToolCall({
   toolName,
@@ -20,13 +27,6 @@ export function ToolCall({
   resultSummary,
   errorMessage,
 }: ToolCallProps) {
-  // Truncate summary to ~80 chars with ellipsis
-  const truncateSummary = (text: string, maxLength = 80) => {
-    if (text.length <= maxLength) {
-      return text;
-    }
-    return text.slice(0, maxLength) + '...';
-  };
 
   if (status === 'running') {
     return (

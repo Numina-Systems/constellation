@@ -23,6 +23,9 @@ type Message = {
   hadTools: boolean;
   hadThinking: boolean;
   turnIndex: number;
+  toolCount: number;
+  toolErrorCount: number;
+  thinkingCharCount: number;
 };
 
 export function App({ agent, bus, modelName }: AppProps) {
@@ -33,6 +36,11 @@ export function App({ agent, bus, modelName }: AppProps) {
   const lastProcessedTurnStartRef = React.useRef(-1);
   const lastProcessedTurnEndRef = React.useRef(-1);
   const messageIdCounterRef = React.useRef(0);
+  const currentTurnHadToolsRef = React.useRef(false);
+  const currentTurnHadThinkingRef = React.useRef(false);
+  const currentTurnToolCountRef = React.useRef(0);
+  const currentTurnToolErrorCountRef = React.useRef(0);
+  const currentTurnThinkingTextRef = React.useRef('');
   useApp();
 
   // Memoize filters for event subscriptions
@@ -66,11 +74,18 @@ export function App({ agent, bus, modelName }: AppProps) {
     []
   );
 
+  const toolResultFilter = React.useCallback(
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'tool:result' }> =>
+      event.type === 'tool:result',
+    []
+  );
+
   // Subscribe to turn events
   const turnStartEvents = useAgentEvents(bus, turnStartFilter);
   const streamChunkEvents = useAgentEvents(bus, streamChunkFilter);
   const turnEndEvents = useAgentEvents(bus, turnEndFilter);
   const toolStartEvents = useAgentEvents(bus, toolStartFilter);
+  const toolResultEvents = useAgentEvents(bus, toolResultFilter);
   const thinkingEvents = useAgentEvents(bus, thinkingFilter);
 
   // Handle turn:start events
@@ -79,6 +94,11 @@ export function App({ agent, bus, modelName }: AppProps) {
       setIsProcessing(true);
       setTurnIndex((prev) => prev + 1);
       currentTurnTextRef.current = '';
+      currentTurnHadToolsRef.current = false;
+      currentTurnHadThinkingRef.current = false;
+      currentTurnToolCountRef.current = 0;
+      currentTurnToolErrorCountRef.current = 0;
+      currentTurnThinkingTextRef.current = '';
     }
     lastProcessedTurnStartRef.current = turnStartEvents.length - 1;
   }, [turnStartEvents]);
@@ -90,6 +110,30 @@ export function App({ agent, bus, modelName }: AppProps) {
     }
   }, [streamChunkEvents]);
 
+  // Track if current turn has tools or thinking, and count them
+  React.useEffect(() => {
+    if (toolStartEvents.length > 0) {
+      currentTurnHadToolsRef.current = true;
+      currentTurnToolCountRef.current = toolStartEvents.length;
+    }
+  }, [toolStartEvents]);
+
+  React.useEffect(() => {
+    const thinkingForCurrentTurn = thinkingEvents.filter((e) => e.turnIndex === turnIndex);
+    if (thinkingForCurrentTurn.length > 0) {
+      currentTurnHadThinkingRef.current = true;
+      currentTurnThinkingTextRef.current = thinkingForCurrentTurn.reduce((text, e) => text + e.text, '');
+    }
+  }, [thinkingEvents, turnIndex]);
+
+  // Track tool error counts
+  React.useEffect(() => {
+    const errorCount = toolResultEvents.filter((e) => e.isError).length;
+    if (errorCount > 0) {
+      currentTurnToolErrorCountRef.current = errorCount;
+    }
+  }, [toolResultEvents]);
+
   // Handle turn:end events - capture the accumulated text
   React.useEffect(() => {
     for (let i = lastProcessedTurnEndRef.current + 1; i < turnEndEvents.length; i++) {
@@ -97,9 +141,9 @@ export function App({ agent, bus, modelName }: AppProps) {
       // Capture the current turn text from the ref
       if (currentTurnTextRef.current.length > 0) {
         const messageId = messageIdCounterRef.current++;
-        // Check if this turn had tools or thinking events
-        const hadTools = toolStartEvents.length > 0;
-        const hadThinking = thinkingEvents.some((e) => e.turnIndex === turnIndex);
+        // Use per-turn tracking refs instead of accumulated event arrays
+        const hadTools = currentTurnHadToolsRef.current;
+        const hadThinking = currentTurnHadThinkingRef.current;
         setMessages((prev) => [
           ...prev,
           {
@@ -109,13 +153,16 @@ export function App({ agent, bus, modelName }: AppProps) {
             hadTools,
             hadThinking,
             turnIndex,
+            toolCount: currentTurnToolCountRef.current,
+            toolErrorCount: currentTurnToolErrorCountRef.current,
+            thinkingCharCount: currentTurnThinkingTextRef.current.length,
           },
         ]);
       }
       currentTurnTextRef.current = '';
     }
     lastProcessedTurnEndRef.current = turnEndEvents.length - 1;
-  }, [turnEndEvents, toolStartEvents, thinkingEvents, turnIndex]);
+  }, [turnEndEvents, turnIndex]);
 
   const handleSubmit = (text: string) => {
     // Add user message to conversation with unique ID
@@ -129,6 +176,9 @@ export function App({ agent, bus, modelName }: AppProps) {
         hadTools: false,
         hadThinking: false,
         turnIndex: turnIndex,
+        toolCount: 0,
+        toolErrorCount: 0,
+        thinkingCharCount: 0,
       },
     ]);
     // Call agent to process the message (fire-and-forget)

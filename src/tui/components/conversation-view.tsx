@@ -1,11 +1,40 @@
 // pattern: Imperative Shell
 
-import { Box } from 'ink';
+import { Box, Text } from 'ink';
+import chalk from 'chalk';
 import type { AgentEventBus } from '@/tui/types.ts';
 import { Message } from './message.tsx';
 import { StreamingText } from './streaming-text.tsx';
 import { ToolCallGroup } from './tool-call-group.tsx';
 import { ThinkingIndicator } from './thinking-indicator.tsx';
+
+// Display-only collapsed summary for completed turns with tools
+function CollapsedToolSummary({
+  toolCount,
+  toolErrorCount,
+}: {
+  toolCount: number;
+  toolErrorCount: number;
+}) {
+  if (toolCount === 0) {
+    return null;
+  }
+
+  if (toolErrorCount > 0) {
+    return <Text>{chalk.dim(`⚠ ${toolCount} tool calls (${toolErrorCount} failed)`)}</Text>;
+  }
+
+  return <Text>{chalk.dim(`✓ ${toolCount} tool calls`)}</Text>;
+}
+
+// Display-only collapsed summary for completed turns with thinking
+function CollapsedThinkingSummary({ charCount }: { charCount: number }) {
+  if (charCount === 0) {
+    return null;
+  }
+
+  return <Text>{chalk.dim(`💭 Thinking (${charCount} chars)`)}</Text>;
+}
 
 type CompletedTurn = {
   id: number;
@@ -14,6 +43,9 @@ type CompletedTurn = {
   hadTools: boolean;
   hadThinking: boolean;
   turnIndex: number;
+  toolCount: number;
+  toolErrorCount: number;
+  thinkingCharCount: number;
 };
 
 type ConversationViewProps = {
@@ -34,12 +66,8 @@ export function ConversationView({
       {messages.map((message) => (
         <Box key={message.id} flexDirection="column">
           <Message role={message.role} content={message.content} />
-          {message.hadThinking && (
-            <ThinkingIndicator bus={bus} turnIndex={message.turnIndex} collapsed={true} />
-          )}
-          {message.hadTools && (
-            <ToolCallGroup bus={bus} turnIndex={message.turnIndex} collapsed={true} />
-          )}
+          <CollapsedThinkingSummary charCount={message.thinkingCharCount} />
+          <CollapsedToolSummary toolCount={message.toolCount} toolErrorCount={message.toolErrorCount} />
         </Box>
       ))}
       {isStreaming && (

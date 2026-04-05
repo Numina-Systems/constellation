@@ -39,31 +39,35 @@ export function ToolCallGroup({ bus, collapsed }: ToolCallGroupProps) {
 
   const resultEvents = useAgentEvents(bus, resultFilter);
 
-  // Build map of tool calls by toolId
-  const toolCallMap = new Map<string, ToolCallEntry>();
+  // Build map of tool calls by toolId with memoization
+  const toolCallMap = React.useMemo(() => {
+    const map = new Map<string, ToolCallEntry>();
 
-  // Initialize from start events
-  for (const event of startEvents) {
-    if (!toolCallMap.has(event.toolId)) {
-      toolCallMap.set(event.toolId, {
-        toolName: event.toolName,
-        status: 'running',
-      });
+    // Initialize from start events
+    for (const event of startEvents) {
+      if (!map.has(event.toolId)) {
+        map.set(event.toolId, {
+          toolName: event.toolName,
+          status: 'running',
+        });
+      }
     }
-  }
 
-  // Update from result events
-  for (const event of resultEvents) {
-    const existing = toolCallMap.get(event.toolId);
-    if (existing) {
-      toolCallMap.set(event.toolId, {
-        ...existing,
-        status: event.isError ? 'error' : 'complete',
-        error: event.isError ? event.result : undefined,
-        result: !event.isError ? event.result : undefined,
-      });
+    // Update from result events
+    for (const event of resultEvents) {
+      const existing = map.get(event.toolId);
+      if (existing) {
+        map.set(event.toolId, {
+          ...existing,
+          status: event.isError ? 'error' : 'complete',
+          error: event.isError ? event.result : undefined,
+          result: !event.isError ? event.result : undefined,
+        });
+      }
     }
-  }
+
+    return map;
+  }, [startEvents, resultEvents]);
 
   // If no tool events, render nothing
   if (toolCallMap.size === 0) {

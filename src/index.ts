@@ -763,7 +763,8 @@ async function main(): Promise<void> {
   // --- SpaceMolt initialization (optional, before agent creation for beforeTurn callback) ---
   let spacemoltLifecycle: SpaceMoltLifecycle | null = null;
   let spacemoltToolCache: Array<ToolDefinition> = [];
-  let gameStateManager = createGameStateManager();
+  let spacemoltSource: ReturnType<typeof createSpaceMoltSource> | null = null;
+  let gameStateManager: ReturnType<typeof createGameStateManager> | null = null;
   let spacemoltToolProvider: ReturnType<typeof createSpaceMoltToolProvider> | null = null;
 
   if (config.spacemolt?.enabled) {
@@ -775,10 +776,11 @@ async function main(): Promise<void> {
     } else {
       try {
         // Seed capabilities
+        gameStateManager = createGameStateManager();
         await seedSpaceMoltCapabilities(memoryStore, embedding);
 
         // Create source and tool provider
-        const spacemoltSource = createSpaceMoltSource({
+        spacemoltSource = createSpaceMoltSource({
           wsUrl: config.spacemolt.ws_url,
           username: spacemoltUsername,
           password: spacemoltPassword,
@@ -808,11 +810,23 @@ async function main(): Promise<void> {
           spacemoltLifecycle = null;
         }
       } catch (error) {
-        console.error("SpaceMelt initialization failed:", error);
+        console.error("SpaceMolt initialization failed:", error);
         spacemoltLifecycle = null;
       }
     }
   }
+
+  const spacemoltBeforeTurn = spacemoltLifecycle ? () => {
+    if (!spacemoltLifecycle.isRunning()) return;
+    if (!gameStateManager || !spacemoltToolProvider) return;
+    const gameState = gameStateManager.getGameState();
+    cycleSpaceMoltTools({
+      registry,
+      allTools: spacemoltToolCache,
+      gameState,
+      toolProvider: spacemoltToolProvider,
+    });
+  } : undefined;
 
   const agent = createAgent({
     model,
@@ -835,16 +849,34 @@ async function main(): Promise<void> {
     owner: AGENT_OWNER,
     contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
-    beforeTurn: spacemoltLifecycle?.isRunning() ? () => {
-      const gameState = gameStateManager.getGameState();
-      cycleSpaceMoltTools({
-        registry,
-        allTools: spacemoltToolCache,
-        gameState,
-        toolProvider: spacemoltToolProvider!,
-      });
-    } : undefined,
+    beforeTurn: spacemoltBeforeTurn,
   }, mainConversationId);
+
+  // --- SpaceMolt event wiring (after agent creation) ---
+  if (spacemoltLifecycle && spacemoltSource) {
+    const spacemoltEventQueue = createEventQueue(50);
+    let spacemoltProcessing = false;
+
+    async function processNextSpaceMoltEvent(): Promise<void> {
+      if (spacemoltProcessing) return;
+      spacemoltProcessing = true;
+
+      try {
+        await processEventQueue(spacemoltEventQueue, agent, 'spacemolt');
+      } finally {
+        spacemoltProcessing = false;
+      }
+    }
+
+    spacemoltSource.onMessage((message: IncomingMessage) => {
+      spacemoltEventQueue.push(message);
+      processNextSpaceMoltEvent().catch((error) => {
+        console.error('spacemolt event processing error:', error);
+      });
+    });
+
+    console.log('spacemolt datasource connected');
+  }
 
   if (blueskyConnected && blueskySource) {
       // Create dedicated Bluesky agent with deterministic conversation ID
@@ -873,15 +905,7 @@ async function main(): Promise<void> {
         owner: AGENT_OWNER,
         contextProviders: blueskyContextProviders.length > 0 ? blueskyContextProviders : undefined,
         skills: skillRegistry,
-        beforeTurn: spacemoltLifecycle?.isRunning() ? () => {
-          const gameState = gameStateManager.getGameState();
-          cycleSpaceMoltTools({
-            registry,
-            allTools: spacemoltToolCache,
-            gameState,
-            toolProvider: spacemoltToolProvider!,
-          });
-        } : undefined,
+        beforeTurn: spacemoltBeforeTurn,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop

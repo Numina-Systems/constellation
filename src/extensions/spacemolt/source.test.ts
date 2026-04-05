@@ -1,9 +1,7 @@
 import {describe, test, expect, beforeEach, afterEach} from 'bun:test';
-import {createSpaceMoltSource} from './source';
+import {createSpaceMoltSource, type Credentials} from './source';
 import {createGameStateManager} from './state';
 import type {SpaceMoltEvent} from './types';
-
-type Credentials = { username: string; password: string };
 
 const mockGetCredentials = async (): Promise<Credentials> => ({
   username: 'testuser',
@@ -599,7 +597,7 @@ describe('createSpaceMoltSource', () => {
     });
 
     // Allow connection to settle
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 0));
 
     // Send a message AFTER reconnection - this should work because handler persists
     secondSocket.simulateMessage({

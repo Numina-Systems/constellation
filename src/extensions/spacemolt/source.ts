@@ -4,9 +4,14 @@ import type {IncomingMessage} from '../data-source.ts';
 import type {GameStateManager, SpaceMoltEvent, SpaceMoltDataSource} from './types.ts';
 import {classifyEvent, formatEventContent} from './events.ts';
 
+export type Credentials = {
+  readonly username: string;
+  readonly password: string;
+};
+
 export type SpaceMoltSourceOptions = {
   readonly wsUrl: string;
-  readonly getCredentials: () => Promise<{ username: string; password: string } | null>;
+  readonly getCredentials: () => Promise<Credentials | null>;
   readonly gameStateManager: GameStateManager;
   readonly eventQueueCapacity: number;
 };

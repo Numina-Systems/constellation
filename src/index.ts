@@ -30,6 +30,7 @@ import {
   createSpaceMoltLifecycle,
   seedSpaceMoltCapabilities,
   cycleSpaceMoltTools,
+  readCredentials,
 } from '@/extensions/spacemolt';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
@@ -781,11 +782,7 @@ async function main(): Promise<void> {
         // Create source with deferred credential reading
         spacemoltSource = createSpaceMoltSource({
           wsUrl: config.spacemolt.ws_url,
-          // Credentials will be read from memory at connection time (Phase 5)
-          getCredentials: async () => {
-            // TODO: Phase 5 will integrate with register-or-login flow to read stored credentials
-            return null;
-          },
+          getCredentials: () => readCredentials(memoryStore),
           gameStateManager,
           eventQueueCapacity: config.spacemolt.event_queue_capacity,
         });

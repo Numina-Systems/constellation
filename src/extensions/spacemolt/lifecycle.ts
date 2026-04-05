@@ -24,11 +24,11 @@ export function createSpaceMoltLifecycle(
       return;
     }
 
-    // Connect source
-    await source.connect();
-
-    // Discover tools
+    // Discover tools first (registers/logs in, writes credentials to memory)
     await toolProvider.discover();
+
+    // Then connect source (reads credentials from memory via getCredentials)
+    await source.connect();
 
     running = true;
   }

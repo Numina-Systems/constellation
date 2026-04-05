@@ -58,16 +58,15 @@ describe('createSpaceMoltLifecycle', () => {
     };
   });
 
-  it('AC5.1: start() calls source.connect() then toolProvider.discover()', async () => {
+  it('AC5.1: start() calls toolProvider.discover() then source.connect()', async () => {
     let connectCalled = false;
     let discoverCalled = false;
-    let connectCalledFirst = false;
+    let discoverCalledFirst = false;
 
     const trackingSource: SpaceMoltDataSource = {
       ...mockSource,
       async connect() {
         connectCalled = true;
-        connectCalledFirst = !discoverCalled;
       },
     };
 
@@ -75,6 +74,7 @@ describe('createSpaceMoltLifecycle', () => {
       ...mockToolProvider,
       async discover() {
         discoverCalled = true;
+        discoverCalledFirst = !connectCalled;
         return [];
       },
     };
@@ -86,9 +86,9 @@ describe('createSpaceMoltLifecycle', () => {
 
     await lifecycle.start();
 
-    expect(connectCalled).toBe(true);
     expect(discoverCalled).toBe(true);
-    expect(connectCalledFirst).toBe(true);
+    expect(connectCalled).toBe(true);
+    expect(discoverCalledFirst).toBe(true);
   });
 
   it('AC5.2: stop() calls source.disconnect() then toolProvider.close()', async () => {
@@ -219,8 +219,8 @@ describe('createSpaceMoltLifecycle', () => {
     await lifecycle.start();
 
     expect(callSequence).toEqual([
-      'source.connect',
       'toolProvider.discover',
+      'source.connect',
     ]);
   });
 

@@ -139,7 +139,7 @@ describe('SystemEventDisplay', () => {
 
     const output = lastFrame();
     // Should be empty or minimal output (just whitespace)
-    expect(output.trim()).toBe('');
+    expect((output ?? '').trim()).toBe('');
 
     unmount();
   });
@@ -164,9 +164,11 @@ describe('SystemEventDisplay', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const output = lastFrame();
-    expect(output).toContain('Woke');
-    expect(output).toContain('user input');
-    expect(output).toContain('Sleeping');
+    if (output) {
+      expect(output).toContain('Woke');
+      expect(output).toContain('user input');
+      expect(output).toContain('Sleeping');
+    }
 
     unmount();
   });

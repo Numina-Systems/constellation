@@ -72,11 +72,13 @@ export function SystemEventDisplay({ bus }: SystemEventDisplayProps) {
     // Process event:received
     for (let i = lastProcessedRef.current.eventReceived + 1; i < eventReceivedEvents.length; i++) {
       const event = eventReceivedEvents[i];
-      const message = chalk.gray(`[${event.source}] ${event.summary}`);
-      newEntries.push({
-        id: `event-received-${i}`,
-        message,
-      });
+      if (event) {
+        const message = chalk.gray(`[${event.source}] ${event.summary}`);
+        newEntries.push({
+          id: `event-received-${i}`,
+          message,
+        });
+      }
     }
     lastProcessedRef.current.eventReceived = eventReceivedEvents.length - 1;
 
@@ -93,22 +95,26 @@ export function SystemEventDisplay({ bus }: SystemEventDisplayProps) {
     // Process compaction:end
     for (let i = lastProcessedRef.current.compactionEnd + 1; i < compactionEndEvents.length; i++) {
       const event = compactionEndEvents[i];
-      const message = chalk.gray(`⟳ Compacted — saved ${event.removedTokens} tokens`);
-      newEntries.push({
-        id: `compaction-end-${i}`,
-        message,
-      });
+      if (event) {
+        const message = chalk.gray(`⟳ Compacted — saved ${event.removedTokens} tokens`);
+        newEntries.push({
+          id: `compaction-end-${i}`,
+          message,
+        });
+      }
     }
     lastProcessedRef.current.compactionEnd = compactionEndEvents.length - 1;
 
     // Process activity:wake
     for (let i = lastProcessedRef.current.activityWake + 1; i < activityWakeEvents.length; i++) {
       const event = activityWakeEvents[i];
-      const message = chalk.gray(`▶ Woke: ${event.reason}`);
-      newEntries.push({
-        id: `activity-wake-${i}`,
-        message,
-      });
+      if (event) {
+        const message = chalk.gray(`▶ Woke: ${event.reason}`);
+        newEntries.push({
+          id: `activity-wake-${i}`,
+          message,
+        });
+      }
     }
     lastProcessedRef.current.activityWake = activityWakeEvents.length - 1;
 

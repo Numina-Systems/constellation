@@ -15,7 +15,8 @@ export type SpaceMoltSourceOptions = {
 export function createSpaceMoltSource(
   options: Readonly<SpaceMoltSourceOptions>,
 ): SpaceMoltDataSource {
-  const {wsUrl, username, password, gameStateManager} = options;
+  const {wsUrl, username, password, gameStateManager, eventQueueCapacity: _} = options;
+  // eventQueueCapacity is used by the DataSource registry, not internally
 
   let ws: WebSocket | null = null;
   let messageHandler: ((msg: IncomingMessage) => void) | null = null;
@@ -23,6 +24,8 @@ export function createSpaceMoltSource(
   // Promises to coordinate authentication flow
   let resolveWelcome: (() => void) | null = null;
   let resolveLoggedIn: (() => void) | null = null;
+
+  const CONNECT_TIMEOUT_MS = 30_000;
 
   const adapter: SpaceMoltDataSource = {
     name: 'spacemolt',
@@ -33,8 +36,7 @@ export function createSpaceMoltSource(
           ws = new WebSocket(wsUrl);
 
           ws.onopen = () => {
-            // Welcome message received
-            if (resolveWelcome) resolveWelcome();
+            // WebSocket opened, but we wait for the welcome message before proceeding
           };
 
           ws.onmessage = (event: MessageEvent) => {
@@ -49,6 +51,7 @@ export function createSpaceMoltSource(
 
               // Handle welcome message
               if (data.type === 'welcome') {
+                if (resolveWelcome) resolveWelcome();
                 // Send login message
                 const loginMsg = {
                   type: 'login',
@@ -101,7 +104,7 @@ export function createSpaceMoltSource(
             messageHandler = null;
           };
 
-          // Wait for welcome and logged_in messages
+          // Wait for welcome and logged_in messages with timeout
           const welcomePromise = new Promise<void>(resolve => {
             resolveWelcome = resolve;
           });
@@ -110,7 +113,16 @@ export function createSpaceMoltSource(
             resolveLoggedIn = resolve;
           });
 
-          Promise.all([welcomePromise, loggedInPromise])
+          const timeoutPromise = new Promise<void>((_, rejectTimeout) => {
+            setTimeout(() => {
+              rejectTimeout(new Error(`Connection timeout after ${CONNECT_TIMEOUT_MS}ms`));
+            }, CONNECT_TIMEOUT_MS);
+          });
+
+          Promise.race([
+            Promise.all([welcomePromise, loggedInPromise]),
+            timeoutPromise,
+          ])
             .then(() => {
               resolve();
             })

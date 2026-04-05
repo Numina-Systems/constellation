@@ -132,7 +132,7 @@ export async function assembleResponseFromStream(
           currentToolInputAccumulator += input;
         }
       } else if (event.delta.type === 'thinking_delta') {
-        const thinking = (event.delta as unknown as { thinking?: string }).thinking;
+        const thinking = event.delta.thinking;
         if (thinking) {
           thinkingAccumulator += thinking;
           eventBus.publish({

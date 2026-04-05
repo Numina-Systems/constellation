@@ -87,6 +87,7 @@ export type StreamEventContentBlockDelta = {
     type: string;
     text?: string;
     input?: string;
+    thinking?: string;
     index: number;
   };
 };

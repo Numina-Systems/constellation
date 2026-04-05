@@ -1,3 +1,5 @@
+// pattern: Functional Core
+
 import { describe, it, expect } from 'bun:test';
 import { detectTuiMode } from './detect.ts';
 

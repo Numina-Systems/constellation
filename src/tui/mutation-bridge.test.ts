@@ -1,3 +1,5 @@
+// pattern: Imperative Shell
+
 import { describe, it, expect } from 'bun:test';
 import { createAgentEventBus } from './event-bus.ts';
 import { createMutationPromptViaBus } from './mutation-bridge.ts';

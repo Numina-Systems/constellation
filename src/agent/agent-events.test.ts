@@ -20,8 +20,8 @@ import { assembleResponseFromStream } from './stream-assembler.ts';
 /**
  * Create an in-memory event bus for testing.
  */
-function createTestEventBus(): { bus: AgentEventBus; events: AgentEvent[] } {
-  const events: AgentEvent[] = [];
+function createTestEventBus(): { bus: AgentEventBus; events: Array<AgentEvent> } {
+  const events: Array<AgentEvent> = [];
 
   return {
     bus: {
@@ -42,7 +42,7 @@ function createTestEventBus(): { bus: AgentEventBus; events: AgentEvent[] } {
 /**
  * Create a simple async iterable from an array.
  */
-async function* asyncIterableFromArray<T>(items: T[]): AsyncIterable<T> {
+async function* asyncIterableFromArray<T>(items: Array<T>): AsyncIterable<T> {
   for (const item of items) {
     yield item;
   }
@@ -53,7 +53,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should publish stream:start event', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -95,7 +95,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should publish stream:chunk events for text deltas', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -132,7 +132,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should publish stream:end with usage stats', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 50 } },
@@ -169,7 +169,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should publish events in correct order: start, chunks, end', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -212,7 +212,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should publish stream:thinking events for thinking deltas', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -260,7 +260,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should include thinking in reasoning_content field', async () => {
       const { bus } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -302,7 +302,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should assemble text content correctly', async () => {
       const { bus } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 50 } },
@@ -341,7 +341,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should assemble tool use blocks correctly', async () => {
       const { bus } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 50 } },
@@ -381,7 +381,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('should handle mixed text and tool use blocks', async () => {
       const { bus } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 50 } },
@@ -428,7 +428,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
       // The stream assembler publishes all stream events.
       // The agent loop (which calls assembleResponseFromStream) publishes turn:start/end.
       // This test verifies the stream assembler provides all needed stream events.
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -464,7 +464,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('AC2.3: stream events maintain order for turn bracketing', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 0 } },
@@ -513,7 +513,7 @@ describe('Stream Assembler Event Publishing (tui.AC2)', () => {
     it('AC2.2: stream events include all fields needed for tool result publishing', async () => {
       const { bus, events } = createTestEventBus();
 
-      const streamEvents: StreamEvent[] = [
+      const streamEvents: Array<StreamEvent> = [
         {
           type: 'message_start',
           message: { id: 'msg-1', usage: { input_tokens: 100, output_tokens: 50 } },

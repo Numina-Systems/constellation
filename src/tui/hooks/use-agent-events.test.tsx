@@ -16,7 +16,7 @@ describe('useAgentEvents hook', () => {
   });
 
   it('subscribes on mount and receives matching events', async () => {
-    const eventTracker: AgentEvent[] = [];
+    const eventTracker: Array<AgentEvent> = [];
 
     function TestComponent() {
       const events = useAgentEvents(
@@ -55,7 +55,7 @@ describe('useAgentEvents hook', () => {
   });
 
   it('ignores events that do not match the filter', async () => {
-    const eventTracker: AgentEvent[] = [];
+    const eventTracker: Array<AgentEvent> = [];
 
     function TestComponent() {
       const events = useAgentEvents(
@@ -92,7 +92,7 @@ describe('useAgentEvents hook', () => {
   });
 
   it('unsubscribes on unmount and ignores events after unmount', async () => {
-    const eventTracker: AgentEvent[] = [];
+    const eventTracker: Array<AgentEvent> = [];
 
     function TestComponent() {
       const events = useAgentEvents(
@@ -131,8 +131,8 @@ describe('useAgentEvents hook', () => {
     expect(eventTracker).toHaveLength(countBeforeUnmount);
   });
 
-  it('batches high-frequency events to avoid excessive re-renders', async () => {
-    const renderCounts: number[] = [];
+  it('processes all rapid events', async () => {
+    const eventTracker: Array<AgentEvent> = [];
 
     function TestComponent() {
       const events = useAgentEvents(
@@ -141,24 +141,28 @@ describe('useAgentEvents hook', () => {
           event.type === 'stream:chunk'
       );
 
-      // Record the current event count on each render
-      renderCounts.push(events.length);
+      // Record events each render
+      if (events.length > 0) {
+        eventTracker.length = 0;
+        eventTracker.push(...events);
+      }
 
       return React.createElement(Text, null, `Events: ${events.length}`);
     }
 
-    render(React.createElement(TestComponent));
+    const { lastFrame } = render(React.createElement(TestComponent));
 
     // Publish multiple events rapidly
     bus.publish({ type: 'stream:chunk', text: 'a', turnIndex: 0 });
     bus.publish({ type: 'stream:chunk', text: 'b', turnIndex: 0 });
     bus.publish({ type: 'stream:chunk', text: 'c', turnIndex: 0 });
 
-    // Give React time to batch updates via setTimeout(0)
+    // Give React time to process updates
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // The final render should show 3 events
-    expect(renderCounts[renderCounts.length - 1]).toBe(3);
+    // All events should be received
+    expect(eventTracker).toHaveLength(3);
+    expect(lastFrame()).toContain('Events: 3');
   });
 });
 

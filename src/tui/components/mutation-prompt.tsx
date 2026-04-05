@@ -9,8 +9,8 @@ import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import chalk from 'chalk';
-import type { AgentEventBus, AgentEvent } from '../types.ts';
-import { useLatestAgentEvent } from '../hooks/use-agent-events.ts';
+import type { AgentEventBus, AgentEvent } from '@/tui/types.ts';
+import { useLatestAgentEvent } from '@/tui/hooks/use-agent-events.ts';
 
 type MutationPromptProps = {
   bus: AgentEventBus;

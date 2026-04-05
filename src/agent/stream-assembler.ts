@@ -33,7 +33,7 @@ function finalizeCurrentBlock(
     return {
       type: 'text',
       text: textAccumulator,
-    } as TextBlock;
+    } as TextBlock; // TextBlock has type 'text' and text property guaranteed by guard
   } else if (blockType === 'tool_use' && toolInputAccumulator) {
     let parsedInput: Record<string, unknown> = {};
     try {
@@ -46,7 +46,7 @@ function finalizeCurrentBlock(
       id: blockId || '',
       name: blockName || '',
       input: parsedInput,
-    } as ToolUseBlock;
+    } as ToolUseBlock; // ContentBlock union requires explicit cast from constructed object
   }
   return null;
 }
@@ -164,7 +164,7 @@ export async function assembleResponseFromStream(
     contentBlocks.push({
       type: 'text',
       text: '',
-    } as TextBlock);
+    } as TextBlock); // Default empty TextBlock satisfies ContentBlock union
   }
 
   // Publish stream:end

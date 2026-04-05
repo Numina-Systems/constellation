@@ -11,7 +11,6 @@ type ToolCallProps = {
   status: ToolCallStatus;
   resultSummary?: string;
   errorMessage?: string;
-  toolId?: string;
 };
 
 function truncateSummary(text: string, maxLength = 80): string {

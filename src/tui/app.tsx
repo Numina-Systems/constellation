@@ -236,7 +236,8 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
 
 /**
  * Render the App component using Ink's render function.
- * Returns a promise that resolves when the app exits.
+ * Returns { waitUntilExit, unmount } for lifecycle management.
+ * waitUntilExit returns Promise<unknown> per Ink's RenderResult type.
  */
 export function renderApp(props: AppProps): {
   waitUntilExit: () => Promise<unknown>;

@@ -86,7 +86,6 @@ export function ToolCallGroup({ bus, collapsed }: ToolCallGroupProps) {
         {entries.map(([toolId, entry]) => (
           <ToolCall
             key={toolId}
-            toolId={toolId}
             toolName={entry.toolName}
             status={entry.status}
             resultSummary={entry.result}

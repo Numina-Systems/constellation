@@ -7,7 +7,7 @@ import { ToolCall } from './tool-call.tsx';
 describe('ToolCall', () => {
   it('renders running status with spinner and tool name', () => {
     const { lastFrame, unmount } = render(
-      <ToolCall toolName="web_search" toolId="123" status="running" />
+      <ToolCall toolName="web_search" status="running" />
     );
 
     const output = lastFrame();
@@ -21,7 +21,6 @@ describe('ToolCall', () => {
     const { lastFrame, unmount } = render(
       <ToolCall
         toolName="database_query"
-        toolId="456"
         status="complete"
         resultSummary="Found 3 items in database"
       />
@@ -44,7 +43,6 @@ describe('ToolCall', () => {
     const { lastFrame, unmount } = render(
       <ToolCall
         toolName="test_tool"
-        toolId="789"
         status="complete"
         resultSummary={longSummary}
       />
@@ -68,7 +66,6 @@ describe('ToolCall', () => {
     const { lastFrame, unmount } = render(
       <ToolCall
         toolName="api_call"
-        toolId="999"
         status="error"
         errorMessage="Connection timeout"
       />
@@ -88,7 +85,6 @@ describe('ToolCall', () => {
     const { lastFrame, unmount } = render(
       <ToolCall
         toolName="tool:with:colons"
-        toolId="special1"
         status="complete"
         resultSummary="Success"
       />

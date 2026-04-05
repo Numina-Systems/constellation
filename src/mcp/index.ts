@@ -8,3 +8,4 @@ export {
   McpServerConfigSchema,
   McpConfigSchema,
 } from './schema.ts';
+export { resolveEnvVars, resolveServerConfigEnv } from './env.ts';

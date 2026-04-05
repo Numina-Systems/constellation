@@ -256,12 +256,26 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('caches tools after first discovery', async () => {
-    const provider = createSpaceMoltToolProvider(options, mockClient);
+    let listToolsCallCount = 0;
+
+    const callCountMockClient: MockMcpClient = {
+      ...mockClient,
+      listTools: async (cursor?: string) => {
+        listToolsCallCount++;
+        return mockClient.listTools(cursor);
+      },
+    };
+
+    const provider = createSpaceMoltToolProvider(options, callCountMockClient);
 
     const firstCall = await provider.discover();
+    const initialCallCount = listToolsCallCount;
+
     const secondCall = await provider.discover();
+    const secondCallCount = listToolsCallCount;
 
     expect(firstCall).toEqual(secondCall);
+    expect(secondCallCount).toBe(initialCallCount);
   });
 
   it('handles multiple content blocks in MCP response', async () => {

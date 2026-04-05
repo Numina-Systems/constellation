@@ -2,6 +2,7 @@
 
 import type { ToolDefinition, ToolResult } from '@/tool/types.ts';
 import type { SpaceMoltToolProvider } from './types.ts';
+import type { McpTool } from './schema.ts';
 import { translateMcpTool, flattenMcpContent } from './schema.ts';
 
 export type SpaceMoltToolProviderOptions = {
@@ -15,22 +16,7 @@ type McpClient = {
   listTools(
     cursor?: string
   ): Promise<{
-    tools: ReadonlyArray<{
-      name: string;
-      description?: string;
-      inputSchema: {
-        type: 'object';
-        properties?: Record<
-          string,
-          {
-            type?: string;
-            description?: string;
-            enum?: ReadonlyArray<string>;
-          }
-        >;
-        required?: ReadonlyArray<string>;
-      };
-    }>;
+    tools: ReadonlyArray<McpTool>;
     nextCursor?: string;
   }>;
   callTool(
@@ -53,7 +39,39 @@ export function createSpaceMoltToolProvider(
   let toolCache: Array<ToolDefinition> = [];
   let mcpClient: McpClient | undefined = client;
 
+  async function paginateTools(): Promise<Array<ToolDefinition>> {
+    if (!mcpClient) {
+      return [];
+    }
+
+    const allTools: Array<ToolDefinition> = [];
+    let cursor: string | undefined;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const response = await mcpClient.listTools(cursor);
+
+      for (const tool of response.tools) {
+        const toolDef = translateMcpTool(tool, 'spacemolt:');
+        allTools.push(toolDef);
+      }
+
+      if (!response.nextCursor) break;
+      cursor = response.nextCursor;
+    }
+
+    return allTools;
+  }
+
+  let subscribed = false;
+  let discovered = false;
+
   async function discover(): Promise<Array<ToolDefinition>> {
+    // Return cached tools if already discovered
+    if (discovered) {
+      return toolCache;
+    }
+
     // If client is not provided, we would create it with the real SDK
     // For now, this is test-only injectable
     if (!mcpClient) {
@@ -73,30 +91,18 @@ export function createSpaceMoltToolProvider(
       },
     });
 
-    // Paginate through tool list
-    const allTools: Array<ToolDefinition> = [];
-    let cursor: string | undefined;
-
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const response = await mcpClient.listTools(cursor);
-
-      for (const tool of response.tools) {
-        const toolDef = translateMcpTool(tool, 'spacemolt:');
-        allTools.push(toolDef);
-      }
-
-      if (!response.nextCursor) break;
-      cursor = response.nextCursor;
-    }
-
-    // Cache the tools
+    // Paginate through tool list and cache
+    const allTools = await paginateTools();
     toolCache = allTools;
+    discovered = true;
 
-    // Subscribe to tool list changes
-    mcpClient.on('notifications/tools/list_changed', async () => {
-      await refreshTools();
-    });
+    // Subscribe to tool list changes (only on first discover call)
+    if (!subscribed) {
+      subscribed = true;
+      mcpClient.on('notifications/tools/list_changed', async () => {
+        await refreshTools();
+      });
+    }
 
     return toolCache;
   }
@@ -143,24 +149,7 @@ export function createSpaceMoltToolProvider(
   }
 
   async function refreshTools(): Promise<void> {
-    if (!mcpClient) return;
-
-    const allTools: Array<ToolDefinition> = [];
-    let cursor: string | undefined;
-
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const response = await mcpClient.listTools(cursor);
-
-      for (const tool of response.tools) {
-        const toolDef = translateMcpTool(tool, 'spacemolt:');
-        allTools.push(toolDef);
-      }
-
-      if (!response.nextCursor) break;
-      cursor = response.nextCursor;
-    }
-
+    const allTools = await paginateTools();
     toolCache = allTools;
   }
 

@@ -1,8 +1,8 @@
 // pattern: Functional Core
 
-import type { ToolDefinition, ToolParameter } from '@/tool/types.ts';
+import type { ToolDefinition, ToolParameter, ToolParameterType } from '@/tool/types.ts';
 
-type McpTool = {
+export type McpTool = {
   name: string;
   description?: string;
   inputSchema: {
@@ -21,7 +21,7 @@ type McpTool = {
 
 function mapJsonSchemaTypeToToolType(
   jsonSchemaType: string | undefined
-): string {
+): ToolParameterType {
   switch (jsonSchemaType) {
     case 'string':
       return 'string';
@@ -50,12 +50,7 @@ export function translateMcpTool(
   const parameters: Array<ToolParameter> = Object.entries(properties).map(
     ([propertyName, propertySchema]) => ({
       name: propertyName,
-      type: mapJsonSchemaTypeToToolType(propertySchema.type) as
-        | 'string'
-        | 'number'
-        | 'boolean'
-        | 'object'
-        | 'array',
+      type: mapJsonSchemaTypeToToolType(propertySchema.type),
       description: propertySchema.description ?? '',
       required: requiredSet.has(propertyName),
       ...(propertySchema.enum && {

@@ -1064,7 +1064,34 @@ async function main(): Promise<void> {
         if (task.name === 'transition-to-sleep') {
           await am.transitionTo('sleeping');
           console.log('[activity] transitioned to sleeping mode');
+
+          // On sleep: stop SpaceMolt if running
+          if (spacemoltLifecycle && spacemoltLifecycle.isRunning()) {
+            try {
+              await spacemoltLifecycle.stop();
+              // Unregister all spacemolt tools
+              for (const def of registry.getDefinitions()) {
+                if (def.name.startsWith('spacemolt:')) {
+                  registry.unregister(def.name);
+                }
+              }
+              console.log('SpaceMolt disconnected for sleep');
+            } catch (error) {
+              console.error('SpaceMolt sleep disconnection failed:', error);
+            }
+          }
         } else if (task.name === 'transition-to-wake') {
+          // On wake: start SpaceMolt if not running
+          if (spacemoltLifecycle && !spacemoltLifecycle.isRunning()) {
+            try {
+              await spacemoltLifecycle.start();
+              spacemoltToolCache = await spacemoltToolProvider?.discover() ?? [];
+              console.log('SpaceMolt reconnected on wake');
+            } catch (error) {
+              console.error('SpaceMolt wake connection failed:', error);
+            }
+          }
+
           await wakeHandler();
         }
       })().catch((error) => {

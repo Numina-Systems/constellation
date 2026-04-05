@@ -144,6 +144,15 @@ export async function assembleResponseFromStream(
       }
     } else if (event.type === 'message_stop') {
       stopReason = event.message.stop_reason;
+      // message_stop (from message_delta) carries final output_tokens;
+      // merge with input_tokens from message_start
+      if (event.usage) {
+        const inputTokens: number = usage ? usage.input_tokens : 0;
+        usage = {
+          input_tokens: inputTokens,
+          output_tokens: event.usage.output_tokens,
+        };
+      }
     }
   }
 

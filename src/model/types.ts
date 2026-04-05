@@ -97,6 +97,7 @@ export type StreamEventMessageStop = {
   message: {
     stop_reason: StopReason;
   };
+  usage?: UsageStats;
 };
 
 export type StreamEvent =

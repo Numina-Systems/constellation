@@ -301,6 +301,13 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
               // SDK types stop_reason as string; we map to normalized StopReason type via function
               stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "end_turn"),
             },
+            // message_delta carries final usage (output_tokens only; input_tokens comes from message_start)
+            ...(event.usage && {
+              usage: {
+                input_tokens: 0,
+                output_tokens: event.usage.output_tokens,
+              },
+            }),
           };
         }
       }

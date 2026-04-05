@@ -97,7 +97,7 @@ export function createAgent(
     });
   }
 
-  async function processMessage(userMessage: string): Promise<string> {
+  async function processMessageInternal(userMessage: string, turnSource: 'user' | 'event' = 'user'): Promise<string> {
     // Step 1: Persist user message
     await persistMessage({
       conversation_id: id,
@@ -109,7 +109,7 @@ export function createAgent(
     if (deps.eventBus) {
       deps.eventBus.publish({
         type: 'turn:start',
-        source: 'user',
+        source: turnSource,
       });
     }
 
@@ -381,6 +381,11 @@ export function createAgent(
     return loadConversationHistory(id);
   }
 
+  // Public interface - delegates to internal implementation with 'user' source
+  async function processMessage(userMessage: string): Promise<string> {
+    return processMessageInternal(userMessage, 'user');
+  }
+
   async function processEvent(event: ExternalEvent): Promise<string> {
     const formattedMessage = formatExternalEvent(event, deps.sourceInstructions);
 
@@ -393,7 +398,8 @@ export function createAgent(
       });
     }
 
-    return processMessage(formattedMessage);
+    // Process with 'event' source for turn:start event
+    return processMessageInternal(formattedMessage, 'event');
   }
 
   return {

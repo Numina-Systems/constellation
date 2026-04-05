@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 /**
  * Stream assembly: converts a streaming response into a ModelResponse
@@ -18,6 +18,38 @@ import type {
   StopReason,
 } from '../model/types.ts';
 import type { AgentEventBus } from '../tui/types.ts';
+
+/**
+ * Finalizes the current block by adding it to contentBlocks if it has accumulated content.
+ */
+function finalizeCurrentBlock(
+  blockType: string | null,
+  textAccumulator: string,
+  toolInputAccumulator: string,
+  blockId: string | null,
+  blockName: string | null,
+): ContentBlock | null {
+  if (blockType === 'text' && textAccumulator) {
+    return {
+      type: 'text',
+      text: textAccumulator,
+    } as TextBlock;
+  } else if (blockType === 'tool_use' && toolInputAccumulator) {
+    let parsedInput: Record<string, unknown> = {};
+    try {
+      parsedInput = JSON.parse(toolInputAccumulator);
+    } catch {
+      parsedInput = { _raw: toolInputAccumulator };
+    }
+    return {
+      type: 'tool_use',
+      id: blockId || '',
+      name: blockName || '',
+      input: parsedInput,
+    } as ToolUseBlock;
+  }
+  return null;
+}
 
 /**
  * Assembles a ModelResponse from a streaming response while publishing
@@ -59,32 +91,22 @@ export async function assembleResponseFromStream(
       usage = event.message.usage;
     } else if (event.type === 'content_block_start') {
       // Save previous block if exists
-      if (currentBlockType === 'text' && currentTextAccumulator) {
-        contentBlocks.push({
-          type: 'text',
-          text: currentTextAccumulator,
-        } as TextBlock);
-        currentTextAccumulator = '';
-      } else if (currentBlockType === 'tool_use' && currentToolInputAccumulator) {
-        let parsedInput: Record<string, unknown> = {};
-        try {
-          parsedInput = JSON.parse(currentToolInputAccumulator);
-        } catch {
-          // If JSON parse fails, store as-is
-          parsedInput = { _raw: currentToolInputAccumulator };
-        }
-        contentBlocks.push({
-          type: 'tool_use',
-          id: currentBlockId || '',
-          name: currentBlockName || '',
-          input: parsedInput,
-        } as ToolUseBlock);
-        currentToolInputAccumulator = '';
-        currentBlockId = null;
-        currentBlockName = null;
-      } else if (currentBlockType === 'thinking' && thinkingAccumulator) {
-        // Thinking content blocks are not part of contentBlocks, they're captured separately
+      const finalized = finalizeCurrentBlock(
+        currentBlockType,
+        currentTextAccumulator,
+        currentToolInputAccumulator,
+        currentBlockId,
+        currentBlockName,
+      );
+      if (finalized) {
+        contentBlocks.push(finalized);
       }
+
+      // Reset accumulators
+      currentTextAccumulator = '';
+      currentToolInputAccumulator = '';
+      currentBlockId = null;
+      currentBlockName = null;
 
       // Start new block
       currentBlockType = event.content_block.type;
@@ -95,7 +117,7 @@ export async function assembleResponseFromStream(
       }
     } else if (event.type === 'content_block_delta') {
       if (event.delta.type === 'text_delta') {
-        const text = (event.delta as unknown as { text?: string }).text;
+        const text = event.delta.text;
         if (text) {
           currentTextAccumulator += text;
           eventBus.publish({
@@ -105,7 +127,7 @@ export async function assembleResponseFromStream(
           });
         }
       } else if (event.delta.type === 'input_json_delta') {
-        const input = (event.delta as unknown as { input?: string }).input;
+        const input = event.delta.input;
         if (input) {
           currentToolInputAccumulator += input;
         }
@@ -126,24 +148,15 @@ export async function assembleResponseFromStream(
   }
 
   // Save final block if exists
-  if (currentBlockType === 'text' && currentTextAccumulator) {
-    contentBlocks.push({
-      type: 'text',
-      text: currentTextAccumulator,
-    } as TextBlock);
-  } else if (currentBlockType === 'tool_use' && currentToolInputAccumulator) {
-    let parsedInput: Record<string, unknown> = {};
-    try {
-      parsedInput = JSON.parse(currentToolInputAccumulator);
-    } catch {
-      parsedInput = { _raw: currentToolInputAccumulator };
-    }
-    contentBlocks.push({
-      type: 'tool_use',
-      id: currentBlockId || '',
-      name: currentBlockName || '',
-      input: parsedInput,
-    } as ToolUseBlock);
+  const finalBlock = finalizeCurrentBlock(
+    currentBlockType,
+    currentTextAccumulator,
+    currentToolInputAccumulator,
+    currentBlockId,
+    currentBlockName,
+  );
+  if (finalBlock) {
+    contentBlocks.push(finalBlock);
   }
 
   // Ensure we have at least one content block (even if empty)

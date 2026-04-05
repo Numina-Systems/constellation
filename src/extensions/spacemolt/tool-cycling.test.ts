@@ -38,8 +38,8 @@ describe('cycleSpaceMoltTools', () => {
   });
 
   it('AC3.6: should cycle from DOCKED to COMBAT, removing docked-only tools and adding combat tools', () => {
-    const nativeTools: ToolDefinition[] = [createNativeTool('memory_read')];
-    const spacemoltTools: ToolDefinition[] = [
+    const nativeTools: Array<ToolDefinition> = [createNativeTool('memory_read')];
+    const spacemoltTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'), // docked only
       createSpaceMoltTool('sell'), // docked only
       createSpaceMoltTool('attack'), // combat only
@@ -93,12 +93,12 @@ describe('cycleSpaceMoltTools', () => {
   });
 
   it('AC3.7: native tools are unaffected by SpaceMolt tool cycling', () => {
-    const nativeTools: ToolDefinition[] = [
+    const nativeTools: Array<ToolDefinition> = [
       createNativeTool('memory_read'),
       createNativeTool('execute_code'),
     ];
 
-    const spacemoltTools: ToolDefinition[] = [
+    const spacemoltTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'),
       createSpaceMoltTool('attack'),
       createSpaceMoltTool('get_status'),
@@ -146,7 +146,7 @@ describe('cycleSpaceMoltTools', () => {
   });
 
   it('should replace combat tools with docked tools when cycling COMBAT -> DOCKED', () => {
-    const allTools: ToolDefinition[] = [
+    const allTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'),
       createSpaceMoltTool('attack'),
       createSpaceMoltTool('get_status'),
@@ -180,7 +180,7 @@ describe('cycleSpaceMoltTools', () => {
   });
 
   it('should include always-tools in every state', () => {
-    const allTools: ToolDefinition[] = [
+    const allTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'),
       createSpaceMoltTool('attack'),
       createSpaceMoltTool('get_status'), // always
@@ -189,7 +189,7 @@ describe('cycleSpaceMoltTools', () => {
 
     const toolProvider = createMockToolProvider();
 
-    const states: GameState[] = ['DOCKED', 'UNDOCKED', 'COMBAT', 'TRAVELING'];
+    const states: Array<GameState> = ['DOCKED', 'UNDOCKED', 'COMBAT', 'TRAVELING'];
 
     for (const state of states) {
       cycleSpaceMoltTools({
@@ -206,7 +206,7 @@ describe('cycleSpaceMoltTools', () => {
   });
 
   it('should handle consecutive cycling without errors', () => {
-    const allTools: ToolDefinition[] = [
+    const allTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'),
       createSpaceMoltTool('attack'),
       createSpaceMoltTool('get_status'),
@@ -244,7 +244,7 @@ describe('cycleSpaceMoltTools', () => {
   });
 
   it('should be idempotent when cycling to same state twice', () => {
-    const allTools: ToolDefinition[] = [
+    const allTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'),
       createSpaceMoltTool('attack'),
       createSpaceMoltTool('get_status'),
@@ -292,7 +292,7 @@ describe('cycleSpaceMoltTools', () => {
       },
     };
 
-    const allTools: ToolDefinition[] = [
+    const allTools: Array<ToolDefinition> = [
       createSpaceMoltTool('buy'),
       createSpaceMoltTool('get_status'),
     ];

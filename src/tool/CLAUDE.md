@@ -6,7 +6,7 @@ Last verified: 2026-03-05
 Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, agent scheduling, and unified search.
 
 ## Contracts
-- **Exposes**: `ToolRegistry` interface (`register`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
+- **Exposes**: `ToolRegistry` interface (`register`, `unregister`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
 - **Guarantees**:
   - `dispatch` validates required params, types, and enum values before calling handler
   - `dispatch` returns `ToolResult` (never throws); errors captured in `error` field
@@ -21,7 +21,8 @@ Provides a tool registry that manages registration, parameter validation, dispat
 - **Boundary**: Tool handlers are pure functions returning `ToolResult`. Side effects go through injected dependencies.
 
 ## Key Decisions
-- Registry pattern over static map: Supports dynamic tool registration from extensions
+- Registry pattern over static map: Supports dynamic tool registration and unregistration from extensions
+- `unregister()` added to support per-turn tool cycling (SpaceMolt), returns boolean indicating whether the tool existed
 - Stub generation for Deno bridge: Tools callable from sandboxed code via IPC without direct access to host APIs
 - Special-case tools as definitions: `execute_code` and `compact_context` are tool definitions only; actual dispatch is handled by the agent loop to route to specialized handlers (`CodeRuntime` and `Compactor` respectively)
 

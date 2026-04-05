@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { createSpaceMoltLifecycle } from './lifecycle.ts';
 import type { SpaceMoltLifecycleOptions } from './lifecycle.ts';
-import type { SpaceMoltDataSource } from './types.ts';
-import type { SpaceMoltToolProvider } from './types.ts';
+import type { SpaceMoltDataSource, SpaceMoltToolProvider } from './types.ts';
 
 // Mock implementations
 function createMockSource(): SpaceMoltDataSource {

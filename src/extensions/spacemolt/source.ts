@@ -6,8 +6,7 @@ import {classifyEvent, formatEventContent} from './events.ts';
 
 export type SpaceMoltSourceOptions = {
   readonly wsUrl: string;
-  readonly username: string;
-  readonly password: string;
+  readonly getCredentials: () => Promise<{ username: string; password: string } | null>;
   readonly gameStateManager: GameStateManager;
   readonly eventQueueCapacity: number;
 };
@@ -15,7 +14,7 @@ export type SpaceMoltSourceOptions = {
 export function createSpaceMoltSource(
   options: Readonly<SpaceMoltSourceOptions>,
 ): SpaceMoltDataSource {
-  const {wsUrl, username, password, gameStateManager, eventQueueCapacity: _} = options;
+  const {wsUrl, getCredentials, gameStateManager, eventQueueCapacity: _} = options;
   // eventQueueCapacity is used by the DataSource registry, not internally
 
   let ws: WebSocket | null = null;
@@ -54,17 +53,25 @@ export function createSpaceMoltSource(
             // Handle welcome message
             if (data.type === 'welcome') {
               if (resolveWelcome) resolveWelcome();
-              // Send login message
-              const loginMsg = {
-                type: 'login',
-                payload: {
-                  username,
-                  password,
-                },
-              };
-              if (ws) {
-                ws.send(JSON.stringify(loginMsg));
-              }
+              // Read credentials from memory (deferred resolution)
+              getCredentials().then(credentials => {
+                if (!credentials) {
+                  reject(new Error('SpaceMolt credentials not available: getCredentials() returned null'));
+                  return;
+                }
+                const loginMsg = {
+                  type: 'login',
+                  payload: {
+                    username: credentials.username,
+                    password: credentials.password,
+                  },
+                };
+                if (ws) {
+                  ws.send(JSON.stringify(loginMsg));
+                }
+              }).catch(err => {
+                reject(err);
+              });
               return;
             }
 

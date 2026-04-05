@@ -778,12 +778,14 @@ async function main(): Promise<void> {
         gameStateManager = createGameStateManager();
         await seedSpaceMoltCapabilities(memoryStore, embedding);
 
-        // Create source (note: WebSocket auth will need to be updated in Phase 4)
+        // Create source with deferred credential reading
         spacemoltSource = createSpaceMoltSource({
           wsUrl: config.spacemolt.ws_url,
-          // Source uses placeholder credentials for now; Phase 4 will integrate register-or-login
-          username: 'temp-user',
-          password: 'temp-pass',
+          // Credentials will be read from memory at connection time (Phase 5)
+          getCredentials: async () => {
+            // TODO: Phase 5 will integrate with register-or-login flow to read stored credentials
+            return null;
+          },
           gameStateManager,
           eventQueueCapacity: config.spacemolt.event_queue_capacity,
         });

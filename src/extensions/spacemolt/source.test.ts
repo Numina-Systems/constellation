@@ -3,7 +3,9 @@ import {createSpaceMoltSource} from './source';
 import {createGameStateManager} from './state';
 import type {SpaceMoltEvent} from './types';
 
-const mockGetCredentials = async () => ({
+type Credentials = { username: string; password: string };
+
+const mockGetCredentials = async (): Promise<Credentials> => ({
   username: 'testuser',
   password: 'testpass',
 });
@@ -97,8 +99,11 @@ describe('createSpaceMoltSource', () => {
       payload: {version: '1.0'},
     });
 
-    // Wait briefly for async getCredentials to complete
-    await new Promise(r => setTimeout(r, 10));
+    // Poll for login message to be sent (condition-based instead of fixed timeout)
+    const startTime = Date.now();
+    while (createdSocket!.getSentMessages().length === 0 && Date.now() - startTime < 5000) {
+      await new Promise(r => setTimeout(r, 10));
+    }
 
     // Verify login was sent
     const sent = createdSocket!.getSentMessages();
@@ -706,8 +711,8 @@ describe('createSpaceMoltSource', () => {
       payload: {docked_at_base: true},
     });
 
-    // Allow connection to settle
-    await new Promise(r => setTimeout(r, 100));
+    // Flush microtasks to allow connection to settle
+    await new Promise(r => setTimeout(r, 0));
 
     // Verify getCredentials was called again on reconnection
     expect(getCredentialsCalls).toBeGreaterThanOrEqual(2);

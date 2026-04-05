@@ -1,7 +1,6 @@
 // pattern: Imperative Shell
 
-import type { SpaceMoltDataSource } from './types.ts';
-import type { SpaceMoltToolProvider } from './types.ts';
+import type { SpaceMoltDataSource, SpaceMoltToolProvider } from './types.ts';
 
 export type SpaceMoltLifecycleOptions = {
   readonly source: SpaceMoltDataSource;

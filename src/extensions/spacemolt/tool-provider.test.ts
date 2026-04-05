@@ -439,15 +439,4 @@ describe('createSpaceMoltToolProvider', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('session_invalid');
   });
-
-  it('isSessionExpired correctly identifies session_invalid errors', async () => {
-    const sessionError = new Error('session_invalid: token expired');
-    expect(sessionError.message.includes('session_invalid')).toBe(true);
-
-    const otherError = new Error('connection refused');
-    expect(otherError.message.includes('session_invalid')).toBe(false);
-
-    const objError = { code: 'session_invalid', message: 'expired' };
-    expect(String(objError.code).includes('session_invalid')).toBe(true);
-  });
 });

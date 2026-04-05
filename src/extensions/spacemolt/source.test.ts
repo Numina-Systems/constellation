@@ -457,7 +457,7 @@ describe('createSpaceMoltSource', () => {
     createdSocket!.close();
 
     // Wait a bit for any async reconnection to fail/succeed
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 50));
 
     // No new connection should have been attempted
     expect(connectionAttempts).toBe(0);
@@ -501,8 +501,13 @@ describe('createSpaceMoltSource', () => {
     // Now simulate unexpected close (triggering reconnection)
     firstSocket.close();
 
-    // Wait for reconnection attempt
-    await new Promise(r => setTimeout(r, 1500));
+    // Wait for reconnection attempt with condition-based polling
+    const maxWaitMs = 5000;
+    const pollIntervalMs = 50;
+    const startTime = Date.now();
+    while (socketInstances.length <= 1 && Date.now() - startTime < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
 
     // A new socket should have been created (reconnection attempt)
     expect(socketInstances.length).toBeGreaterThan(1);

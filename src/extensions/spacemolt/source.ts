@@ -34,6 +34,7 @@ export function createSpaceMoltSource(
   async function connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        shouldReconnect = true;
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
@@ -100,18 +101,22 @@ export function createSpaceMoltSource(
           reject(error);
         };
 
-        ws.onclose = async () => {
+        ws.onclose = () => {
           ws = null;
           messageHandler = null;
 
           // If shouldReconnect is true, attempt to reconnect
           if (shouldReconnect) {
-            try {
-              await new Promise(r => setTimeout(r, RECONNECT_DELAY_MS));
-              await connect();
-            } catch (reconnectError) {
-              console.error('[spacemolt] reconnection failed:', reconnectError);
-            }
+            (async () => {
+              try {
+                await new Promise(r => setTimeout(r, RECONNECT_DELAY_MS));
+                await connect();
+              } catch (reconnectError) {
+                console.error('[spacemolt] reconnection failed:', reconnectError);
+              }
+            })().catch(err => {
+              console.error('[spacemolt] unhandled error in reconnection:', err);
+            });
           }
         };
 

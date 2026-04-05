@@ -147,6 +147,9 @@ function createMockMemoryManager(): MemoryManager {
 function createMockToolRegistry(): ToolRegistry {
   return {
     register() {},
+    unregister() {
+      return true;
+    },
     getDefinitions() {
       return [];
     },
@@ -1114,6 +1117,9 @@ describe('processEvent', () => {
 
     const toolRegistry: ToolRegistry = {
       register() {},
+      unregister() {
+        return true;
+      },
       getDefinitions() {
         return [];
       },

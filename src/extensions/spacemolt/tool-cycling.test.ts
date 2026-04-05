@@ -3,7 +3,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { createToolRegistry } from '../../tool/registry.ts';
 import { cycleSpaceMoltTools } from './tool-cycling.ts';
-import { filterToolsByState } from './tool-filter.ts';
 import type { ToolRegistry, ToolDefinition } from '../../tool/types.ts';
 import type { GameState } from './types.ts';
 import type { ToolProvider } from '../tool-provider.ts';
@@ -47,8 +46,6 @@ describe('cycleSpaceMoltTools', () => {
       createSpaceMoltTool('scan'), // combat only
       createSpaceMoltTool('get_status'), // always
     ];
-
-    const allTools = [...spacemoltTools, ...nativeTools];
 
     // Register native tools that don't get cycled
     for (const tool of nativeTools) {

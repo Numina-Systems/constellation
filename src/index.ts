@@ -43,7 +43,7 @@ import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
-import { detectTuiMode } from '@/tui';
+import { detectTuiMode } from '@/tui/detect';
 import type { AgentEventBus } from '@/tui';
 import {
   createActivityManager,
@@ -1099,7 +1099,10 @@ async function main(): Promise<void> {
     });
 
     // Set up graceful shutdown for TUI (mirrors REPL shutdown handler)
+    let tuiShuttingDown = false;
     const tuiShutdown = async () => {
+      if (tuiShuttingDown) return;
+      tuiShuttingDown = true;
       console.log('\nShutting down...');
       schedulerWrapper.stop();
       console.log('scheduler stopped');

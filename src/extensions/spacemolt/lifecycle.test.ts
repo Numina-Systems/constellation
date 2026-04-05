@@ -6,15 +6,13 @@ import type { SpaceMoltToolProvider } from './types.ts';
 
 // Mock implementations
 function createMockSource(): SpaceMoltDataSource {
-  let connected = false;
-
   return {
     name: 'spacemolt',
     async connect() {
-      connected = true;
+      // no-op
     },
     async disconnect() {
-      connected = false;
+      // no-op
     },
     onMessage() {
       // no-op
@@ -26,12 +24,9 @@ function createMockSource(): SpaceMoltDataSource {
 }
 
 function createMockToolProvider(): SpaceMoltToolProvider {
-  let discovered = false;
-
   return {
     name: 'spacemolt',
     async discover() {
-      discovered = true;
       return [];
     },
     async execute() {
@@ -45,7 +40,7 @@ function createMockToolProvider(): SpaceMoltToolProvider {
       // no-op
     },
     async close() {
-      discovered = false;
+      // no-op
     },
   };
 }

@@ -39,8 +39,8 @@ function isSessionExpired(error: unknown): boolean {
   if (typeof error === 'object' && error !== null) {
     const errorObj = error as Record<string, unknown>;
     return (
-      String(errorObj.code).includes('session_invalid') ||
-      String(errorObj.message).includes('session_invalid')
+      String(errorObj['code']).includes('session_invalid') ||
+      String(errorObj['message']).includes('session_invalid')
     );
   }
   return String(error).includes('session_invalid');

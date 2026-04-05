@@ -409,7 +409,6 @@ describe('createSpaceMoltSource', () => {
 
   test('AC5.2 + AC5.4: disconnect() sets shouldReconnect to false', async () => {
     let createdSocket: MockWebSocket | null = null;
-    let reconnectAttempted = false;
 
     (global as any).WebSocket = class extends MockWebSocket {
       constructor(url: string) {

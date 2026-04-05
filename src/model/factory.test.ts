@@ -3,6 +3,7 @@
 import { describe, it, expect } from "bun:test";
 import type { ModelConfig } from "../config/schema.js";
 import { createModelProvider } from "./factory.js";
+import { createOpenRouterAdapter } from "./openrouter.js";
 
 describe("createModelProvider", () => {
   describe("provider selection", () => {
@@ -48,6 +49,20 @@ describe("createModelProvider", () => {
       expect(provider).toHaveProperty("stream");
     });
 
+    it("returns OpenRouter adapter for 'openrouter' provider", () => {
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+        api_key: "sk-test-key",
+      };
+
+      const provider = createModelProvider(config);
+
+      expect(provider).toBeDefined();
+      expect(provider).toHaveProperty("complete");
+      expect(provider).toHaveProperty("stream");
+    });
+
     it("throws descriptive error for unknown provider", () => {
       const config = {
         provider: "unknown-provider",
@@ -59,7 +74,7 @@ describe("createModelProvider", () => {
         /Unknown model provider: unknown-provider/
       );
       expect(() => createModelProvider(config)).toThrow(
-        /Valid providers are: 'anthropic', 'openai-compat', 'ollama'/
+        /Valid providers are: 'anthropic', 'openai-compat', 'ollama', 'openrouter'/
       );
     });
   });
@@ -99,6 +114,50 @@ describe("createModelProvider", () => {
 
       expect(provider).toBeDefined();
       expect(provider).toHaveProperty("complete");
+    });
+  });
+
+  describe("openrouter adapter callback support", () => {
+    it("creates OpenRouter adapter with callback function (AC8.2)", () => {
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+        api_key: "sk-test-key",
+      };
+
+      const callbackCalls: Array<{
+        limit: number;
+        remaining: number;
+        resetAt: number;
+      }> = [];
+
+      const callback = (status: {
+        limit: number;
+        remaining: number;
+        resetAt: number;
+      }) => {
+        callbackCalls.push(status);
+      };
+
+      const adapter = createOpenRouterAdapter(config, callback);
+
+      expect(adapter).toBeDefined();
+      expect(adapter).toHaveProperty("complete");
+      expect(adapter).toHaveProperty("stream");
+    });
+
+    it("creates OpenRouter adapter without callback (AC8.3)", () => {
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+        api_key: "sk-test-key",
+      };
+
+      const adapter = createOpenRouterAdapter(config);
+
+      expect(adapter).toBeDefined();
+      expect(adapter).toHaveProperty("complete");
+      expect(adapter).toHaveProperty("stream");
     });
   });
 });

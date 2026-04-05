@@ -1,7 +1,8 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from "bun:test";
-import { AppConfigSchema } from "./schema.js";
+import { ZodError } from "zod";
+import { AppConfigSchema, ModelConfigSchema, OpenRouterConfigSchema } from "./schema.js";
 
 describe("BlueskyConfigSchema", () => {
   describe("bsky-datasource.AC4.1: Parse full [bluesky] config with all fields", () => {
@@ -652,6 +653,199 @@ describe("ActivityConfigSchema", () => {
       };
 
       expect(() => AppConfigSchema.parse(config)).toThrow(/invalid cron expression for wake_schedule/);
+    });
+  });
+});
+
+describe("OpenRouterConfigSchema and ModelConfigSchema with openrouter provider", () => {
+  describe("openrouter-provider.AC1.1: Basic openrouter provider config", () => {
+    it("should parse openrouter provider with name", () => {
+      const config = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.provider).toBe("openrouter");
+      expect(result.name).toBe("anthropic/claude-sonnet-4");
+    });
+  });
+
+  describe("openrouter-provider.AC1.2: Nested openrouter config", () => {
+    it("should parse all openrouter nested fields", () => {
+      const config = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+        api_key: "test-key",
+        openrouter: {
+          sort: "price",
+          allow_fallbacks: false,
+          referer: "https://myapp.com",
+          title: "My App",
+        },
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.openrouter).toBeDefined();
+      expect(result.openrouter?.sort).toBe("price");
+      expect(result.openrouter?.allow_fallbacks).toBe(false);
+      expect(result.openrouter?.referer).toBe("https://myapp.com");
+      expect(result.openrouter?.title).toBe("My App");
+    });
+
+    it("should accept partial openrouter config", () => {
+      const config = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+        openrouter: {
+          sort: "throughput",
+        },
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.openrouter?.sort).toBe("throughput");
+      expect(result.openrouter?.allow_fallbacks).toBeUndefined();
+    });
+
+    it("should accept config without openrouter nested object", () => {
+      const config = {
+        provider: "openrouter",
+        name: "anthropic/claude-sonnet-4",
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.openrouter).toBeUndefined();
+    });
+
+    it("should parse full AppConfig with openrouter in [model] section", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "openrouter",
+          name: "anthropic/claude-sonnet-4",
+          api_key: "sk-or-test-key",
+          openrouter: {
+            sort: "latency",
+            allow_fallbacks: true,
+            referer: "https://myapp.com",
+            title: "My App",
+          },
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+      const result = AppConfigSchema.parse(config);
+      expect(result.model.provider).toBe("openrouter");
+      expect(result.model.openrouter).toBeDefined();
+      expect(result.model.openrouter?.sort).toBe("latency");
+    });
+  });
+
+  describe("openrouter-provider.AC1.4: Invalid enum values", () => {
+    it("should reject invalid sort value", () => {
+      const config = {
+        provider: "openrouter",
+        name: "test",
+        openrouter: {
+          sort: "invalid",
+        },
+      };
+      expect(() => ModelConfigSchema.parse(config)).toThrow(ZodError);
+    });
+
+    it("should reject invalid provider value", () => {
+      const config = {
+        provider: "invalid-provider",
+        name: "test",
+      };
+      expect(() => ModelConfigSchema.parse(config)).toThrow(ZodError);
+    });
+  });
+
+  describe("openrouter-provider: Other providers still work", () => {
+    it("should parse anthropic provider", () => {
+      const config = {
+        provider: "anthropic",
+        name: "claude-3-sonnet-20240229",
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.provider).toBe("anthropic");
+    });
+
+    it("should parse openai-compat provider", () => {
+      const config = {
+        provider: "openai-compat",
+        name: "gpt-4",
+        base_url: "https://api.openai.com/v1",
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.provider).toBe("openai-compat");
+    });
+
+    it("should parse ollama provider", () => {
+      const config = {
+        provider: "ollama",
+        name: "llama2",
+        base_url: "http://localhost:11434",
+      };
+      const result = ModelConfigSchema.parse(config);
+      expect(result.provider).toBe("ollama");
+    });
+  });
+
+  describe("OpenRouterConfigSchema", () => {
+    it("should parse all fields", () => {
+      const config = {
+        sort: "latency",
+        allow_fallbacks: true,
+        referer: "https://example.com",
+        title: "Test App",
+      };
+      const result = OpenRouterConfigSchema.parse(config);
+      expect(result.sort).toBe("latency");
+      expect(result.allow_fallbacks).toBe(true);
+      expect(result.referer).toBe("https://example.com");
+      expect(result.title).toBe("Test App");
+    });
+
+    it("should accept empty object", () => {
+      const result = OpenRouterConfigSchema.parse({});
+      expect(result).toEqual({});
+    });
+
+    it("should reject invalid sort enum", () => {
+      expect(() =>
+        OpenRouterConfigSchema.parse({
+          sort: "invalid",
+        })
+      ).toThrow(ZodError);
+    });
+
+    it("should accept all valid sort options", () => {
+      const sorts: Array<"price" | "throughput" | "latency"> = ["price", "throughput", "latency"];
+      for (const sort of sorts) {
+        const result = OpenRouterConfigSchema.parse({ sort });
+        expect(result.sort).toBe(sort);
+      }
+    });
+  });
+
+  describe("SummarizationConfigSchema with openrouter provider", () => {
+    it("should parse summarization config with openrouter provider", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        summarization: {
+          provider: "openrouter",
+          name: "anthropic/claude-3-5-sonnet",
+        },
+      };
+      const result = AppConfigSchema.parse(config);
+      expect(result.summarization).toBeDefined();
+      expect(result.summarization!.provider).toBe("openrouter");
+      expect(result.summarization!.name).toBe("anthropic/claude-3-5-sonnet");
     });
   });
 });

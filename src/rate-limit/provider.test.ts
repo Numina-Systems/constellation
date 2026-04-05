@@ -498,4 +498,66 @@ describe('createRateLimitedProvider', () => {
       expect(queueDepthSamples.some((d) => d > 0)).toBe(true);
     });
   });
+
+  describe('syncFromServer()', () => {
+    it('AC4.2: overwrites RPM bucket capacity and remaining tokens', () => {
+      const provider = createMockProvider();
+      const rateLimited = createRateLimitedProvider(provider, config);
+
+      const resetAt = Date.now() + 30000;
+      rateLimited.syncFromServer({ limit: 50, remaining: 30, resetAt });
+
+      const status = rateLimited.getStatus();
+      expect(status.rpm.capacity).toBe(50);
+      expect(status.rpm.remaining).toBeLessThanOrEqual(30);
+      expect(status.rpm.remaining).toBeGreaterThanOrEqual(29); // Allow 1ms drift
+    });
+
+    it('AC4.3: recalculates refill rate from resetAt', () => {
+      const provider = createMockProvider();
+      const rateLimited = createRateLimitedProvider(provider, config);
+
+      const now = Date.now();
+      const resetAt = now + 30000; // 30 seconds in future
+      const limit = 150;
+
+      rateLimited.syncFromServer({ limit, remaining: 100, resetAt });
+
+      const status = rateLimited.getStatus();
+      const expectedRefillRate = limit / 30000; // tokens per ms
+
+      // refillRate should be approximately limit / 30000
+      // Allow 10% tolerance for timing variations
+      expect(status.rpm.refillRate).toBeGreaterThan(expectedRefillRate * 0.9);
+      expect(status.rpm.refillRate).toBeLessThan(expectedRefillRate * 1.1);
+    });
+
+    it('AC4.4: is a no-op when both limit and remaining are 0', () => {
+      const provider = createMockProvider();
+      const rateLimited = createRateLimitedProvider(provider, config);
+
+      const statusBefore = rateLimited.getStatus();
+      const rpmBefore = {
+        capacity: statusBefore.rpm.capacity,
+        remaining: statusBefore.rpm.remaining,
+        refillRate: statusBefore.rpm.refillRate,
+      };
+
+      // Call syncFromServer with 0, 0
+      rateLimited.syncFromServer({ limit: 0, remaining: 0, resetAt: Date.now() });
+
+      const statusAfter = rateLimited.getStatus();
+      const rpmAfter = {
+        capacity: statusAfter.rpm.capacity,
+        remaining: statusAfter.rpm.remaining,
+        refillRate: statusAfter.rpm.refillRate,
+      };
+
+      // Verify RPM status unchanged
+      expect(rpmAfter.capacity).toBe(rpmBefore.capacity);
+      expect(rpmAfter.refillRate).toBe(rpmBefore.refillRate);
+      // remaining may change due to refill, so check it's approximately the same
+      expect(Math.abs(rpmAfter.remaining - rpmBefore.remaining)).toBeLessThan(1);
+    });
+  });
 });

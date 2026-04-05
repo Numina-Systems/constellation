@@ -13,10 +13,13 @@ export function loadConfig(configPath?: string): AppConfig {
 
   const modelObj = (parsed["model"] as Record<string, unknown>) ?? {};
   const modelProvider = modelObj["provider"] as string | undefined;
-  const modelEnvKey =
-    modelProvider === "openai-compat"
-      ? process.env["OPENAI_COMPAT_API_KEY"]
-      : process.env["ANTHROPIC_API_KEY"];
+  const providerEnvKeys: Record<string, string> = {
+    "openai-compat": "OPENAI_COMPAT_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+  };
+  const envKeyName = modelProvider ? providerEnvKeys[modelProvider] : undefined;
+  const modelEnvKey = envKeyName ? process.env[envKeyName] : undefined;
 
   if (modelEnvKey) {
     modelObj["api_key"] = modelEnvKey;
@@ -66,4 +69,4 @@ export function loadConfig(configPath?: string): AppConfig {
   return AppConfigSchema.parse(merged);
 }
 
-export type { AppConfig, AgentConfig, ModelConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig, EmailConfig, ActivityConfig } from "./schema.ts";
+export type { AppConfig, AgentConfig, ModelConfig, OpenRouterConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig, EmailConfig, ActivityConfig } from "./schema.ts";

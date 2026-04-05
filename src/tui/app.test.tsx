@@ -5,11 +5,13 @@ import { render } from 'ink-testing-library';
 import { createAgentEventBus } from './event-bus.ts';
 import { App } from './app.tsx';
 import type { Agent } from '@/agent/types.ts';
+import type { MemoryManager } from '@/memory/manager.ts';
 import type { AgentEventBus } from '@/tui/types.ts';
 
 describe('App integration', () => {
   let bus: AgentEventBus;
   let mockAgent: Agent;
+  let mockMemory: MemoryManager;
 
   beforeEach(() => {
     bus = createAgentEventBus();
@@ -21,6 +23,20 @@ describe('App integration', () => {
       processEvent: async () => '',
       getConversationHistory: async () => [],
     };
+
+    // Create a mock memory manager
+    mockMemory = {
+      getCoreBlocks: async () => [],
+      getWorkingBlocks: async () => [],
+      buildSystemPrompt: async () => '',
+      read: async () => [],
+      write: async () => ({ applied: true, block: {} } as any),
+      list: async () => [],
+      deleteBlock: async () => {},
+      getPendingMutations: async () => [],
+      approveMutation: async () => ({ id: 'test', owner: 'test', tier: 'working' as const, label: 'test', content: '', embedding: null, permission: 'readwrite' as const, pinned: false, created_at: new Date(), updated_at: new Date() }),
+      rejectMutation: async () => ({ id: 'test', block_id: 'test', status: 'rejected' as const, proposed_content: '', reason: null, feedback: null, created_at: new Date(), resolved_at: new Date() }),
+    };
   });
 
   afterEach(() => {
@@ -29,7 +45,7 @@ describe('App integration', () => {
 
   it('AC3.1: renders streaming responses from stream:chunk events', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     // Initial render should show input prompt
@@ -70,7 +86,7 @@ describe('App integration', () => {
 
   it('AC3.2: StatusBar updates token counts after stream:end', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     // Publish stream:end with usage stats
@@ -105,7 +121,7 @@ describe('App integration', () => {
 
   it('AC3.3: InputArea disabled during processing, re-enabled after turn:end', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     // Initially, input should be enabled (showing prompt)
@@ -153,7 +169,7 @@ describe('App integration', () => {
 
   it('AC3.4: multiple sequential turns render distinct streaming output', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     // First turn: assistant response
@@ -236,7 +252,7 @@ describe('App integration', () => {
 
   it('renders layout with StatusBar, ConversationView, and InputArea', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     const output = lastFrame();
@@ -252,7 +268,7 @@ describe('App integration', () => {
 
   it('integrates bus events for streaming and status updates', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     // Publish a complete turn with streaming and usage
@@ -300,7 +316,7 @@ describe('App integration', () => {
 
   it('handles processing state transitions correctly', async () => {
     const { lastFrame, unmount: unmountComponent } = render(
-      <App agent={mockAgent} bus={bus} modelName="test-model" />
+      <App agent={mockAgent} memory={mockMemory} bus={bus} modelName="test-model" />
     );
 
     // Initial state: should have input prompt

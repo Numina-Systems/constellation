@@ -3,15 +3,21 @@
 import React from 'react';
 import { Box, useApp, render } from 'ink';
 import type { Agent } from '@/agent/types.ts';
+import type { MemoryManager } from '@/memory/manager.ts';
 import type { AgentEventBus } from '@/tui/types.ts';
 import { StatusBar } from './components/status-bar.tsx';
 import { ConversationView } from './components/conversation-view.tsx';
 import { InputArea } from './components/input-area.tsx';
+import { MutationPrompt } from './components/mutation-prompt.tsx';
+import { SystemEventDisplay } from './components/system-event.tsx';
 import { useAgentEvents } from './hooks/use-agent-events.ts';
+import { createMutationPromptViaBus } from './mutation-bridge.ts';
+import { processPendingMutations } from '@/index.ts';
 import type { AgentEvent } from './types.ts';
 
 type AppProps = {
   agent: Agent;
+  memory: MemoryManager;
   bus: AgentEventBus;
   modelName: string;
 };
@@ -28,9 +34,10 @@ type Message = {
   thinkingCharCount: number;
 };
 
-export function App({ agent, bus, modelName }: AppProps) {
+export function App({ agent, memory, bus, modelName }: AppProps) {
   const [messages, setMessages] = React.useState<Array<Message>>([]);
   const [isProcessing, setIsProcessing] = React.useState(false);
+  const [isMutationPromptActive, setIsMutationPromptActive] = React.useState(false);
   const [turnIndex, setTurnIndex] = React.useState(0);
   const currentTurnTextRef = React.useRef('');
   const lastProcessedTurnStartRef = React.useRef(-1);
@@ -80,8 +87,22 @@ export function App({ agent, bus, modelName }: AppProps) {
     []
   );
 
+  const mutationRequestFilter = React.useCallback(
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'mutation:request' }> =>
+      event.type === 'mutation:request',
+    []
+  );
+
+  const mutationResponseFilter = React.useCallback(
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'mutation:response' }> =>
+      event.type === 'mutation:response',
+    []
+  );
+
   // Subscribe to turn events
   const turnStartEvents = useAgentEvents(bus, turnStartFilter);
+  const mutationRequestEvents = useAgentEvents(bus, mutationRequestFilter);
+  const mutationResponseEvents = useAgentEvents(bus, mutationResponseFilter);
   const streamChunkEvents = useAgentEvents(bus, streamChunkFilter);
   const turnEndEvents = useAgentEvents(bus, turnEndFilter);
   const toolStartEvents = useAgentEvents(bus, toolStartFilter);
@@ -102,6 +123,15 @@ export function App({ agent, bus, modelName }: AppProps) {
     }
     lastProcessedTurnStartRef.current = turnStartEvents.length - 1;
   }, [turnStartEvents]);
+
+  // Track mutation prompt active state
+  React.useEffect(() => {
+    if (mutationRequestEvents.length > mutationResponseEvents.length) {
+      setIsMutationPromptActive(true);
+    } else {
+      setIsMutationPromptActive(false);
+    }
+  }, [mutationRequestEvents, mutationResponseEvents]);
 
   // Handle stream:chunk events - accumulate text for the current turn in ref
   React.useEffect(() => {
@@ -181,8 +211,12 @@ export function App({ agent, bus, modelName }: AppProps) {
         thinkingCharCount: 0,
       },
     ]);
-    // Call agent to process the message (fire-and-forget)
-    agent.processMessage(text).catch((error) => {
+    // Call agent to process the message, then handle mutations
+    agent.processMessage(text).then(async () => {
+      // Create mutation prompt callback and process mutations
+      const mutationCallback = createMutationPromptViaBus(bus);
+      await processPendingMutations(memory, mutationCallback);
+    }).catch((error) => {
       console.error('Failed to process message:', error);
     });
   };
@@ -197,8 +231,10 @@ export function App({ agent, bus, modelName }: AppProps) {
           isStreaming={isProcessing}
           currentTurnIndex={turnIndex}
         />
+        <SystemEventDisplay bus={bus} />
       </Box>
-      <InputArea onSubmit={handleSubmit} disabled={isProcessing} />
+      <MutationPrompt bus={bus} />
+      <InputArea onSubmit={handleSubmit} disabled={isProcessing || isMutationPromptActive} />
     </Box>
   );
 }

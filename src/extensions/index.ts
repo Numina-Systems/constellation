@@ -22,7 +22,8 @@ export {
   createGameStateManager,
   createSpaceMoltLifecycle,
   seedSpaceMoltCapabilities,
-  isHighPriority,
   cycleSpaceMoltTools,
   filterToolsByState,
 } from './spacemolt/index.ts';
+// Exported for future DataSourceRegistry highPriorityFilter integration
+export {isHighPriority} from './spacemolt/index.ts';

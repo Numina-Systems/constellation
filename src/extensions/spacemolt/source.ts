@@ -103,7 +103,9 @@ export function createSpaceMoltSource(
 
         ws.onclose = () => {
           ws = null;
-          messageHandler = null;
+          // Do NOT clear messageHandler here; preserve it across reconnections
+          // so that onMessage() only needs to be called once in the composition root.
+          // Only clear it in the explicit disconnect() method.
 
           // If shouldReconnect is true, attempt to reconnect
           if (shouldReconnect) {

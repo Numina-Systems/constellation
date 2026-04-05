@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { createToolRegistry } from '../../tool/registry.ts';
 import { cycleSpaceMoltTools } from './tool-cycling.ts';

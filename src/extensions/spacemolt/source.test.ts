@@ -50,14 +50,17 @@ class MockWebSocket {
   }
 }
 
+// WebSocket global mock requires any cast since TypeScript doesn't recognize the mutable global
 let originalWebSocket: any;
 
 describe('createSpaceMoltSource', () => {
   beforeEach(() => {
+    // WebSocket global mock requires any cast
     originalWebSocket = (global as any).WebSocket;
   });
 
   afterEach(() => {
+    // WebSocket global mock requires any cast
     (global as any).WebSocket = originalWebSocket;
   });
 
@@ -511,5 +514,103 @@ describe('createSpaceMoltSource', () => {
 
     // A new socket should have been created (reconnection attempt)
     expect(socketInstances.length).toBeGreaterThan(1);
+  });
+
+  test('handler persists through reconnection after unexpected close', async () => {
+    let socketInstances: MockWebSocket[] = [];
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socketInstances.push(this);
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      username: 'testuser',
+      password: 'testpass',
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    // Register the handler once before initial connect
+    const messages: Array<{content: string}> = [];
+    source.onMessage(msg => {
+      messages.push({content: msg.content});
+    });
+
+    const connectPromise = source.connect();
+
+    const firstSocket = socketInstances[0]!;
+    firstSocket.triggerOpen();
+    firstSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    firstSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Send a message before close to verify handler works
+    firstSocket.simulateMessage({
+      type: 'chat_message',
+      payload: {
+        channel: 'general',
+        sender: 'Alice',
+        content: 'Hello before close',
+      },
+    });
+
+    expect(messages).toHaveLength(1);
+
+    // Trigger unexpected close which causes reconnection
+    firstSocket.close();
+
+    // Wait for reconnection to complete
+    const maxWaitMs = 5000;
+    const pollIntervalMs = 50;
+    const startTime = Date.now();
+    while (socketInstances.length <= 1 && Date.now() - startTime < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+
+    expect(socketInstances.length).toBeGreaterThan(1);
+
+    // Simulate successful authentication on reconnected socket
+    const secondSocket = socketInstances[1]!;
+    secondSocket.triggerOpen();
+    secondSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    secondSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Allow connection to settle
+    await new Promise(r => setTimeout(r, 100));
+
+    // Send a message AFTER reconnection - this should work because handler persists
+    secondSocket.simulateMessage({
+      type: 'chat_message',
+      payload: {
+        channel: 'general',
+        sender: 'Bob',
+        content: 'Hello after reconnect',
+      },
+    });
+
+    // Should have received both messages (before and after reconnection)
+    expect(messages.length).toBe(2);
+    expect(messages[0]?.content).toContain('Alice');
+    expect(messages[1]?.content).toContain('Bob');
   });
 });

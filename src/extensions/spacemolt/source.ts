@@ -113,8 +113,9 @@ export function createSpaceMoltSource(
             resolveLoggedIn = resolve;
           });
 
+          let timeoutId: ReturnType<typeof setTimeout> | null = null;
           const timeoutPromise = new Promise<void>((_, rejectTimeout) => {
-            setTimeout(() => {
+            timeoutId = setTimeout(() => {
               rejectTimeout(new Error(`Connection timeout after ${CONNECT_TIMEOUT_MS}ms`));
             }, CONNECT_TIMEOUT_MS);
           });
@@ -124,6 +125,9 @@ export function createSpaceMoltSource(
             timeoutPromise,
           ])
             .then(() => {
+              if (timeoutId !== null) {
+                clearTimeout(timeoutId);
+              }
               resolve();
             })
             .catch(reject);

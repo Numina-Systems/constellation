@@ -1,6 +1,6 @@
 # Memory
 
-Last verified: 2026-02-28
+Last verified: 2026-04-05
 
 ## Purpose
 Implements a three-tier memory system (core/working/archival) with permission-based write access, semantic search via pgvector, event sourcing, and a mutation approval flow for human-controlled blocks.
@@ -12,7 +12,7 @@ Implements a three-tier memory system (core/working/archival) with permission-ba
   - `familiar`-permissioned blocks queue a `PendingMutation` instead of writing directly (requires human approval)
   - `append` blocks concatenate content; `readwrite` blocks overwrite
   - `read()` performs semantic search via embedding similarity
-  - All mutations are event-sourced (`memory_events` table)
+  - All mutations are event-sourced (`memory_events` table). `MemoryEvent.block_id` is nullable -- events survive block deletion (FK `ON DELETE SET NULL`).
   - `buildSystemPrompt()` returns all core blocks formatted for the model system prompt
 - **Expects**: `PersistenceProvider` connected with migrations applied. `EmbeddingProvider` available (graceful fallback to null embedding on failure).
 
@@ -30,7 +30,7 @@ Implements a three-tier memory system (core/working/archival) with permission-ba
 ## Invariants
 - Memory blocks have a unique `(owner, label)` pair (enforced by DB unique constraint)
 - Core blocks are always `pinned: true`
-- Every create/update/delete produces a `memory_events` entry
+- Every create/update/delete produces a `memory_events` entry (delete events are logged before block removal, so the event persists with `block_id = NULL`)
 - `PendingMutation` must be explicitly approved or rejected; no auto-approval
 
 ## Key Files

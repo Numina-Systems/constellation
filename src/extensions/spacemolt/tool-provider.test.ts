@@ -30,10 +30,10 @@ type MockMcpClient = {
   close: () => Promise<void>;
 };
 
-function createMockMcpClient(): MockMcpClient {
+function createMockMcpClient() {
   const listeners: Record<string, Function[]> = {};
 
-  return {
+  const client: MockMcpClient & { listeners: Record<string, Function[]> } = {
     connect: async () => {
       // no-op
     },
@@ -98,7 +98,10 @@ function createMockMcpClient(): MockMcpClient {
     close: async () => {
       // no-op
     },
+    listeners,
   };
+
+  return client;
 }
 
 describe('createSpaceMoltToolProvider', () => {
@@ -220,6 +223,45 @@ describe('createSpaceMoltToolProvider', () => {
     const newTool = tools.find((t) => t.name === 'spacemolt:new_tool');
 
     expect(newTool).toBeDefined();
+  });
+
+  it('AC2.6: notifications/tools/list_changed triggers refreshTools callback', async () => {
+    const client = createMockMcpClient();
+    const provider = createSpaceMoltToolProvider(options, client);
+
+    // Discover and capture the listener
+    await provider.discover();
+
+    // Verify listener was registered
+    const listChangedListeners = client.listeners['notifications/tools/list_changed'];
+    expect(listChangedListeners).toBeDefined();
+    expect(listChangedListeners.length).toBeGreaterThan(0);
+
+    // Change the tool list
+    client.listTools = async () => ({
+      tools: [
+        {
+          name: 'new_tool',
+          description: 'A new tool',
+          inputSchema: { type: 'object' },
+        },
+      ],
+    });
+
+    // Fire the notification callback
+    const handler = listChangedListeners[0];
+    if (handler) {
+      await handler({ resourceType: 'tool' });
+    }
+
+    // Verify tools were refreshed by calling discover again
+    // (it returns cached tools unless refreshTools was called)
+    const tools = await provider.discover();
+    const newTool = tools.find((t) => t.name === 'spacemolt:new_tool');
+    const mineTool = tools.find((t) => t.name === 'spacemolt:mine');
+
+    expect(newTool).toBeDefined();
+    expect(mineTool).toBeUndefined();
   });
 
   it('close() is available for cleanup', async () => {

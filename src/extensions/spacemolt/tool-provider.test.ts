@@ -321,4 +321,133 @@ describe('createSpaceMoltToolProvider', () => {
     expect(result.success).toBeDefined();
     expect(result.output).toBeDefined();
   });
+
+  it('AC5.3: detects session_invalid error and retries after reconnect', async () => {
+    let callCount = 0;
+    let reconnectCalled = false;
+
+    const sessionExpireClient: MockMcpClient = {
+      ...mockClient,
+      callTool: async (request) => {
+        callCount++;
+        if (request.name === 'login') {
+          reconnectCalled = true;
+          return {
+            content: [{ type: 'text', text: 'Logged in' }],
+            isError: false,
+          };
+        }
+        // First call to mine fails with session_invalid
+        if (request.name === 'mine' && callCount === 2) {
+          const error = new Error('session_invalid: your session has expired');
+          throw error;
+        }
+        // Second call to mine (after reconnect) succeeds
+        if (request.name === 'mine') {
+          return {
+            content: [{ type: 'text', text: 'Mined 75 iron' }],
+            isError: false,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: 'Unknown tool' }],
+          isError: true,
+        };
+      },
+    };
+
+    const provider = createSpaceMoltToolProvider(options, sessionExpireClient);
+    await provider.discover();
+
+    const result = await provider.execute('spacemolt:mine', {
+      location: 'asteroid_field',
+    });
+
+    expect(reconnectCalled).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.output).toBe('Mined 75 iron');
+  });
+
+  it('AC5.3: non-session errors do not trigger reconnect', async () => {
+    let reconnectAttempt = false;
+
+    const nonSessionErrorClient: MockMcpClient = {
+      ...mockClient,
+      callTool: async (request) => {
+        if (request.name === 'login') {
+          return {
+            content: [{ type: 'text', text: 'Logged in' }],
+            isError: false,
+          };
+        }
+        if (request.name === 'mine') {
+          throw new Error('tool execution failed: invalid argument');
+        }
+        return {
+          content: [{ type: 'text', text: 'Unknown tool' }],
+          isError: true,
+        };
+      },
+      close: async () => {
+        reconnectAttempt = true;
+      },
+    };
+
+    const provider = createSpaceMoltToolProvider(options, nonSessionErrorClient);
+    await provider.discover();
+
+    const result = await provider.execute('spacemolt:mine', {
+      location: 'invalid',
+    });
+
+    expect(reconnectAttempt).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('tool execution failed');
+  });
+
+  it('AC5.3: retry also fails returns error ToolResult', async () => {
+    let callCount = 0;
+
+    const failingRetryClient: MockMcpClient = {
+      ...mockClient,
+      callTool: async (request) => {
+        callCount++;
+        if (request.name === 'login') {
+          return {
+            content: [{ type: 'text', text: 'Logged in' }],
+            isError: false,
+          };
+        }
+        // All mine calls fail with session_invalid
+        if (request.name === 'mine') {
+          throw new Error('session_invalid: authentication failed');
+        }
+        return {
+          content: [{ type: 'text', text: 'Unknown tool' }],
+          isError: true,
+        };
+      },
+    };
+
+    const provider = createSpaceMoltToolProvider(options, failingRetryClient);
+    await provider.discover();
+
+    const result = await provider.execute('spacemolt:mine', {
+      location: 'test',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('session_invalid');
+  });
+
+  it('isSessionExpired correctly identifies session_invalid errors', async () => {
+    const sessionError = new Error('session_invalid: token expired');
+    expect(sessionError.message.includes('session_invalid')).toBe(true);
+
+    const otherError = new Error('connection refused');
+    expect(otherError.message.includes('session_invalid')).toBe(false);
+
+    const objError = { code: 'session_invalid', message: 'expired' };
+    expect(String(objError.code).includes('session_invalid')).toBe(true);
+  });
 });

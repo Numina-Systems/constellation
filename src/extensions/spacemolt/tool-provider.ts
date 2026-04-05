@@ -32,6 +32,20 @@ type McpClient = {
   close(): Promise<void>;
 };
 
+function isSessionExpired(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.message.includes('session_invalid');
+  }
+  if (typeof error === 'object' && error !== null) {
+    const errorObj = error as Record<string, unknown>;
+    return (
+      String(errorObj.code).includes('session_invalid') ||
+      String(errorObj.message).includes('session_invalid')
+    );
+  }
+  return String(error).includes('session_invalid');
+}
+
 export function createSpaceMoltToolProvider(
   options: Readonly<SpaceMoltToolProviderOptions>,
   client?: McpClient
@@ -61,6 +75,27 @@ export function createSpaceMoltToolProvider(
     }
 
     return allTools;
+  }
+
+  async function reconnect(): Promise<void> {
+    if (!mcpClient) {
+      throw new Error('Cannot reconnect: MCP client not initialized');
+    }
+
+    // Close existing client
+    await mcpClient.close();
+
+    // Create new transport and reconnect
+    await mcpClient.connect(new URL(options.mcpUrl));
+
+    // Re-authenticate via login tool
+    await mcpClient.callTool({
+      name: 'login',
+      arguments: {
+        username: options.username,
+        password: options.password,
+      },
+    });
   }
 
   let subscribed = false;
@@ -138,6 +173,38 @@ export function createSpaceMoltToolProvider(
         ...(result.isError && { error: flattenedText }),
       };
     } catch (err) {
+      // Check if error is session expiry
+      if (isSessionExpired(err)) {
+        try {
+          // Reconnect and retry
+          await reconnect();
+
+          // Retry the tool call
+          const result = await mcpClient.callTool({
+            name: strippedName,
+            arguments: params,
+          });
+
+          const flattenedText = flattenMcpContent(result.content);
+
+          return {
+            success: !result.isError,
+            output: flattenedText,
+            ...(result.isError && { error: flattenedText }),
+          };
+        } catch (retryErr) {
+          // Retry failed, return error
+          const errorMessage =
+            retryErr instanceof Error ? retryErr.message : 'Unknown error after reconnect';
+          return {
+            success: false,
+            output: '',
+            error: errorMessage,
+          };
+        }
+      }
+
+      // Not a session error, return as-is
       const errorMessage =
         err instanceof Error ? err.message : 'Unknown error';
       return {

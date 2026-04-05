@@ -3,6 +3,11 @@ import {createSpaceMoltSource} from './source';
 import {createGameStateManager} from './state';
 import type {SpaceMoltEvent} from './types';
 
+const mockGetCredentials = async () => ({
+  username: 'testuser',
+  password: 'testpass',
+});
+
 // Mock WebSocket for testing
 class MockWebSocket {
   readonly url: string;
@@ -77,8 +82,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -92,6 +96,9 @@ describe('createSpaceMoltSource', () => {
       type: 'welcome',
       payload: {version: '1.0'},
     });
+
+    // Wait briefly for async getCredentials to complete
+    await new Promise(r => setTimeout(r, 10));
 
     // Verify login was sent
     const sent = createdSocket!.getSentMessages();
@@ -135,8 +142,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -192,8 +198,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -247,8 +252,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -297,8 +301,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -347,8 +350,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -385,8 +387,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('DOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -423,8 +424,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -479,8 +479,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -529,8 +528,7 @@ describe('createSpaceMoltSource', () => {
     const gameStateManager = createGameStateManager('UNDOCKED');
     const source = createSpaceMoltSource({
       wsUrl: 'ws://localhost:8080/game',
-      username: 'testuser',
-      password: 'testpass',
+      getCredentials: mockGetCredentials,
       gameStateManager,
       eventQueueCapacity: 100,
     });
@@ -612,5 +610,106 @@ describe('createSpaceMoltSource', () => {
     expect(messages.length).toBe(2);
     expect(messages[0]?.content).toContain('Alice');
     expect(messages[1]?.content).toContain('Bob');
+  });
+
+  test('spacemolt-auto-register.AC4.2: throws when getCredentials returns null', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: async () => null,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({ type: 'welcome', payload: {} });
+
+    await expect(connectPromise).rejects.toThrow('credentials not available');
+  });
+
+  test('spacemolt-auto-register.AC4.3: getCredentials is called on reconnection', async () => {
+    let socketInstances: MockWebSocket[] = [];
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socketInstances.push(this);
+      }
+    };
+
+    let getCredentialsCalls = 0;
+    const trackingGetCredentials = async () => {
+      getCredentialsCalls++;
+      return { username: 'testuser', password: 'testpass' };
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: trackingGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    const firstSocket = socketInstances[0]!;
+    firstSocket.triggerOpen();
+    firstSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    firstSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Verify initial getCredentials call
+    expect(getCredentialsCalls).toBe(1);
+
+    // Trigger unexpected close which causes reconnection
+    firstSocket.close();
+
+    // Wait for reconnection to complete
+    const maxWaitMs = 5000;
+    const pollIntervalMs = 50;
+    const startTime = Date.now();
+    while (socketInstances.length <= 1 && Date.now() - startTime < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+
+    expect(socketInstances.length).toBeGreaterThan(1);
+
+    // Simulate successful authentication on reconnected socket
+    const secondSocket = socketInstances[1]!;
+    secondSocket.triggerOpen();
+    secondSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    secondSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Allow connection to settle
+    await new Promise(r => setTimeout(r, 100));
+
+    // Verify getCredentials was called again on reconnection
+    expect(getCredentialsCalls).toBeGreaterThanOrEqual(2);
   });
 });

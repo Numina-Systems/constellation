@@ -34,8 +34,6 @@ type MockMcpClient = {
 };
 
 function createMockMemoryStore(): MemoryStore {
-  const blocks: Array<MemoryBlock> = [];
-
   return {
     getBlock: async () => null,
     getBlocksByTier: async () => [],
@@ -46,7 +44,6 @@ function createMockMemoryStore(): MemoryStore {
         created_at: new Date(),
         updated_at: new Date(),
       };
-      blocks.push(fullBlock);
       return fullBlock;
     },
     updateBlock: async () => ({ id: "", owner: "", tier: "core" as const, label: "", content: "", embedding: null, permission: "readonly" as const, pinned: false, created_at: new Date(), updated_at: new Date() }),
@@ -71,6 +68,16 @@ function createMockEmbeddingProvider(): EmbeddingProvider {
       );
     },
     dimensions: 1536,
+  };
+}
+
+function makeOptions(overrides?: Partial<SpaceMoltToolProviderOptions>): SpaceMoltToolProviderOptions {
+  return {
+    mcpUrl: 'http://localhost:3000',
+    registrationCode: 'test-reg-code',
+    store: createMockMemoryStore(),
+    embedding: createMockEmbeddingProvider(),
+    ...overrides,
   };
 }
 
@@ -162,26 +169,23 @@ function createMockMcpClient() {
 
 describe('createSpaceMoltToolProvider', () => {
   let mockClient: MockMcpClient;
-  let store: MemoryStore;
-  let embedding: EmbeddingProvider;
-
-  const baseOptions: SpaceMoltToolProviderOptions = {
-    mcpUrl: 'http://localhost:3000',
-    registrationCode: 'test-reg-code',
-    store: undefined as unknown as MemoryStore,
-    embedding: undefined as unknown as EmbeddingProvider,
-  };
 
   beforeEach(() => {
     mockClient = createMockMcpClient();
-    store = createMockMemoryStore();
-    embedding = createMockEmbeddingProvider();
   });
 
   it('AC3.1: discover() with no credentials in memory calls register tool and persists credentials', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const store = createMockMemoryStore();
+    const options = makeOptions({ store });
     let registerCalled = false;
     let registerArgs: Record<string, unknown> | undefined;
+    const createBlockCalls: Array<unknown> = [];
+    const originalCreateBlock = store.createBlock;
+
+    store.createBlock = async (block) => {
+      createBlockCalls.push(block);
+      return originalCreateBlock(block);
+    };
 
     mockClient.callTool = async (request) => {
       if (request.name === 'register') {
@@ -216,10 +220,21 @@ describe('createSpaceMoltToolProvider', () => {
     expect(registerCalled).toBe(true);
     expect(registerArgs?.['registration_code']).toBe('test-reg-code');
     expect(tools.length).toBeGreaterThan(0);
+
+    const credentialsBlock = createBlockCalls.find((call) => {
+      const blockData = call as Record<string, unknown>;
+      return blockData['label'] === 'spacemolt:credentials';
+    }) as Record<string, unknown> | undefined;
+
+    expect(credentialsBlock).toBeDefined();
+    expect(credentialsBlock?.['label']).toBe('spacemolt:credentials');
+    expect(credentialsBlock?.['tier']).toBe('core');
+    expect(credentialsBlock?.['pinned']).toBe(true);
   });
 
   it('AC3.2: discover() with existing credentials in memory calls login tool', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const store = createMockMemoryStore();
+    const options = makeOptions({ store });
     let loginCalled = false;
     let loginCreds: Record<string, unknown> | undefined;
     let registerCalled = false;
@@ -267,7 +282,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC3.3: discover() uses usernameHint when provided in options', async () => {
-    const options = { ...baseOptions, store, embedding, usernameHint: 'CustomName' };
+    const options = makeOptions({ usernameHint: 'CustomName' });
     let registerArgs: Record<string, unknown> | undefined;
 
     mockClient.callTool = async (request) => {
@@ -297,7 +312,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC3.4: discover() retries with modified username on username_taken error', async () => {
-    const options = { ...baseOptions, store, embedding, usernameHint: 'Base' };
+    const options = makeOptions({ usernameHint: 'Base' });
     const registerCalls: Array<Record<string, unknown>> = [];
 
     mockClient.callTool = async (request) => {
@@ -337,7 +352,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC3.5: discover() throws after 3 registration retries fail with username_taken', async () => {
-    const options = { ...baseOptions, store, embedding, usernameHint: 'Base' };
+    const options = makeOptions({ usernameHint: 'Base' });
 
     mockClient.callTool = async (request) => {
       if (request.name === 'register') {
@@ -354,16 +369,12 @@ describe('createSpaceMoltToolProvider', () => {
 
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
-    try {
-      await provider.discover();
-      expect(true).toBe(false); // Should throw
-    } catch (error) {
-      expect(String(error)).toContain('username taken after 3 retries');
-    }
+    await expect(provider.discover()).rejects.toThrow('username taken after 3 retries');
   });
 
   it('AC3.6: reconnect() always uses login path (not register)', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const store = createMockMemoryStore();
+    const options = makeOptions({ store });
     let registerCalled = false;
     let loginCalls = 0;
 
@@ -427,7 +438,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.1: discover() returns ToolDefinition[] with spacemolt: prefixed names', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     const tools = await provider.discover();
@@ -439,7 +450,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('handles pagination in listTools', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     const tools = await provider.discover();
@@ -454,7 +465,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.4: execute() strips spacemolt: prefix and calls MCP tool', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     let mineCalled = false;
 
     const callToolMock = async (
@@ -505,7 +516,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.5: MCP text content blocks are flattened into ToolResult.output', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
     await provider.discover();
 
@@ -517,7 +528,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.5: MCP errors are captured in ToolResult.error', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     mockClient.callTool = async (request) => {
       if (request.name === 'login' || request.name === 'register') {
         return {
@@ -546,7 +557,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.6: refreshTools() re-runs listTools and updates cache', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     await provider.discover();
@@ -571,7 +582,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.6: notifications/tools/list_changed triggers refreshTools callback', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const client = createMockMcpClient();
     const provider = createSpaceMoltToolProvider(options, client);
 
@@ -615,7 +626,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('close() is available for cleanup', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     await provider.discover();
@@ -626,7 +637,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('caches tools after first discovery', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     let listToolsCallCount = 0;
 
     const callCountMockClient: MockMcpClient = {
@@ -650,7 +661,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('handles multiple content blocks in MCP response', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     mockClient.callTool = async (request) => {
       if (request.name === 'login' || request.name === 'register') {
         return {
@@ -681,7 +692,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('provides discover() method matching ToolProvider interface', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     const tools = await provider.discover();
@@ -697,7 +708,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('provides execute() method matching ToolProvider interface', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     const provider = createSpaceMoltToolProvider(options, mockClient);
     await provider.discover();
 
@@ -710,7 +721,8 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC5.3: detects session_invalid error and retries after reconnect', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const store = createMockMemoryStore();
+    const options = makeOptions({ store });
     let callCount = 0;
     let reconnectCalled = false;
 
@@ -776,7 +788,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC5.3: non-session errors do not trigger reconnect', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const options = makeOptions();
     let reconnectAttempt = false;
 
     const nonSessionErrorClient: MockMcpClient = {
@@ -826,7 +838,8 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC5.3: retry also fails returns error ToolResult', async () => {
-    const options = { ...baseOptions, store, embedding };
+    const store = createMockMemoryStore();
+    const options = makeOptions({ store });
     let callCount = 0;
 
     // Pre-populate credentials

@@ -53,27 +53,43 @@ function isSessionExpired(error: unknown): boolean {
   return String(error).includes('session_invalid');
 }
 
+const EMPIRES = ['solarian', 'voidborn', 'crimson', 'nebula', 'outerrim'] as const;
+const NAME_PREFIXES = ['Spirit', 'Void', 'Nova', 'Nebula', 'Stellar', 'Cosmic', 'Astral', 'Phantom'];
+const NAME_SUFFIXES = ['Runner', 'Walker', 'Drift', 'Hawk', 'Blade', 'Spark', 'Wing', 'Shade'];
+
+function generateUsername(): string {
+  const prefix = NAME_PREFIXES[Math.floor(Math.random() * NAME_PREFIXES.length)]!;
+  const suffix = NAME_SUFFIXES[Math.floor(Math.random() * NAME_SUFFIXES.length)]!;
+  const num = Math.floor(Math.random() * 100);
+  return `${prefix}-${suffix}-${num}`;
+}
+
+function generateEmpire(): string {
+  return EMPIRES[Math.floor(Math.random() * EMPIRES.length)]!;
+}
+
+function parseRegistrationResponse(responseText: string): { player_id: string; password: string } {
+  const parsed: unknown = JSON.parse(responseText);
+  if (
+    typeof parsed !== 'object' || parsed === null ||
+    !('player_id' in parsed) || !('password' in parsed)
+  ) {
+    throw new Error(`SpaceMolt registration returned unexpected response: ${responseText}`);
+  }
+
+  const response = parsed as Record<string, unknown>;
+  return {
+    player_id: String(response['player_id']),
+    password: String(response['password']),
+  };
+}
+
 export function createSpaceMoltToolProvider(
   options: Readonly<SpaceMoltToolProviderOptions>,
   client?: McpClient
 ): SpaceMoltToolProvider {
   let toolCache: Array<ToolDefinition> = [];
   let mcpClient: McpClient | undefined = client;
-
-  const EMPIRES = ['solarian', 'voidborn', 'crimson', 'nebula', 'outerrim'] as const;
-  const NAME_PREFIXES = ['Spirit', 'Void', 'Nova', 'Nebula', 'Stellar', 'Cosmic', 'Astral', 'Phantom'];
-  const NAME_SUFFIXES = ['Runner', 'Walker', 'Drift', 'Hawk', 'Blade', 'Spark', 'Wing', 'Shade'];
-
-  function generateUsername(): string {
-    const prefix = NAME_PREFIXES[Math.floor(Math.random() * NAME_PREFIXES.length)]!;
-    const suffix = NAME_SUFFIXES[Math.floor(Math.random() * NAME_SUFFIXES.length)]!;
-    const num = Math.floor(Math.random() * 100);
-    return `${prefix}-${suffix}-${num}`;
-  }
-
-  function generateEmpire(): string {
-    return EMPIRES[Math.floor(Math.random() * EMPIRES.length)]!;
-  }
 
   async function paginateTools(): Promise<Array<ToolDefinition>> {
     if (!mcpClient) {
@@ -178,20 +194,11 @@ export function createSpaceMoltToolProvider(
           throw new Error(`SpaceMolt registration failed: ${responseText}`);
         }
 
-        // Parse registration response
-        const parsed: unknown = JSON.parse(responseText);
-        if (
-          typeof parsed !== 'object' || parsed === null ||
-          !('player_id' in parsed) || !('password' in parsed)
-        ) {
-          throw new Error(`SpaceMolt registration returned unexpected response: ${responseText}`);
-        }
-
-        const response = parsed as Record<string, unknown>;
+        const parsed = parseRegistrationResponse(responseText);
         const credentials: Credentials = {
           username,
-          password: String(response['password']),
-          player_id: String(response['player_id']),
+          password: parsed.password,
+          player_id: parsed.player_id,
           empire,
         };
 

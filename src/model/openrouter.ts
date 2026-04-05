@@ -85,6 +85,7 @@ function buildRequestBody(
 
   if (isStreaming) {
     body["stream"] = true;
+    body["stream_options"] = { include_usage: true };
   }
 
   // Add OpenRouter provider routing
@@ -362,6 +363,13 @@ export function createOpenRouterAdapter(
               message: {
                 stop_reason: normalizeStopReason(choice.finish_reason),
               },
+              // OpenAI streaming sends usage in the final chunk when stream_options.include_usage is true
+              ...(event.usage && {
+                usage: {
+                  input_tokens: event.usage.prompt_tokens ?? 0,
+                  output_tokens: event.usage.completion_tokens ?? 0,
+                },
+              }),
             };
           }
         }

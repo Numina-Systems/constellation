@@ -131,6 +131,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
             temperature: request.temperature,
             messages,
             stream: true,
+            stream_options: { include_usage: true },
           });
         } catch (error) {
           if (error instanceof OpenAI.AuthenticationError) {
@@ -252,6 +253,13 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
             message: {
               stop_reason: normalizeStopReason(choice.finish_reason),
             },
+            // OpenAI streaming sends usage in the final chunk when stream_options.include_usage is true
+            ...(event.usage && {
+              usage: {
+                input_tokens: event.usage.prompt_tokens ?? 0,
+                output_tokens: event.usage.completion_tokens ?? 0,
+              },
+            }),
           };
         }
       }

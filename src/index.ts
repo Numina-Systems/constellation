@@ -23,6 +23,13 @@ import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
+import {
+  createSpaceMoltSource,
+  createSpaceMoltToolProvider,
+  createGameStateManager,
+  createSpaceMoltLifecycle,
+  seedSpaceMoltCapabilities,
+} from '@/extensions/spacemolt';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
@@ -63,6 +70,7 @@ import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
+import type { SpaceMoltLifecycle } from '@/extensions/spacemolt';
 import type { ExecutionContext } from '@/runtime/types';
 import type { IncomingMessage } from '@/extensions/data-source';
 import type { EventQueue } from '@/extensions/bluesky';
@@ -73,6 +81,7 @@ import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
 import type { ContextProvider } from '@/agent/types';
+import type { ToolDefinition } from '@/tool/types';
 
 const AGENT_OWNER = 'spirit';
 
@@ -848,6 +857,61 @@ async function main(): Promise<void> {
       }
 
       console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
+  }
+
+  // --- SpaceMolt initialization (optional) ---
+  let spacemoltLifecycle: SpaceMoltLifecycle | null = null;
+  let spacemoltToolCache: Array<ToolDefinition> = [];
+
+  if (config.spacemolt?.enabled) {
+    const spacemoltPassword = config.spacemolt.password;
+    const spacemoltUsername = config.spacemolt.username;
+
+    if (!spacemoltPassword || !spacemoltUsername) {
+      console.error("SpaceMolt enabled but username or password missing");
+    } else {
+      try {
+        // Seed capabilities
+        await seedSpaceMoltCapabilities(memoryStore, embedding);
+
+        // Create game state manager
+        const gameStateManager = createGameStateManager();
+
+        // Create source and tool provider
+        const spacemoltSource = createSpaceMoltSource({
+          wsUrl: config.spacemolt.ws_url,
+          username: spacemoltUsername,
+          password: spacemoltPassword,
+          gameStateManager,
+          eventQueueCapacity: config.spacemolt.event_queue_capacity,
+        });
+
+        const spacemoltToolProvider = createSpaceMoltToolProvider({
+          mcpUrl: config.spacemolt.mcp_url,
+          username: spacemoltUsername,
+          password: spacemoltPassword,
+        });
+
+        // Create lifecycle coordinator
+        spacemoltLifecycle = createSpaceMoltLifecycle({
+          source: spacemoltSource,
+          toolProvider: spacemoltToolProvider,
+        });
+
+        // Start if active (or no activity manager)
+        try {
+          await spacemoltLifecycle.start();
+          spacemoltToolCache = await spacemoltToolProvider.discover();
+          console.log(`SpaceMolt connected: ${spacemoltToolCache.length} tools discovered`);
+        } catch (error) {
+          console.error("SpaceMolt connection failed:", error);
+          spacemoltLifecycle = null;
+        }
+      } catch (error) {
+        console.error("SpaceMolt initialization failed:", error);
+        spacemoltLifecycle = null;
+      }
+    }
   }
 
   // Set up scheduler for periodic tasks

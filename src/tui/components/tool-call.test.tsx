@@ -29,7 +29,7 @@ describe('ToolCall', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const output = lastFrame();
+    const output = lastFrame() ?? '';
     expect(output).toContain('✓');
     expect(output).toContain('database_query');
     expect(output).toContain('Found 3 items in database');
@@ -76,7 +76,7 @@ describe('ToolCall', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const output = lastFrame();
+    const output = lastFrame() ?? '';
     expect(output).toContain('✗');
     expect(output).toContain('api_call');
     expect(output).toContain('Connection timeout');
@@ -96,7 +96,7 @@ describe('ToolCall', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const output = lastFrame();
+    const output = lastFrame() ?? '';
     expect(output).toContain('tool:with:colons');
 
     unmount();

@@ -79,7 +79,6 @@ export async function assembleResponseFromStream(
   let thinkingAccumulator = '';
 
   // Publish stream:start
-  console.error('[stream-assembler] publishing stream:start', { modelName, turnIndex });
   eventBus.publish({
     type: 'stream:start',
     model: modelName,
@@ -121,7 +120,6 @@ export async function assembleResponseFromStream(
         const text = event.delta.text;
         if (text) {
           currentTextAccumulator += text;
-          console.error(`[stream-assembler] publishing stream:chunk (${text.length} chars, turnIndex=${turnIndex})`);
           eventBus.publish({
             type: 'stream:chunk',
             text,
@@ -182,7 +180,6 @@ export async function assembleResponseFromStream(
   if (!usage) {
     usage = { input_tokens: 0, output_tokens: 0 };
   }
-  console.error('[stream-assembler] publishing stream:end', { usage, stopReason, totalChunks: currentTextAccumulator.length });
   eventBus.publish({
     type: 'stream:end',
     usage,

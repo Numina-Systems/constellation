@@ -146,7 +146,6 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
       currentTurnTextRef.current = streamChunkEvents
         .slice(startIdx)
         .reduce((text, chunk) => text + (chunk.text || ''), '');
-      console.error(`[app] chunk effect: ${streamChunkEvents.length - startIdx} turn chunks (from idx ${startIdx}), ref.length=${currentTurnTextRef.current.length}`);
     }
   }, [streamChunkEvents]);
 
@@ -177,13 +176,11 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
   // Handle turn:end events - capture the accumulated text
   React.useEffect(() => {
     for (let i = lastProcessedTurnEndRef.current + 1; i < turnEndEvents.length; i++) {
-      console.error(`[app] turn:end processing i=${i}, currentTurnTextRef.length=${currentTurnTextRef.current.length}, streamChunkEvents.length=${streamChunkEvents.length}`);
       setIsProcessing(false);
       // Capture the current turn text from the ref
       if (currentTurnTextRef.current.length > 0) {
         const messageId = messageIdCounterRef.current++;
         const content = currentTurnTextRef.current;
-        console.error(`[app] adding assistant message id=${messageId}, content.length=${content.length}`);
         // Use per-turn tracking refs instead of accumulated event arrays
         const hadTools = currentTurnHadToolsRef.current;
         const hadThinking = currentTurnHadThinkingRef.current;
@@ -201,8 +198,6 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
             thinkingCharCount: currentTurnThinkingTextRef.current.length,
           },
         ]);
-      } else {
-        console.error('[app] turn:end but currentTurnTextRef is empty!');
       }
       currentTurnTextRef.current = '';
     }

@@ -65,14 +65,9 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["email"] = emailObj;
   }
 
-  if (parsed["spacemolt"] && (process.env["SPACEMOLT_PASSWORD"] || process.env["SPACEMOLT_USERNAME"])) {
+  if (parsed["spacemolt"] && process.env["SPACEMOLT_REGISTRATION_CODE"]) {
     const spacemoltObj = parsed["spacemolt"] as Record<string, unknown>;
-    if (process.env["SPACEMOLT_PASSWORD"]) {
-      spacemoltObj["password"] = process.env["SPACEMOLT_PASSWORD"];
-    }
-    if (process.env["SPACEMOLT_USERNAME"]) {
-      spacemoltObj["username"] = process.env["SPACEMOLT_USERNAME"];
-    }
+    spacemoltObj["registration_code"] = process.env["SPACEMOLT_REGISTRATION_CODE"];
     envOverrides["spacemolt"] = spacemoltObj;
   }
 

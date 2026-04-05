@@ -10,6 +10,7 @@
 import { toSql } from 'pgvector/utils';
 import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
 import { formatSkillsSection } from '../skill/context.ts';
+import { assembleResponseFromStream } from './stream-assembler.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 
@@ -104,13 +105,34 @@ export function createAgent(
       content: userMessage,
     });
 
+    // Publish turn:start event if eventBus is present
+    if (deps.eventBus) {
+      deps.eventBus.publish({
+        type: 'turn:start',
+        source: 'user',
+      });
+    }
+
     // Step 2: Load conversation history
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
     if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens)) {
+      if (deps.eventBus) {
+        deps.eventBus.publish({
+          type: 'compaction:start',
+        });
+      }
+
       const result = await deps.compactor.compress(history, id);
       history = Array.from(result.history);
+
+      if (deps.eventBus) {
+        deps.eventBus.publish({
+          type: 'compaction:end',
+          removedTokens: result.tokensEstimateBefore - result.tokensEstimateAfter,
+        });
+      }
     }
 
     // Step 4 & 5: Build context and call model
@@ -150,7 +172,9 @@ export function createAgent(
         max_tokens: maxTokens,
       };
 
-      const response = await deps.model.complete(modelRequest);
+      const response = deps.eventBus
+        ? await assembleResponseFromStream(deps.model.stream(modelRequest), deps.eventBus, roundCount, modelName)
+        : await deps.model.complete(modelRequest);
 
       // Step 6: Handle response based on stop_reason
       if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {
@@ -165,6 +189,15 @@ export function createAgent(
           content: text,
           reasoning_content: response.reasoning_content,
         });
+
+        // Publish turn:end event if eventBus is present
+        if (deps.eventBus) {
+          const messageHistory = await loadConversationHistory(id);
+          deps.eventBus.publish({
+            type: 'turn:end',
+            messageCount: messageHistory.length,
+          });
+        }
 
         return text;
       }
@@ -190,7 +223,18 @@ export function createAgent(
         // Dispatch each tool use and collect results
         const toolResults: Array<ConversationMessage> = [];
         for (const toolUse of toolUseBlocks) {
+          // Publish tool:start event if eventBus is present
+          if (deps.eventBus) {
+            deps.eventBus.publish({
+              type: 'tool:start',
+              toolName: toolUse.name,
+              toolId: toolUse.id,
+              input: toolUse.input,
+            });
+          }
+
           let toolResult: string;
+          let isError = false;
 
           const startTime = Date.now();
           try {
@@ -202,13 +246,27 @@ export function createAgent(
               const result = await deps.runtime.execute(code, stubs, context);
 
               toolResult = result.success ? result.output : `Error: ${result.error}`;
+              isError = !result.success;
               recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? null));
             } else if (toolUse.name === 'compact_context') {
               // Special case: context compaction
               const compactSuccess = !!deps.compactor;
               if (deps.compactor) {
+                if (deps.eventBus) {
+                  deps.eventBus.publish({
+                    type: 'compaction:start',
+                  });
+                }
+
                 const compactionResult = await deps.compactor.compress(history, id);
                 history = Array.from(compactionResult.history);
+
+                if (deps.eventBus) {
+                  deps.eventBus.publish({
+                    type: 'compaction:end',
+                    removedTokens: compactionResult.tokensEstimateBefore - compactionResult.tokensEstimateAfter,
+                  });
+                }
 
                 toolResult = JSON.stringify({
                   messagesCompressed: compactionResult.messagesCompressed,
@@ -221,18 +279,31 @@ export function createAgent(
                   success: false,
                   output: 'Compaction not configured',
                 });
+                isError = true;
               }
               recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, compactSuccess, compactSuccess ? null : 'Compaction not configured');
             } else {
               // Regular tool dispatch
               const result = await deps.registry.dispatch(toolUse.name, toolUse.input);
               toolResult = result.output;
+              isError = !result.success;
               recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
             }
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             toolResult = `Error executing tool ${toolUse.name}: ${errorMsg}`;
+            isError = true;
             recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, false, errorMsg);
+          }
+
+          // Publish tool:result event if eventBus is present
+          if (deps.eventBus) {
+            deps.eventBus.publish({
+              type: 'tool:result',
+              toolId: toolUse.id,
+              result: toolResult,
+              isError,
+            });
           }
 
           // Persist tool result
@@ -275,6 +346,13 @@ export function createAgent(
       }
 
       // Unknown stop reason - return empty string
+      if (deps.eventBus) {
+        const messageHistory = await loadConversationHistory(id);
+        deps.eventBus.publish({
+          type: 'turn:end',
+          messageCount: messageHistory.length,
+        });
+      }
       return '';
     }
 
@@ -287,6 +365,15 @@ export function createAgent(
       content: warningMessage,
     });
 
+    // Publish turn:end event if eventBus is present
+    if (deps.eventBus) {
+      const messageHistory = await loadConversationHistory(id);
+      deps.eventBus.publish({
+        type: 'turn:end',
+        messageCount: messageHistory.length,
+      });
+    }
+
     return warningMessage;
   }
 
@@ -296,6 +383,16 @@ export function createAgent(
 
   async function processEvent(event: ExternalEvent): Promise<string> {
     const formattedMessage = formatExternalEvent(event, deps.sourceInstructions);
+
+    // Publish event:received if eventBus is present
+    if (deps.eventBus) {
+      deps.eventBus.publish({
+        type: 'event:received',
+        source: event.source,
+        summary: `External event from ${event.source}`,
+      });
+    }
+
     return processMessage(formattedMessage);
   }
 

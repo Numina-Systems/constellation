@@ -63,8 +63,8 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
 
   const streamChunkFilter = React.useCallback(
     (event: AgentEvent): event is Extract<AgentEvent, { type: 'stream:chunk' }> =>
-      event.type === 'stream:chunk' && event.turnIndex === turnIndex,
-    [turnIndex]
+      event.type === 'stream:chunk',
+    []
   );
 
   const turnEndFilter = React.useCallback(

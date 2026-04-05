@@ -7,15 +7,14 @@ import { useAgentEvents } from '@/tui/hooks/use-agent-events.ts';
 
 type StreamingTextProps = {
   bus: AgentEventBus;
-  turnIndex: number;
 };
 
-export function StreamingText({ bus, turnIndex }: StreamingTextProps) {
+export function StreamingText({ bus }: StreamingTextProps) {
   // Memoize the filter to prevent unnecessary re-subscriptions
   const filter = React.useCallback(
     (event: AgentEvent): event is Extract<AgentEvent, { type: 'stream:chunk' }> =>
-      event.type === 'stream:chunk' && event.turnIndex === turnIndex,
-    [turnIndex]
+      event.type === 'stream:chunk',
+    []
   );
 
   const chunks = useAgentEvents(bus, filter);

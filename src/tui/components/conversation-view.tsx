@@ -73,7 +73,7 @@ export function ConversationView({
       {isStreaming && (
         <Box flexDirection="column">
           <ThinkingIndicator bus={bus} turnIndex={currentTurnIndex} collapsed={false} />
-          <StreamingText bus={bus} turnIndex={currentTurnIndex} />
+          <StreamingText bus={bus} />
           <ToolCallGroup bus={bus} turnIndex={currentTurnIndex} collapsed={false} />
         </Box>
       )}

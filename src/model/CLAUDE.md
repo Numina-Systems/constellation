@@ -1,6 +1,6 @@
 # Model
 
-Last verified: 2026-03-05
+Last verified: 2026-04-05
 
 ## Purpose
 Abstracts LLM providers behind a unified `ModelProvider` port so the agent loop is provider-agnostic. Normalizes Anthropic and OpenAI-compatible APIs into a shared message/content-block format.
@@ -18,7 +18,7 @@ Abstracts LLM providers behind a unified `ModelProvider` port so the agent loop 
 ## Key Decisions
 - Anthropic message format as canonical: `ContentBlock` union (TextBlock, ToolUseBlock, ToolResultBlock) matches Anthropic's native format; OpenAI and Ollama adapters translate
 - System-role messages in `messages` array: Callers can place system-role messages inline; adapters handle provider-specific extraction (Anthropic concatenates into `system` param, OpenAI and Ollama pass through natively)
-- Streaming via `AsyncIterable<StreamEvent>`: Composable, backpressure-friendly
+- Streaming via `AsyncIterable<StreamEvent>`: Composable, backpressure-friendly. `StreamEventContentBlockDelta` supports `text_delta`, `input_json_delta`, and `thinking_delta` types.
 - Ollama native `/api/chat` over `/v1` shim: The OpenAI-compatible `/v1` endpoint silently drops tool calls during streaming. The native endpoint avoids this bug.
 
 ## Invariants

@@ -7,7 +7,7 @@ import { StreamingText } from './streaming-text.tsx';
 
 interface ConversationViewProps {
   bus: AgentEventBus;
-  messages: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>;
+  messages: ReadonlyArray<{ id: number; role: 'user' | 'assistant'; content: string }>;
   isStreaming: boolean;
   currentTurnIndex: number;
 }
@@ -20,9 +20,9 @@ export function ConversationView({
 }: ConversationViewProps) {
   return (
     <Box flexDirection="column">
-      {messages.map((message, index) => (
+      {messages.map((message) => (
         <Message
-          key={`${message.role}-${index}`}
+          key={message.id}
           role={message.role}
           content={message.content}
         />

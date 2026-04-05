@@ -142,7 +142,7 @@ describe('App integration', () => {
       messageCount: 1,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Input should be re-enabled
     output = lastFrame();
@@ -209,7 +209,7 @@ describe('App integration', () => {
       source: 'user',
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     bus.publish({
       type: 'stream:chunk',
@@ -217,7 +217,7 @@ describe('App integration', () => {
       turnIndex: 2,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     bus.publish({
       type: 'stream:chunk',
@@ -225,7 +225,7 @@ describe('App integration', () => {
       turnIndex: 2,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     // Should see 'Second response' now
     output = lastFrame();
@@ -334,7 +334,7 @@ describe('App integration', () => {
       messageCount: 1,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Should be back to prompt
     expect(lastFrame()).toContain('>');

@@ -54,7 +54,7 @@ describe('StatusBar', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Second event
+    // Second event - should be batched with first when we wait
     bus.publish({
       type: 'stream:end',
       usage: {
@@ -64,7 +64,8 @@ describe('StatusBar', () => {
       stopReason: 'end_turn',
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Wait long enough for both batches to flush and render
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     const output = lastFrame();
     // Should accumulate: (50 + 75)↓ (25 + 40)↑

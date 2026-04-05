@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import type { AgentEvent, AgentEventBus } from '@/tui/types.ts';
 
 /**
@@ -11,29 +11,14 @@ export function useAgentEvents<T extends AgentEvent>(
   bus: AgentEventBus,
   filter: (event: AgentEvent) => event is T
 ): ReadonlyArray<T> {
-  const [events, setEvents] = useState<T[]>([]);
-  const bufferRef = useRef<T[]>([]);
-  const pendingFlushRef = useRef<boolean>(false);
+  const [events, setEvents] = useState<Array<T>>([]);
 
   useEffect(() => {
     // Subscribe to the bus
     const unsubscribe = bus.subscribe((event) => {
       if (filter(event)) {
-        // Add to buffer
-        bufferRef.current.push(event);
-
-        // Schedule a flush if not already pending
-        if (!pendingFlushRef.current) {
-          pendingFlushRef.current = true;
-          setTimeout(() => {
-            // Flush buffer to state
-            if (bufferRef.current.length > 0) {
-              setEvents((prev) => [...prev, ...bufferRef.current]);
-              bufferRef.current = [];
-            }
-            pendingFlushRef.current = false;
-          }, 0);
-        }
+        // Immediately update state with the new event
+        setEvents((prev) => [...prev, event]);
       }
     });
 

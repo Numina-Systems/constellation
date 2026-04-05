@@ -9,8 +9,8 @@ describe('ConversationView', () => {
   it('renders completed messages with distinct role labels', async () => {
     const bus = createAgentEventBus();
     const messages = [
-      { role: 'user' as const, content: 'Hello' },
-      { role: 'assistant' as const, content: 'Hi there!' },
+      { id: 1, role: 'user' as const, content: 'Hello' },
+      { id: 2, role: 'assistant' as const, content: 'Hi there!' },
     ];
 
     const { lastFrame, unmount } = render(
@@ -33,7 +33,7 @@ describe('ConversationView', () => {
 
   it('renders streaming text when isStreaming is true', async () => {
     const bus = createAgentEventBus();
-    const messages = [{ role: 'user' as const, content: 'Tell me a story' }];
+    const messages = [{ id: 1, role: 'user' as const, content: 'Tell me a story' }];
 
     const { lastFrame, unmount } = render(
       <ConversationView
@@ -86,10 +86,10 @@ describe('ConversationView', () => {
   it('renders multiple messages in order', () => {
     const bus = createAgentEventBus();
     const messages = [
-      { role: 'user' as const, content: 'First question' },
-      { role: 'assistant' as const, content: 'First answer' },
-      { role: 'user' as const, content: 'Second question' },
-      { role: 'assistant' as const, content: 'Second answer' },
+      { id: 1, role: 'user' as const, content: 'First question' },
+      { id: 2, role: 'assistant' as const, content: 'First answer' },
+      { id: 3, role: 'user' as const, content: 'Second question' },
+      { id: 4, role: 'assistant' as const, content: 'Second answer' },
     ];
 
     const { lastFrame, unmount } = render(
@@ -113,7 +113,7 @@ describe('ConversationView', () => {
   it('uses currentTurnIndex to display streaming chunks for the right turn', async () => {
     const bus = createAgentEventBus();
     const messages = [
-      { role: 'user' as const, content: 'Hello' },
+      { id: 1, role: 'user' as const, content: 'Hello' },
     ];
 
     const { lastFrame, unmount } = render(

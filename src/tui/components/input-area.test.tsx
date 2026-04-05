@@ -31,22 +31,34 @@ describe('InputArea', () => {
   });
 
   it('calls onSubmit callback when Enter is pressed', async () => {
-    let callCount = 0;
-    const onSubmitMock = () => {
-      callCount++;
+    let submittedValue = '';
+    const onSubmitMock = (text: string) => {
+      submittedValue = text;
     };
 
     const { stdin, unmount } = render(
       <InputArea onSubmit={onSubmitMock} disabled={false} />
     );
 
-    // Simulate pressing Enter
+    // Simulate typing text character by character
+    stdin.write('h');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('e');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('l');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('l');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('o');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Then press Enter
     stdin.write('\r');
 
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Verify callback was called
-    expect(callCount).toBe(1);
+    // Verify callback was called with correct text
+    expect(submittedValue).toBe('hello');
 
     unmount();
   });
@@ -54,14 +66,30 @@ describe('InputArea', () => {
   it('clears input after submission', async () => {
     const onSubmit = () => {};
 
-    const { lastFrame, unmount } = render(
+    const { stdin, lastFrame, unmount } = render(
       <InputArea onSubmit={onSubmit} disabled={false} />
     );
 
-    // After a submission, the input should be empty again
-    // (Component re-renders with cleared input state)
+    // Type text character by character
+    stdin.write('t');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('e');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('s');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stdin.write('t');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Then submit
+    stdin.write('\r');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // After submission, the input should be cleared
     const output = lastFrame();
     expect(output).toContain('>');
+    // The input text should not be visible (it was cleared)
+    expect(output).not.toContain('test');
 
     unmount();
   });

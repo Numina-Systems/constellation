@@ -1,10 +1,9 @@
 // pattern: Imperative Shell
 
-import React from 'react';
 import { Box, Text } from 'ink';
 import chalk from 'chalk';
 import type { AgentEventBus } from '@/tui/types.ts';
-import { useLatestAgentEvent } from '@/tui/hooks/use-agent-events.ts';
+import { useAgentEvents, useLatestAgentEvent } from '@/tui/hooks/use-agent-events.ts';
 
 interface StatusBarProps {
   bus: AgentEventBus;
@@ -12,21 +11,15 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ bus, modelName }: StatusBarProps) {
-  const [totalInputTokens, setTotalInputTokens] = React.useState(0);
-  const [totalOutputTokens, setTotalOutputTokens] = React.useState(0);
-
-  const streamEndEvent = useLatestAgentEvent(bus, (event) => event.type === 'stream:end');
+  const streamEndEvents = useAgentEvents(bus, (event) => event.type === 'stream:end');
   const activityEvent = useLatestAgentEvent(
     bus,
     (event) => event.type === 'activity:wake' || event.type === 'activity:sleep'
   );
 
-  React.useEffect(() => {
-    if (streamEndEvent) {
-      setTotalInputTokens((prev) => prev + streamEndEvent.usage.input_tokens);
-      setTotalOutputTokens((prev) => prev + streamEndEvent.usage.output_tokens);
-    }
-  }, [streamEndEvent]);
+  // Derive cumulative totals from all stream:end events
+  const totalInputTokens = streamEndEvents.reduce((sum, event) => sum + event.usage.input_tokens, 0);
+  const totalOutputTokens = streamEndEvents.reduce((sum, event) => sum + event.usage.output_tokens, 0);
 
   const isActive = activityEvent ? activityEvent.type === 'activity:wake' : true;
   const activityDot = isActive ? chalk.green('●') : chalk.gray('●');

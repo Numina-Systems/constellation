@@ -37,6 +37,7 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
   const [isMutationPromptActive, setIsMutationPromptActive] = React.useState(false);
   const [turnIndex, setTurnIndex] = React.useState(0);
   const currentTurnTextRef = React.useRef('');
+  const currentTurnChunkStartIndexRef = React.useRef(0);
   const lastProcessedTurnStartRef = React.useRef(-1);
   const lastProcessedTurnEndRef = React.useRef(-1);
   const messageIdCounterRef = React.useRef(0);
@@ -119,6 +120,7 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
       setIsProcessing(true);
       setTurnIndex((prev) => prev + 1);
       currentTurnTextRef.current = '';
+      currentTurnChunkStartIndexRef.current = streamChunkEvents.length;
       currentTurnHadToolsRef.current = false;
       currentTurnHadThinkingRef.current = false;
       currentTurnToolCountRef.current = 0;
@@ -126,7 +128,7 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
       currentTurnThinkingTextRef.current = '';
     }
     lastProcessedTurnStartRef.current = turnStartEvents.length - 1;
-  }, [turnStartEvents]);
+  }, [turnStartEvents, streamChunkEvents.length]);
 
   // Track mutation prompt active state
   React.useEffect(() => {
@@ -137,11 +139,14 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
     }
   }, [mutationRequestEvents, mutationResponseEvents]);
 
-  // Handle stream:chunk events - accumulate text for the current turn in ref
+  // Handle stream:chunk events - accumulate text only from current turn's chunks
   React.useEffect(() => {
-    if (streamChunkEvents.length > 0) {
-      currentTurnTextRef.current = streamChunkEvents.reduce((text, chunk) => text + (chunk.text || ''), '');
-      console.error(`[app] chunk effect: ${streamChunkEvents.length} chunks, ref.length=${currentTurnTextRef.current.length}`);
+    const startIdx = currentTurnChunkStartIndexRef.current;
+    if (streamChunkEvents.length > startIdx) {
+      currentTurnTextRef.current = streamChunkEvents
+        .slice(startIdx)
+        .reduce((text, chunk) => text + (chunk.text || ''), '');
+      console.error(`[app] chunk effect: ${streamChunkEvents.length - startIdx} turn chunks (from idx ${startIdx}), ref.length=${currentTurnTextRef.current.length}`);
     }
   }, [streamChunkEvents]);
 

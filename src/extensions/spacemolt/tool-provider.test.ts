@@ -1,9 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import {
-  createSpaceMoltToolProvider,
-  type SpaceMoltToolProviderOptions,
-} from './tool-provider.ts';
-import type { ToolDefinition, ToolResult } from '@/tool/types.ts';
+import { describe, it, expect, beforeEach } from 'bun:test';
+import { createSpaceMoltToolProvider } from './tool-provider.ts';
+import type { SpaceMoltToolProviderOptions } from './tool-provider.ts';
 
 // Mock MCP Client type
 type MockMcpClient = {
@@ -204,8 +201,7 @@ describe('createSpaceMoltToolProvider', () => {
   it('AC2.6: refreshTools() re-runs listTools and updates cache', async () => {
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
-    const firstDiscovery = await provider.discover();
-    const firstCount = firstDiscovery.length;
+    await provider.discover();
 
     // Simulate tool list change
     mockClient.listTools = async () => ({
@@ -255,8 +251,8 @@ describe('createSpaceMoltToolProvider', () => {
     await provider.discover();
 
     expect(loginCalled).toBe(true);
-    expect(loginCreds?.username).toBe('test_user');
-    expect(loginCreds?.password).toBe('test_pass');
+    expect(loginCreds?.['username']).toBe('test_user');
+    expect(loginCreds?.['password']).toBe('test_pass');
   });
 
   it('caches tools after first discovery', async () => {
@@ -292,7 +288,8 @@ describe('createSpaceMoltToolProvider', () => {
 
     expect(Array.isArray(tools)).toBe(true);
     if (tools.length > 0) {
-      const tool = tools[0];
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const tool = tools[0]!;
       expect(tool.name).toBeDefined();
       expect(tool.description).toBeDefined();
       expect(Array.isArray(tool.parameters)).toBe(true);

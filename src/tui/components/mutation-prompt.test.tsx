@@ -4,6 +4,7 @@ import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
 import { MutationPrompt } from './mutation-prompt.tsx';
 import { createAgentEventBus } from '../event-bus.ts';
+import type { AgentEvent } from '../types.ts';
 
 describe('MutationPrompt', () => {
   describe('tui.AC6.1: Display mutation request inline prompt', () => {
@@ -82,7 +83,7 @@ describe('MutationPrompt', () => {
   describe('tui.AC6.2: User can approve, reject, or provide feedback', () => {
     it('publishes mutation:response with approved: true when y key pressed', async () => {
       const bus = createAgentEventBus();
-      const publishedResponses: Array<any> = [];
+      const publishedResponses: Array<AgentEvent> = [];
 
       bus.subscribe(event => {
         if (event.type === 'mutation:response') {
@@ -110,17 +111,18 @@ describe('MutationPrompt', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(publishedResponses).toHaveLength(1);
-      const response = publishedResponses[0];
-      expect(response.type).toBe('mutation:response');
-      expect(response.mutationId).toBe('mut-1');
-      expect(response.approved).toBe(true);
+      const response = publishedResponses[0]!;
+      if (response.type === 'mutation:response') {
+        expect(response.mutationId).toBe('mut-1');
+        expect(response.approved).toBe(true);
+      }
 
       unmount();
     });
 
     it('publishes mutation:response with approved: false when n key pressed', async () => {
       const bus = createAgentEventBus();
-      const publishedResponses: Array<any> = [];
+      const publishedResponses: Array<AgentEvent> = [];
 
       bus.subscribe(event => {
         if (event.type === 'mutation:response') {
@@ -148,17 +150,18 @@ describe('MutationPrompt', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(publishedResponses).toHaveLength(1);
-      const response = publishedResponses[0];
-      expect(response.type).toBe('mutation:response');
-      expect(response.mutationId).toBe('mut-1');
-      expect(response.approved).toBe(false);
+      const response = publishedResponses[0]!;
+      if (response.type === 'mutation:response') {
+        expect(response.mutationId).toBe('mut-1');
+        expect(response.approved).toBe(false);
+      }
 
       unmount();
     });
 
     it('enters feedback mode and publishes response with feedback on f key + Enter', async () => {
       const bus = createAgentEventBus();
-      const publishedResponses: Array<any> = [];
+      const publishedResponses: Array<AgentEvent> = [];
 
       bus.subscribe(event => {
         if (event.type === 'mutation:response') {
@@ -211,11 +214,12 @@ describe('MutationPrompt', () => {
       await new Promise(resolve => setTimeout(resolve, 200));
 
       expect(publishedResponses).toHaveLength(1);
-      const response = publishedResponses[0];
-      expect(response.type).toBe('mutation:response');
-      expect(response.mutationId).toBe('mut-1');
-      expect(response.approved).toBe(false);
-      expect(response.feedback).toBe('too brief');
+      const response = publishedResponses[0]!;
+      if (response.type === 'mutation:response') {
+        expect(response.mutationId).toBe('mut-1');
+        expect(response.approved).toBe(false);
+        expect(response.feedback).toBe('too brief');
+      }
 
       unmount();
     });

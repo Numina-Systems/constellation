@@ -164,11 +164,10 @@ describe('SystemEventDisplay', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const output = lastFrame();
-    if (output) {
-      expect(output).toContain('Woke');
-      expect(output).toContain('user input');
-      expect(output).toContain('Sleeping');
-    }
+    expect(output).toBeDefined();
+    expect(output).toContain('Woke');
+    expect(output).toContain('user input');
+    expect(output).toContain('Sleeping');
 
     unmount();
   });

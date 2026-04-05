@@ -1,7 +1,7 @@
 // pattern: Imperative Shell
 
 import React from 'react';
-import { Box, useApp, render } from 'ink';
+import { Box, useApp, useInput, render } from 'ink';
 import type { Agent } from '@/agent/types.ts';
 import type { AgentEventBus } from '@/tui/types.ts';
 import { StatusBar } from './components/status-bar.tsx';
@@ -45,7 +45,14 @@ export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
   const currentTurnToolCountRef = React.useRef(0);
   const currentTurnToolErrorCountRef = React.useRef(0);
   const currentTurnThinkingTextRef = React.useRef('');
-  useApp();
+  const { exit } = useApp();
+
+  // Keep stdin active and handle Ctrl+C gracefully
+  useInput((_input, key) => {
+    if (key.ctrl && _input === 'c') {
+      exit();
+    }
+  });
 
   // Memoize filters for event subscriptions
   const turnStartFilter = React.useCallback(
@@ -243,7 +250,7 @@ export function renderApp(props: AppProps): {
   waitUntilExit: () => Promise<unknown>;
   unmount: () => void;
 } {
-  const result = render(<App {...props} />);
+  const result = render(<App {...props} />, { exitOnCtrlC: false });
   return {
     waitUntilExit: () => result.waitUntilExit(),
     unmount: result.unmount,

@@ -406,4 +406,106 @@ describe('createSpaceMoltSource', () => {
 
     expect(gameStateManager.getGameState()).toBe('UNDOCKED');
   });
+
+  test('AC5.2 + AC5.4: disconnect() sets shouldReconnect to false', async () => {
+    let createdSocket: MockWebSocket | null = null;
+    let reconnectAttempted = false;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      username: 'testuser',
+      password: 'testpass',
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Disconnect (explicitly sets shouldReconnect to false)
+    await source.disconnect();
+
+    // Track if WebSocket constructor is called again (reconnection attempt)
+    let connectionAttempts = 0;
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        connectionAttempts++;
+        super(url);
+      }
+    };
+
+    // Trigger close event - should NOT attempt reconnection
+    createdSocket!.close();
+
+    // Wait a bit for any async reconnection to fail/succeed
+    await new Promise(r => setTimeout(r, 100));
+
+    // No new connection should have been attempted
+    expect(connectionAttempts).toBe(0);
+  });
+
+  test('AC5.3: WebSocket closes unexpectedly during wake and reconnects', async () => {
+    let socketInstances: MockWebSocket[] = [];
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socketInstances.push(this);
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      username: 'testuser',
+      password: 'testpass',
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    const firstSocket = socketInstances[0]!;
+    firstSocket.triggerOpen();
+    firstSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    firstSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Now simulate unexpected close (triggering reconnection)
+    firstSocket.close();
+
+    // Wait for reconnection attempt
+    await new Promise(r => setTimeout(r, 1500));
+
+    // A new socket should have been created (reconnection attempt)
+    expect(socketInstances.length).toBeGreaterThan(1);
+  });
 });

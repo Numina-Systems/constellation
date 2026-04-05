@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 import type { MemoryStore } from "../../memory/store.ts";
 import type { EmbeddingProvider } from "../../embedding/types.ts";

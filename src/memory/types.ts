@@ -24,7 +24,7 @@ export type MemoryBlock = {
 
 export type MemoryEvent = {
   id: string;
-  block_id: string;
+  block_id: string | null;
   event_type: 'create' | 'update' | 'delete' | 'archive';
   old_content: string | null;
   new_content: string | null;

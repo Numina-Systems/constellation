@@ -188,15 +188,16 @@ export function createMemoryManager(
   }
 
   async function deleteBlock(id: string): Promise<void> {
-    await store.deleteBlock(id);
-
-    // Log the delete event
+    // Log the delete event before deletion so the FK is still valid.
+    // With ON DELETE SET NULL, the event's block_id becomes null after the block is removed.
     await store.logEvent({
       block_id: id,
       event_type: 'delete',
       old_content: null,
       new_content: null,
     });
+
+    await store.deleteBlock(id);
   }
 
   async function getPendingMutations(): Promise<Array<PendingMutation>> {

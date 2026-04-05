@@ -1,12 +1,12 @@
 # Reflexion
 
-Last verified: 2026-03-03
+Last verified: 2026-03-07
 
 ## Purpose
 Enables agent self-observation and calibration through prediction journaling, operation tracing, and introspection. The agent records predictions about outcomes, traces every tool call, and periodically reviews its accuracy to improve decision-making.
 
 ## Contracts
-- **Exposes**: `PredictionStore` (CRUD for predictions and evaluations), `TraceRecorder` / `TraceStore` (fire-and-forget trace recording with query support), `createPredictionTools(deps)` (predict, annotate_prediction, list_predictions), `createIntrospectionTools(deps)` (self_introspect), `createPredictionContextProvider(store, owner)` (cached system prompt injection of pending prediction count)
+- **Exposes**: `PredictionStore` (CRUD for predictions and evaluations), `TraceRecorder` / `TraceStore` (fire-and-forget trace recording with query support), `createPredictionTools(deps)` (predict, annotate_prediction, list_predictions), `createIntrospectionTools(deps)` (self_introspect), `createPredictionContextProvider(store, owner)` (cached system prompt injection of pending prediction count), `shouldSkipReview(traceCount)` (review gate predicate)
 - **Guarantees**:
   - Trace recording is fire-and-forget; database errors are caught and logged, never propagated to the agent loop
   - Output summaries are truncated to 500 chars before storage
@@ -37,4 +37,5 @@ Enables agent self-observation and calibration through prediction journaling, op
 - `tools.ts` -- predict, annotate_prediction, list_predictions tool definitions
 - `introspection-tools.ts` -- self_introspect tool definition
 - `context-provider.ts` -- Cached prediction context provider for system prompt
+- `review-gate.ts` -- `shouldSkipReview` predicate for skipping idle review-predictions (Functional Core)
 - `index.ts` -- Barrel exports

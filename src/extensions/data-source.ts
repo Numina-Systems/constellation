@@ -27,3 +27,14 @@ export interface DataSource {
   onMessage(handler: (message: IncomingMessage) => void): void;
   send?(message: OutgoingMessage): Promise<void>;
 }
+
+export type DataSourceRegistration = {
+  readonly source: DataSource;
+  readonly instructions?: string;
+  readonly highPriorityFilter?: (message: IncomingMessage) => boolean;
+};
+
+export type DataSourceRegistry = {
+  readonly sources: ReadonlyArray<DataSource>;
+  shutdown(): Promise<void>;
+};

@@ -1,6 +1,6 @@
 # Persistence
 
-Last verified: 2026-03-05
+Last verified: 2026-04-05
 
 ## Purpose
 Provides a PostgreSQL adapter behind a port interface so all database access flows through a single abstraction. Owns schema migrations.

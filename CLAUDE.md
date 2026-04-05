@@ -41,10 +41,10 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/activity/` -- Circadian sleep/wake cycle with event queuing, sleep tasks, and activity-aware dispatch
 - `src/scheduled-context.ts` -- Pure function: formats operation traces into compact `[Recent Activity]` summaries for scheduled task events
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
-- `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
+- `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider), DataSource registry factory, and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
 - `src/extensions/spacemolt/` -- SpaceMolt game extension (MCP tools, WebSocket events, game state machine, per-turn tool cycling)
-- `src/index.ts` -- Entry point, composition root, REPL
+- `src/index.ts` -- Entry point, composition root (single agent with DataSource registry routing), REPL
 
 ## Conventions
 - **Functional Core / Imperative Shell**: Every file annotates its pattern (`// pattern: Functional Core` or `// pattern: Imperative Shell`)

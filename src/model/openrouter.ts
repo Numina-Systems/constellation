@@ -200,7 +200,7 @@ export function createOpenRouterAdapter(
           }
         }, isRetryableError);
 
-        const choice = response.choices[0];
+        const choice = response.choices?.[0];
         if (!choice) {
           throw new Error("No choices in response");
         }

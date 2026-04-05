@@ -6,7 +6,7 @@ Last verified: 2026-04-05
 Integrates the SpaceMolt multiplayer space game as an extension. Provides a DataSource (WebSocket event stream), ToolProvider (MCP-based game actions), game state machine, per-turn tool cycling, event classification, and capability seeding.
 
 ## Contracts
-- **Exposes**: `createSpaceMoltSource(options)`, `createSpaceMoltToolProvider(options)`, `createGameStateManager(initial?)`, `createSpaceMoltLifecycle(options)`, `seedSpaceMoltCapabilities(store, embedding)`, `cycleSpaceMoltTools(options)`, `filterToolsByState(tools, state)`, `classifyEvent(type)`, `isHighPriority(type)`, `formatEventContent(event)`, `translateMcpTool(tool, prefix)`, `flattenMcpContent(content)`, all domain types (`GameState`, `GameStateManager`, `SpaceMoltEvent`, `SpaceMoltDataSource`, `SpaceMoltToolProvider`, `SpaceMoltLifecycle`, `EventTier`)
+- **Exposes**: `createSpaceMoltSource(options)`, `createSpaceMoltToolProvider(options)`, `createGameStateManager(initial?)`, `createSpaceMoltLifecycle(options)`, `seedSpaceMoltCapabilities(store, embedding)`, `cycleSpaceMoltTools(options)`, `filterToolsByState(tools, state)`, `classifyEvent(type)`, `isHighPriority(type)`, `formatEventContent(event)`, `translateMcpTool(tool, prefix)`, `flattenMcpContent(content)`, `readCredentials(store)`, `writeCredentials(store, credentials)`, `Credentials` type, all domain types (`GameState`, `GameStateManager`, `SpaceMoltEvent`, `SpaceMoltDataSource`, `SpaceMoltToolProvider`, `SpaceMoltLifecycle`, `EventTier`)
 - **Guarantees**:
   - `GameState` is always one of `DOCKED | UNDOCKED | COMBAT | TRAVELING`
   - State transitions are deterministic from events (`nextStateFromEvent`) and tool results (`nextStateFromToolResult`)
@@ -17,7 +17,7 @@ Integrates the SpaceMolt multiplayer space game as an extension. Provides a Data
   - WebSocket source auto-reconnects on unexpected close; `disconnect()` suppresses reconnection
   - Tool provider handles session expiry with automatic reconnect-and-retry (single retry)
   - MCP tool schemas translated to `ToolDefinition` via `translateMcpTool`
-- **Expects**: `MemoryStore` and `EmbeddingProvider` for capability seeding. `ToolRegistry` with `unregister()` support for tool cycling. Config section `[spacemolt]` with `username`, `password` when enabled.
+- **Expects**: `MemoryStore` and `EmbeddingProvider` for capability seeding. `ToolRegistry` with `unregister()` support for tool cycling. Config section `[spacemolt]` with `registration_code` when enabled. Credentials stored in memory via `readCredentials`/`writeCredentials`.
 
 ## Dependencies
 - **Uses**: `src/tool/types.ts` (ToolDefinition, ToolResult, ToolRegistry), `src/memory/store.ts` (MemoryStore for seeding), `src/embedding/types.ts` (EmbeddingProvider for seeding), `src/extensions/data-source.ts` (DataSource, IncomingMessage), `src/extensions/tool-provider.ts` (ToolProvider), `@modelcontextprotocol/sdk` (MCP client, StreamableHTTPClientTransport)
@@ -41,9 +41,10 @@ Integrates the SpaceMolt multiplayer space game as an extension. Provides a Data
 - `state.ts` -- `createGameStateManager()`, pure transition functions (`nextStateFromEvent`, `nextStateFromToolResult`)
 - `tool-filter.ts` -- `filterToolsByState()`, tool allowlists per game state
 - `schema.ts` -- `translateMcpTool()`, `flattenMcpContent()`, MCP-to-ToolDefinition translation
-- `tool-provider.ts` -- `createSpaceMoltToolProvider()`, MCP client wrapper with session expiry handling
+- `credentials.ts` -- `Credentials` type, `readCredentials()`, `writeCredentials()`, memory-backed credential storage
+- `tool-provider.ts` -- `createSpaceMoltToolProvider()`, MCP client wrapper with register-or-login flow and session expiry handling
 - `events.ts` -- `classifyEvent()`, `isHighPriority()`, `formatEventContent()`, event tier classification
-- `source.ts` -- `createSpaceMoltSource()`, WebSocket DataSource with auth flow and auto-reconnect
-- `lifecycle.ts` -- `createSpaceMoltLifecycle()`, coordinates source + tool provider start/stop
+- `source.ts` -- `createSpaceMoltSource()`, WebSocket DataSource with deferred credential reading and auto-reconnect
+- `lifecycle.ts` -- `createSpaceMoltLifecycle()`, coordinates source + tool provider start/stop with discover-before-connect ordering
 - `tool-cycling.ts` -- `cycleSpaceMoltTools()`, per-turn tool registration using `ToolRegistry.unregister()`
 - `seed.ts` -- `seedSpaceMoltCapabilities()`, idempotent working memory seeding

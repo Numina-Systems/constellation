@@ -10,11 +10,11 @@ import { InputArea } from './components/input-area.tsx';
 import { useAgentEvents } from './hooks/use-agent-events.ts';
 import type { AgentEvent } from './types.ts';
 
-interface AppProps {
+type AppProps = {
   agent: Agent;
   bus: AgentEventBus;
   modelName: string;
-}
+};
 
 type Message = {
   id: number;

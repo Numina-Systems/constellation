@@ -2,19 +2,24 @@
 
 import { Box, Text } from 'ink';
 import chalk from 'chalk';
-import type { AgentEventBus } from '@/tui/types.ts';
+import type { AgentEvent, AgentEventBus } from '@/tui/types.ts';
 import { useAgentEvents, useLatestAgentEvent } from '@/tui/hooks/use-agent-events.ts';
 
-interface StatusBarProps {
+type StatusBarProps = {
   bus: AgentEventBus;
   modelName: string;
-}
+};
 
 export function StatusBar({ bus, modelName }: StatusBarProps) {
-  const streamEndEvents = useAgentEvents(bus, (event) => event.type === 'stream:end');
+  const streamEndEvents = useAgentEvents(
+    bus,
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'stream:end' }> =>
+      event.type === 'stream:end'
+  );
   const activityEvent = useLatestAgentEvent(
     bus,
-    (event) => event.type === 'activity:wake' || event.type === 'activity:sleep'
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'activity:wake' } | { type: 'activity:sleep' }> =>
+      event.type === 'activity:wake' || event.type === 'activity:sleep'
   );
 
   // Derive cumulative totals from all stream:end events

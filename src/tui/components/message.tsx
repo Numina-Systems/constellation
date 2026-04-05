@@ -2,10 +2,10 @@
 
 import { Box, Text } from 'ink';
 
-interface MessageProps {
+type MessageProps = {
   role: 'user' | 'assistant';
   content: string;
-}
+};
 
 export function Message({ role, content }: MessageProps) {
   const label = role === 'user' ? 'You:' : 'Assistant:';

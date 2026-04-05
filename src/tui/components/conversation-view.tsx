@@ -5,12 +5,12 @@ import type { AgentEventBus } from '@/tui/types.ts';
 import { Message } from './message.tsx';
 import { StreamingText } from './streaming-text.tsx';
 
-interface ConversationViewProps {
+type ConversationViewProps = {
   bus: AgentEventBus;
   messages: ReadonlyArray<{ id: number; role: 'user' | 'assistant'; content: string }>;
   isStreaming: boolean;
   currentTurnIndex: number;
-}
+};
 
 export function ConversationView({
   bus,

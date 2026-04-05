@@ -5,10 +5,10 @@ import { Text } from 'ink';
 import type { AgentEvent, AgentEventBus } from '@/tui/types.ts';
 import { useAgentEvents } from '@/tui/hooks/use-agent-events.ts';
 
-interface StreamingTextProps {
+type StreamingTextProps = {
   bus: AgentEventBus;
   turnIndex: number;
-}
+};
 
 export function StreamingText({ bus, turnIndex }: StreamingTextProps) {
   // Memoize the filter to prevent unnecessary re-subscriptions

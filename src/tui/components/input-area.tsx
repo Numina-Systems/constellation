@@ -5,10 +5,10 @@ import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import chalk from 'chalk';
 
-interface InputAreaProps {
+type InputAreaProps = {
   onSubmit: (text: string) => void;
   disabled: boolean;
-}
+};
 
 export function InputArea({ onSubmit, disabled }: InputAreaProps) {
   const [input, setInput] = React.useState('');

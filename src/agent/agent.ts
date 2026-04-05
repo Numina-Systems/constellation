@@ -205,12 +205,6 @@ export function createAgent(
       if (response.stop_reason === 'tool_use') {
         // Extract tool use blocks
         const toolUseBlocks = response.content.filter((block) => block.type === 'tool_use') as Array<ToolUseBlock>;
-        if (deps.eventBus) {
-          console.error(`[agent] tool_use round: ${toolUseBlocks.length} tool blocks, content types: [${response.content.map(b => b.type).join(', ')}]`);
-          for (const tb of toolUseBlocks) {
-            console.error(`[agent]   tool: ${tb.name}, id: ${tb.id}, input keys: [${Object.keys(tb.input).join(', ')}]`);
-          }
-        }
 
         // Persist the assistant message with tool calls
         const assistantText = response.content

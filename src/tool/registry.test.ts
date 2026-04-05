@@ -550,4 +550,130 @@ describe('ToolRegistry', () => {
       expect(modelTools[0]?.name).toBe('mock_tool');
     });
   });
+
+  describe('unregister', () => {
+    it('should unregister a tool and return true', () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+
+      const definitions = registry.getDefinitions();
+      expect(definitions).toHaveLength(1);
+
+      const result = registry.unregister('test_tool');
+
+      expect(result).toBe(true);
+      expect(registry.getDefinitions()).toHaveLength(0);
+    });
+
+    it('should return false when unregistering non-existent tool', () => {
+      const registry = createToolRegistry();
+
+      const result = registry.unregister('nonexistent_tool');
+
+      expect(result).toBe(false);
+    });
+
+    it('should make dispatched tool return error after unregistering', async () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+
+      let dispatchResult = await registry.dispatch('test_tool', {});
+      expect(dispatchResult.success).toBe(true);
+
+      registry.unregister('test_tool');
+
+      dispatchResult = await registry.dispatch('test_tool', {});
+      expect(dispatchResult.success).toBe(false);
+      expect(dispatchResult.error).toContain('unknown tool');
+    });
+
+    it('should exclude unregistered tool from stub generation', () => {
+      const registry = createToolRegistry();
+
+      const tool1: Tool = {
+        definition: {
+          name: 'tool_one',
+          description: 'Tool one',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      const tool2: Tool = {
+        definition: {
+          name: 'tool_two',
+          description: 'Tool two',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(tool1);
+      registry.register(tool2);
+
+      let stubs = registry.generateStubs();
+      expect(stubs).toContain('async function tool_one');
+      expect(stubs).toContain('async function tool_two');
+
+      registry.unregister('tool_one');
+
+      stubs = registry.generateStubs();
+      expect(stubs).not.toContain('async function tool_one');
+      expect(stubs).toContain('async function tool_two');
+    });
+
+    it('should exclude unregistered tool from toModelTools', () => {
+      const registry = createToolRegistry();
+
+      const tool1: Tool = {
+        definition: {
+          name: 'tool_one',
+          description: 'Tool one',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      const tool2: Tool = {
+        definition: {
+          name: 'tool_two',
+          description: 'Tool two',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(tool1);
+      registry.register(tool2);
+
+      let modelTools = registry.toModelTools();
+      expect(modelTools).toHaveLength(2);
+
+      registry.unregister('tool_one');
+
+      modelTools = registry.toModelTools();
+      expect(modelTools).toHaveLength(1);
+      expect(modelTools[0]?.name).toBe('tool_two');
+    });
+  });
 });

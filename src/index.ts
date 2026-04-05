@@ -768,30 +768,33 @@ async function main(): Promise<void> {
   let spacemoltToolProvider: ReturnType<typeof createSpaceMoltToolProvider> | null = null;
 
   if (config.spacemolt?.enabled) {
-    const spacemoltPassword = config.spacemolt.password;
-    const spacemoltUsername = config.spacemolt.username;
+    const registrationCode = config.spacemolt.registration_code;
 
-    if (!spacemoltPassword || !spacemoltUsername) {
-      console.error("SpaceMolt enabled but username or password missing");
+    if (!registrationCode) {
+      console.error("SpaceMolt enabled but registration_code missing");
     } else {
       try {
         // Seed capabilities
         gameStateManager = createGameStateManager();
         await seedSpaceMoltCapabilities(memoryStore, embedding);
 
-        // Create source and tool provider
+        // Create source (note: WebSocket auth will need to be updated in Phase 4)
         spacemoltSource = createSpaceMoltSource({
           wsUrl: config.spacemolt.ws_url,
-          username: spacemoltUsername,
-          password: spacemoltPassword,
+          // Source uses placeholder credentials for now; Phase 4 will integrate register-or-login
+          username: 'temp-user',
+          password: 'temp-pass',
           gameStateManager,
           eventQueueCapacity: config.spacemolt.event_queue_capacity,
         });
 
         spacemoltToolProvider = createSpaceMoltToolProvider({
           mcpUrl: config.spacemolt.mcp_url,
-          username: spacemoltUsername,
-          password: spacemoltPassword,
+          registrationCode,
+          usernameHint: config.spacemolt.username,
+          empireHint: config.spacemolt.empire,
+          store: memoryStore,
+          embedding,
         });
 
         // Create lifecycle coordinator

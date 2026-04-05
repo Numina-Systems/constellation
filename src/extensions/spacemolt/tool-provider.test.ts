@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { createSpaceMoltToolProvider } from './tool-provider.ts';
 import type { SpaceMoltToolProviderOptions } from './tool-provider.ts';
+import type { MemoryStore } from '../../memory/store.ts';
+import type { EmbeddingProvider } from '../../embedding/types.ts';
+import type { MemoryBlock } from '../../memory/types.ts';
 
 // Mock MCP Client type
 type MockMcpClient = {
@@ -29,6 +32,47 @@ type MockMcpClient = {
   ) => void;
   close: () => Promise<void>;
 };
+
+function createMockMemoryStore(): MemoryStore {
+  const blocks: Array<MemoryBlock> = [];
+
+  return {
+    getBlock: async () => null,
+    getBlocksByTier: async () => [],
+    getBlockByLabel: async () => null,
+    createBlock: async (block) => {
+      const fullBlock: MemoryBlock = {
+        ...block,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      blocks.push(fullBlock);
+      return fullBlock;
+    },
+    updateBlock: async () => ({ id: "", owner: "", tier: "core" as const, label: "", content: "", embedding: null, permission: "readonly" as const, pinned: false, created_at: new Date(), updated_at: new Date() }),
+    deleteBlock: async () => {},
+    searchByEmbedding: async () => [],
+    logEvent: async () => ({ id: "", block_id: "", event_type: "create" as const, old_content: null, new_content: null, created_at: new Date() }),
+    getEvents: async () => [],
+    createMutation: async () => ({ id: "", block_id: "", proposed_content: "", reason: null, status: "pending" as const, feedback: null, created_at: new Date(), resolved_at: null }),
+    getPendingMutations: async () => [],
+    resolveMutation: async () => ({ id: "", block_id: "", proposed_content: "", reason: null, status: "approved" as const, feedback: null, created_at: new Date(), resolved_at: new Date() }),
+  };
+}
+
+function createMockEmbeddingProvider(): EmbeddingProvider {
+  return {
+    embed: async (text: string) => {
+      return new Array(1536).fill(0).map((_, i) => (text.length * (i + 1)) / 1000);
+    },
+    embedBatch: async (texts: ReadonlyArray<string>) => {
+      return texts.map((text) =>
+        new Array(1536).fill(0).map((_, i) => (text.length * (i + 1)) / 1000)
+      );
+    },
+    dimensions: 1536,
+  };
+}
 
 function createMockMcpClient() {
   const listeners: Record<string, Function[]> = {};
@@ -80,6 +124,18 @@ function createMockMcpClient() {
           isError: false,
         };
       }
+      if (request.name === 'register') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              player_id: 'player-123',
+              password: 'a'.repeat(64),
+            }),
+          }],
+          isError: false,
+        };
+      }
       if (request.name === 'mine') {
         return {
           content: [{ type: 'text', text: 'Mined 50 iron' }],
@@ -106,17 +162,272 @@ function createMockMcpClient() {
 
 describe('createSpaceMoltToolProvider', () => {
   let mockClient: MockMcpClient;
-  const options: SpaceMoltToolProviderOptions = {
+  let store: MemoryStore;
+  let embedding: EmbeddingProvider;
+
+  const baseOptions: SpaceMoltToolProviderOptions = {
     mcpUrl: 'http://localhost:3000',
-    username: 'test_user',
-    password: 'test_pass',
+    registrationCode: 'test-reg-code',
+    store: undefined as unknown as MemoryStore,
+    embedding: undefined as unknown as EmbeddingProvider,
   };
 
   beforeEach(() => {
     mockClient = createMockMcpClient();
+    store = createMockMemoryStore();
+    embedding = createMockEmbeddingProvider();
+  });
+
+  it('AC3.1: discover() with no credentials in memory calls register tool and persists credentials', async () => {
+    const options = { ...baseOptions, store, embedding };
+    let registerCalled = false;
+    let registerArgs: Record<string, unknown> | undefined;
+
+    mockClient.callTool = async (request) => {
+      if (request.name === 'register') {
+        registerCalled = true;
+        registerArgs = request.arguments;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              player_id: 'player-123',
+              password: 'generated-pass',
+            }),
+          }],
+          isError: false,
+        };
+      }
+      if (request.name === 'login') {
+        return {
+          content: [{ type: 'text', text: 'Logged in' }],
+          isError: false,
+        };
+      }
+      return {
+        content: [{ type: 'text', text: 'Unknown tool' }],
+        isError: true,
+      };
+    };
+
+    const provider = createSpaceMoltToolProvider(options, mockClient);
+    const tools = await provider.discover();
+
+    expect(registerCalled).toBe(true);
+    expect(registerArgs?.['registration_code']).toBe('test-reg-code');
+    expect(tools.length).toBeGreaterThan(0);
+  });
+
+  it('AC3.2: discover() with existing credentials in memory calls login tool', async () => {
+    const options = { ...baseOptions, store, embedding };
+    let loginCalled = false;
+    let loginCreds: Record<string, unknown> | undefined;
+    let registerCalled = false;
+
+    // Pre-populate store with credentials
+    store.getBlockByLabel = async () => ({
+      id: 'creds-1',
+      owner: 'spirit',
+      tier: 'core',
+      label: 'spacemolt:credentials',
+      content: JSON.stringify({
+        username: 'existing-user',
+        password: 'existing-pass',
+        player_id: 'player-456',
+        empire: 'solarian',
+      }),
+      embedding: null,
+      permission: 'readwrite',
+      pinned: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    mockClient.callTool = async (request) => {
+      if (request.name === 'login') {
+        loginCalled = true;
+        loginCreds = request.arguments;
+      }
+      if (request.name === 'register') {
+        registerCalled = true;
+      }
+      return {
+        content: [{ type: 'text', text: 'Logged in' }],
+        isError: false,
+      };
+    };
+
+    const provider = createSpaceMoltToolProvider(options, mockClient);
+    await provider.discover();
+
+    expect(loginCalled).toBe(true);
+    expect(registerCalled).toBe(false);
+    expect(loginCreds?.['username']).toBe('existing-user');
+    expect(loginCreds?.['password']).toBe('existing-pass');
+  });
+
+  it('AC3.3: discover() uses usernameHint when provided in options', async () => {
+    const options = { ...baseOptions, store, embedding, usernameHint: 'CustomName' };
+    let registerArgs: Record<string, unknown> | undefined;
+
+    mockClient.callTool = async (request) => {
+      if (request.name === 'register') {
+        registerArgs = request.arguments;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              player_id: 'player-123',
+              password: 'pass',
+            }),
+          }],
+          isError: false,
+        };
+      }
+      return {
+        content: [{ type: 'text', text: 'Logged in' }],
+        isError: false,
+      };
+    };
+
+    const provider = createSpaceMoltToolProvider(options, mockClient);
+    await provider.discover();
+
+    expect(registerArgs?.['username']).toBe('CustomName');
+  });
+
+  it('AC3.4: discover() retries with modified username on username_taken error', async () => {
+    const options = { ...baseOptions, store, embedding, usernameHint: 'Base' };
+    const registerCalls: Array<Record<string, unknown>> = [];
+
+    mockClient.callTool = async (request) => {
+      if (request.name === 'register') {
+        registerCalls.push(request.arguments);
+        // First call fails with username_taken
+        if (registerCalls.length === 1) {
+          return {
+            content: [{ type: 'text', text: 'username_taken' }],
+            isError: true,
+          };
+        }
+        // Second call succeeds
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              player_id: 'player-123',
+              password: 'pass',
+            }),
+          }],
+          isError: false,
+        };
+      }
+      return {
+        content: [{ type: 'text', text: 'Logged in' }],
+        isError: false,
+      };
+    };
+
+    const provider = createSpaceMoltToolProvider(options, mockClient);
+    await provider.discover();
+
+    expect(registerCalls.length).toBeGreaterThanOrEqual(2);
+    expect(registerCalls[0]?.['username']).toBe('Base');
+    expect(String(registerCalls[1]?.['username']).startsWith('Base-')).toBe(true);
+  });
+
+  it('AC3.5: discover() throws after 3 registration retries fail with username_taken', async () => {
+    const options = { ...baseOptions, store, embedding, usernameHint: 'Base' };
+
+    mockClient.callTool = async (request) => {
+      if (request.name === 'register') {
+        return {
+          content: [{ type: 'text', text: 'username_taken' }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{ type: 'text', text: 'Logged in' }],
+        isError: false,
+      };
+    };
+
+    const provider = createSpaceMoltToolProvider(options, mockClient);
+
+    try {
+      await provider.discover();
+      expect(true).toBe(false); // Should throw
+    } catch (error) {
+      expect(String(error)).toContain('username taken after 3 retries');
+    }
+  });
+
+  it('AC3.6: reconnect() always uses login path (not register)', async () => {
+    const options = { ...baseOptions, store, embedding };
+    let registerCalled = false;
+    let loginCalls = 0;
+
+    // Pre-populate store with credentials
+    store.getBlockByLabel = async () => ({
+      id: 'creds-1',
+      owner: 'spirit',
+      tier: 'core',
+      label: 'spacemolt:credentials',
+      content: JSON.stringify({
+        username: 'existing-user',
+        password: 'existing-pass',
+        player_id: 'player-456',
+        empire: 'solarian',
+      }),
+      embedding: null,
+      permission: 'readwrite',
+      pinned: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    mockClient.callTool = async (request) => {
+      if (request.name === 'login') {
+        loginCalls++;
+      }
+      if (request.name === 'register') {
+        registerCalled = true;
+      }
+      return {
+        content: [{ type: 'text', text: 'OK' }],
+        isError: false,
+      };
+    };
+
+    const provider = createSpaceMoltToolProvider(options, mockClient);
+
+    // First discover() to initialize
+    await provider.discover();
+    const loginCallsAfterDiscover = loginCalls;
+
+    // Simulate session expiry error
+    mockClient.callTool = async (request) => {
+      if (request.name === 'mine') {
+        throw new Error('session_invalid');
+      }
+      if (request.name === 'login') {
+        loginCalls++;
+      }
+      return {
+        content: [{ type: 'text', text: 'OK' }],
+        isError: false,
+      };
+    };
+
+    // Execute will trigger reconnect() on session expiry
+    await provider.execute('spacemolt:mine', {});
+
+    expect(registerCalled).toBe(false);
+    expect(loginCalls).toBeGreaterThan(loginCallsAfterDiscover);
   });
 
   it('AC2.1: discover() returns ToolDefinition[] with spacemolt: prefixed names', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     const tools = await provider.discover();
@@ -128,6 +439,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('handles pagination in listTools', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     const tools = await provider.discover();
@@ -142,6 +454,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.4: execute() strips spacemolt: prefix and calls MCP tool', async () => {
+    const options = { ...baseOptions, store, embedding };
     let mineCalled = false;
 
     const callToolMock = async (
@@ -149,6 +462,10 @@ describe('createSpaceMoltToolProvider', () => {
     ) => {
       if (request.name === 'mine') {
         mineCalled = true;
+        return {
+          content: [{ type: 'text', text: 'Mined 50 iron' }],
+          isError: false,
+        };
       }
       if (request.name === 'login') {
         return {
@@ -156,9 +473,21 @@ describe('createSpaceMoltToolProvider', () => {
           isError: false,
         };
       }
+      if (request.name === 'register') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              player_id: 'player-123',
+              password: 'a'.repeat(64),
+            }),
+          }],
+          isError: false,
+        };
+      }
       return {
-        content: [{ type: 'text', text: 'Mined 50 iron' }],
-        isError: false,
+        content: [{ type: 'text', text: 'Unknown tool' }],
+        isError: true,
       };
     };
 
@@ -176,6 +505,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.5: MCP text content blocks are flattened into ToolResult.output', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
     await provider.discover();
 
@@ -187,10 +517,24 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.5: MCP errors are captured in ToolResult.error', async () => {
-    mockClient.callTool = async () => ({
-      content: [{ type: 'text', text: 'Tool not found' }],
-      isError: true,
-    });
+    const options = { ...baseOptions, store, embedding };
+    mockClient.callTool = async (request) => {
+      if (request.name === 'login' || request.name === 'register') {
+        return {
+          content: [{
+            type: 'text',
+            text: request.name === 'register'
+              ? JSON.stringify({ player_id: 'p', password: 'p' })
+              : 'Logged in',
+          }],
+          isError: false,
+        };
+      }
+      return {
+        content: [{ type: 'text', text: 'Tool not found' }],
+        isError: true,
+      };
+    };
 
     const provider = createSpaceMoltToolProvider(options, mockClient);
     await provider.discover();
@@ -202,6 +546,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.6: refreshTools() re-runs listTools and updates cache', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     await provider.discover();
@@ -226,6 +571,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC2.6: notifications/tools/list_changed triggers refreshTools callback', async () => {
+    const options = { ...baseOptions, store, embedding };
     const client = createMockMcpClient();
     const provider = createSpaceMoltToolProvider(options, client);
 
@@ -235,7 +581,11 @@ describe('createSpaceMoltToolProvider', () => {
     // Verify listener was registered
     const listChangedListeners = client.listeners['notifications/tools/list_changed'];
     expect(listChangedListeners).toBeDefined();
-    expect(listChangedListeners.length).toBeGreaterThan(0);
+    const listeners = listChangedListeners;
+    if (!listeners) {
+      throw new Error('Expected listeners to be registered');
+    }
+    expect(listeners.length).toBeGreaterThan(0);
 
     // Change the tool list
     client.listTools = async () => ({
@@ -249,7 +599,7 @@ describe('createSpaceMoltToolProvider', () => {
     });
 
     // Fire the notification callback
-    const handler = listChangedListeners[0];
+    const handler = listeners[0];
     if (handler) {
       await handler({ resourceType: 'tool' });
     }
@@ -265,6 +615,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('close() is available for cleanup', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     await provider.discover();
@@ -274,30 +625,8 @@ describe('createSpaceMoltToolProvider', () => {
     expect(true).toBe(true);
   });
 
-  it('discover() calls login tool with credentials', async () => {
-    let loginCalled = false;
-    let loginCreds: Record<string, unknown> | undefined;
-
-    mockClient.callTool = async (request) => {
-      if (request.name === 'login') {
-        loginCalled = true;
-        loginCreds = request.arguments;
-      }
-      return {
-        content: [{ type: 'text', text: 'Logged in' }],
-        isError: false,
-      };
-    };
-
-    const provider = createSpaceMoltToolProvider(options, mockClient);
-    await provider.discover();
-
-    expect(loginCalled).toBe(true);
-    expect(loginCreds?.['username']).toBe('test_user');
-    expect(loginCreds?.['password']).toBe('test_pass');
-  });
-
   it('caches tools after first discovery', async () => {
+    const options = { ...baseOptions, store, embedding };
     let listToolsCallCount = 0;
 
     const callCountMockClient: MockMcpClient = {
@@ -321,13 +650,27 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('handles multiple content blocks in MCP response', async () => {
-    mockClient.callTool = async () => ({
-      content: [
-        { type: 'text', text: 'Block 1' },
-        { type: 'text', text: 'Block 2' },
-      ],
-      isError: false,
-    });
+    const options = { ...baseOptions, store, embedding };
+    mockClient.callTool = async (request) => {
+      if (request.name === 'login' || request.name === 'register') {
+        return {
+          content: [{
+            type: 'text',
+            text: request.name === 'register'
+              ? JSON.stringify({ player_id: 'p', password: 'p' })
+              : 'Logged in',
+          }],
+          isError: false,
+        };
+      }
+      return {
+        content: [
+          { type: 'text', text: 'Block 1' },
+          { type: 'text', text: 'Block 2' },
+        ],
+        isError: false,
+      };
+    };
 
     const provider = createSpaceMoltToolProvider(options, mockClient);
     await provider.discover();
@@ -338,6 +681,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('provides discover() method matching ToolProvider interface', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
 
     const tools = await provider.discover();
@@ -353,6 +697,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('provides execute() method matching ToolProvider interface', async () => {
+    const options = { ...baseOptions, store, embedding };
     const provider = createSpaceMoltToolProvider(options, mockClient);
     await provider.discover();
 
@@ -365,8 +710,28 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC5.3: detects session_invalid error and retries after reconnect', async () => {
+    const options = { ...baseOptions, store, embedding };
     let callCount = 0;
     let reconnectCalled = false;
+
+    // Pre-populate credentials
+    store.getBlockByLabel = async () => ({
+      id: 'creds-1',
+      owner: 'spirit',
+      tier: 'core',
+      label: 'spacemolt:credentials',
+      content: JSON.stringify({
+        username: 'user',
+        password: 'pass',
+        player_id: 'player-1',
+        empire: 'solarian',
+      }),
+      embedding: null,
+      permission: 'readwrite',
+      pinned: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
 
     const sessionExpireClient: MockMcpClient = {
       ...mockClient,
@@ -411,6 +776,7 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC5.3: non-session errors do not trigger reconnect', async () => {
+    const options = { ...baseOptions, store, embedding };
     let reconnectAttempt = false;
 
     const nonSessionErrorClient: MockMcpClient = {
@@ -419,6 +785,18 @@ describe('createSpaceMoltToolProvider', () => {
         if (request.name === 'login') {
           return {
             content: [{ type: 'text', text: 'Logged in' }],
+            isError: false,
+          };
+        }
+        if (request.name === 'register') {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                player_id: 'player-123',
+                password: 'a'.repeat(64),
+              }),
+            }],
             isError: false,
           };
         }
@@ -448,7 +826,27 @@ describe('createSpaceMoltToolProvider', () => {
   });
 
   it('AC5.3: retry also fails returns error ToolResult', async () => {
+    const options = { ...baseOptions, store, embedding };
     let callCount = 0;
+
+    // Pre-populate credentials
+    store.getBlockByLabel = async () => ({
+      id: 'creds-1',
+      owner: 'spirit',
+      tier: 'core',
+      label: 'spacemolt:credentials',
+      content: JSON.stringify({
+        username: 'user',
+        password: 'pass',
+        player_id: 'player-1',
+        empire: 'solarian',
+      }),
+      embedding: null,
+      permission: 'readwrite',
+      pinned: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
 
     const failingRetryClient: MockMcpClient = {
       ...mockClient,

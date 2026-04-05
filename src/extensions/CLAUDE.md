@@ -1,18 +1,18 @@
 # Extensions
 
-Last verified: 2026-03-02
+Last verified: 2026-04-05
 
 ## Purpose
 Defines extension point interfaces and hosts concrete implementations. Extension interfaces are contracts that plugins implement to extend the agent's capabilities.
 
 ## Contracts
-- **Exposes**: `DataSource` (external message streams), `Coordinator` (multi-agent routing), `Scheduler` (deferred/periodic tasks), `ToolProvider` (dynamic tool discovery), plus concrete implementations via subdirectory re-exports
+- **Exposes**: `DataSource` (external message streams), `Coordinator` (multi-agent routing), `Scheduler` (deferred/periodic tasks), `ToolProvider` (dynamic tool discovery), plus concrete implementations via subdirectory re-exports (Bluesky, SpaceMolt)
 - **Guarantees**: Interfaces are stable. Implementations can be registered without modifying core modules.
 - **Expects**: Implementations live in `src/extensions/<name>/` subdirectories.
 
 ## Dependencies
 - **Uses**: `src/tool/types.ts` (ToolProvider references ToolDefinition/ToolResult)
-- **Used by**: `src/index.ts` (composition root imports Bluesky source), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port)
+- **Used by**: `src/index.ts` (composition root imports Bluesky and SpaceMolt), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port)
 - **Boundary**: Extension interfaces live here. Implementations live in `src/extensions/<name>/`.
 
 ## Extension Points
@@ -23,6 +23,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 
 ## Implementations
 - **Bluesky** (`bluesky/`): First DataSource implementation. See `bluesky/CLAUDE.md`.
+- **SpaceMolt** (`spacemolt/`): Game extension implementing both DataSource (WebSocket events) and ToolProvider (MCP tools) with game state machine and per-turn tool cycling. See `spacemolt/CLAUDE.md`.
 - **Scheduler** (`../scheduler/`): PostgreSQL-backed Scheduler implementation. See `src/scheduler/CLAUDE.md`.
 
 ## Key Files
@@ -31,3 +32,4 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 - `scheduler.ts` -- Scheduler, ScheduledTask
 - `tool-provider.ts` -- ToolProvider
 - `bluesky/` -- Bluesky DataSource implementation
+- `spacemolt/` -- SpaceMolt game extension (DataSource + ToolProvider)

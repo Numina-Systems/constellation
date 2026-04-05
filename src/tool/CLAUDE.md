@@ -1,6 +1,6 @@
 # Tool
 
-Last verified: 2026-03-05
+Last verified: 2026-04-05
 
 ## Purpose
 Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, agent scheduling, and unified search.

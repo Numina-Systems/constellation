@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-03-12
+Last verified: 2026-04-05
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -43,6 +43,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider) and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
+- `src/extensions/spacemolt/` -- SpaceMolt game extension (MCP tools, WebSocket events, game state machine, per-turn tool cycling)
 - `src/index.ts` -- Entry point, composition root, REPL
 
 ## Conventions
@@ -51,7 +52,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - **Barrel exports**: Each module has `index.ts` exporting public API
 - **Factory functions over classes**: `createFoo()` returns interface, no `new`
 - **Path aliases**: `@/*` maps to `./src/*` (tsconfig paths)
-- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `OPENROUTER_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` override config.toml values
+- **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `OPENROUTER_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `SPACEMOLT_USERNAME`, `SPACEMOLT_PASSWORD` override config.toml values
 
 ## Boundaries
 - Safe to edit: `src/`

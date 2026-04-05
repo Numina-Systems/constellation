@@ -192,26 +192,20 @@ const ActivityConfigSchema = z
 const SpaceMoltConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
+    registration_code: z.string().optional(),
     username: z.string().optional(),
-    password: z.string().optional(),
+    empire: z.string().optional(),
     mcp_url: z.string().url().default("https://game.spacemolt.com/mcp"),
     ws_url: z.string().url().default("wss://game.spacemolt.com/ws"),
     event_queue_capacity: z.number().int().positive().default(50),
   })
   .superRefine((data, ctx) => {
     if (data.enabled) {
-      if (!data.username) {
+      if (!data.registration_code) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "username is required when spacemolt is enabled",
-          path: ["username"],
-        });
-      }
-      if (!data.password) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "password is required when spacemolt is enabled",
-          path: ["password"],
+          message: "registration_code is required when spacemolt is enabled",
+          path: ["registration_code"],
         });
       }
     }

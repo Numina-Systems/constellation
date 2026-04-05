@@ -3,7 +3,6 @@
 import React from 'react';
 import { Box, useApp, render } from 'ink';
 import type { Agent } from '@/agent/types.ts';
-import type { MemoryManager } from '@/memory/manager.ts';
 import type { AgentEventBus } from '@/tui/types.ts';
 import { StatusBar } from './components/status-bar.tsx';
 import { ConversationView } from './components/conversation-view.tsx';
@@ -11,15 +10,13 @@ import { InputArea } from './components/input-area.tsx';
 import { MutationPrompt } from './components/mutation-prompt.tsx';
 import { SystemEventDisplay } from './components/system-event.tsx';
 import { useAgentEvents } from './hooks/use-agent-events.ts';
-import { createMutationPromptViaBus } from './mutation-bridge.ts';
-import { processPendingMutations } from '@/index.ts';
 import type { AgentEvent } from './types.ts';
 
 type AppProps = {
   agent: Agent;
-  memory: MemoryManager;
   bus: AgentEventBus;
   modelName: string;
+  onProcessMutations: () => Promise<void>;
 };
 
 type Message = {
@@ -34,7 +31,7 @@ type Message = {
   thinkingCharCount: number;
 };
 
-export function App({ agent, memory, bus, modelName }: AppProps) {
+export function App({ agent, bus, modelName, onProcessMutations }: AppProps) {
   const [messages, setMessages] = React.useState<Array<Message>>([]);
   const [isProcessing, setIsProcessing] = React.useState(false);
   const [isMutationPromptActive, setIsMutationPromptActive] = React.useState(false);
@@ -213,9 +210,7 @@ export function App({ agent, memory, bus, modelName }: AppProps) {
     ]);
     // Call agent to process the message, then handle mutations
     agent.processMessage(text).then(async () => {
-      // Create mutation prompt callback and process mutations
-      const mutationCallback = createMutationPromptViaBus(bus);
-      await processPendingMutations(memory, mutationCallback);
+      await onProcessMutations();
     }).catch((error) => {
       console.error('Failed to process message:', error);
     });

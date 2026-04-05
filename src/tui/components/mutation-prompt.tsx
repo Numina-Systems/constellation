@@ -5,23 +5,19 @@
  * Listens for mutation:request events and publishes mutation:response when user responds.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import chalk from 'chalk';
 import type { AgentEventBus } from '../types.ts';
+import type { AgentEvent } from '../types.ts';
 import { useLatestAgentEvent } from '../hooks/use-agent-events.ts';
 
 type MutationPromptProps = {
   bus: AgentEventBus;
 };
 
-type MutationRequest = {
-  mutationId: string;
-  blockId: string;
-  proposedContent: string;
-  reason: string | null;
-};
+type MutationRequest = Extract<AgentEvent, { type: 'mutation:request' }>;
 
 export function MutationPrompt({ bus }: MutationPromptProps) {
   const [feedbackMode, setFeedbackMode] = useState(false);
@@ -33,9 +29,9 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
   // Listen for mutation:request events
   const latestRequest = useLatestAgentEvent(
     bus,
-    (event): event is { type: 'mutation:request'; mutationId: string; blockId: string; proposedContent: string; reason: string | null } =>
+    (event): event is MutationRequest =>
       event.type === 'mutation:request',
-  ) as MutationRequest | null;
+  );
 
   // Update current request when new request arrives
   React.useEffect(() => {
@@ -46,7 +42,7 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
     }
   }, [latestRequest]);
 
-  const handleApprove = () => {
+  const handleApprove = useCallback(() => {
     if (currentRequest) {
       bus.publish({
         type: 'mutation:response',
@@ -55,9 +51,9 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
       });
       setCurrentRequest(null);
     }
-  };
+  }, [currentRequest, bus]);
 
-  const handleReject = () => {
+  const handleReject = useCallback(() => {
     if (currentRequest) {
       bus.publish({
         type: 'mutation:response',
@@ -66,9 +62,9 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
       });
       setCurrentRequest(null);
     }
-  };
+  }, [currentRequest, bus]);
 
-  const handleFeedbackSubmit = () => {
+  const handleFeedbackSubmit = useCallback(() => {
     if (currentRequest) {
       bus.publish({
         type: 'mutation:response',
@@ -80,7 +76,7 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
       setFeedbackText('');
       setFeedbackMode(false);
     }
-  };
+  }, [currentRequest, feedbackText, bus]);
 
   // Handle keyboard input when not in feedback mode
   useInput((input) => {

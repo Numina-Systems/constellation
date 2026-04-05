@@ -1,9 +1,8 @@
-// pattern: Functional Core
-
 import { describe, it, expect } from 'bun:test';
 import { createAgentEventBus } from './event-bus.ts';
 import { createMutationPromptViaBus } from './mutation-bridge.ts';
 import type { PendingMutation } from '@/memory/types.ts';
+import type { AgentEvent } from './types.ts';
 
 function createTestMutation(overrides?: Partial<PendingMutation>): PendingMutation {
   const base: PendingMutation = {
@@ -28,10 +27,10 @@ describe('createMutationPromptViaBus', () => {
       const mutation = createTestMutation();
 
       // Subscribe to capture published events
-      const publishedEvents: Array<{type: string; mutationId?: string; approved?: boolean}> = [];
+      const publishedEvents: Array<Extract<AgentEvent, { type: 'mutation:request' } | { type: 'mutation:response' }>> = [];
       bus.subscribe(event => {
         if (event.type === 'mutation:request' || event.type === 'mutation:response') {
-          publishedEvents.push(event as any);
+          publishedEvents.push(event as Extract<AgentEvent, { type: 'mutation:request' } | { type: 'mutation:response' }>);
         }
       });
 
@@ -44,19 +43,22 @@ describe('createMutationPromptViaBus', () => {
       // Verify mutation:request was published
       expect(publishedEvents).toHaveLength(1);
       const request = publishedEvents[0];
-      expect(request?.type).toBe('mutation:request');
-      expect(request?.mutationId).toBeDefined();
-      expect((request as any)?.blockId).toBe('block-123');
-      expect((request as any)?.proposedContent).toBe('Updated content');
-      expect((request as any)?.reason).toBe('Agent suggests improvement');
+      expect(request).toBeDefined();
+      expect(request!.type).toBe('mutation:request');
+      if (request && request.type === 'mutation:request') {
+        expect(request.mutationId).toBeDefined();
+        expect(request.blockId).toBe('block-123');
+        expect(request.proposedContent).toBe('Updated content');
+        expect(request.reason).toBe('Agent suggests improvement');
+      }
 
       // Capture the mutationId for the response
-      const mutationId = (request as any)?.mutationId;
+      const mutationId = request && request.type === 'mutation:request' ? request.mutationId : undefined;
 
       // Now publish a mutation:response with approval
       bus.publish({
         type: 'mutation:response',
-        mutationId,
+        mutationId: mutationId!,
         approved: true,
       });
 
@@ -77,7 +79,7 @@ describe('createMutationPromptViaBus', () => {
       let capturedMutationId: string | undefined;
       bus.subscribe(event => {
         if (event.type === 'mutation:request') {
-          capturedMutationId = (event as any).mutationId;
+          capturedMutationId = event.mutationId;
         }
       });
 
@@ -110,7 +112,7 @@ describe('createMutationPromptViaBus', () => {
       let capturedMutationId: string | undefined;
       bus.subscribe(event => {
         if (event.type === 'mutation:request') {
-          capturedMutationId = (event as any).mutationId;
+          capturedMutationId = event.mutationId;
         }
       });
 
@@ -141,7 +143,7 @@ describe('createMutationPromptViaBus', () => {
       const mutation = createTestMutation({ reason: null });
 
       // Capture published events
-      const publishedEvents: Array<any> = [];
+      const publishedEvents: Array<Extract<AgentEvent, { type: 'mutation:request' }>> = [];
       bus.subscribe(event => {
         if (event.type === 'mutation:request') {
           publishedEvents.push(event);
@@ -154,12 +156,13 @@ describe('createMutationPromptViaBus', () => {
       await new Promise(resolve => setTimeout(resolve, 10));
 
       const request = publishedEvents[0];
-      expect((request as any).reason).toBeNull();
+      expect(request).toBeDefined();
+      expect(request!.reason).toBeNull();
 
       // Publish approval
       bus.publish({
         type: 'mutation:response',
-        mutationId: (request as any).mutationId,
+        mutationId: request!.mutationId,
         approved: true,
       });
 

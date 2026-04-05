@@ -6,3 +6,24 @@ export type { Scheduler, ScheduledTask } from './scheduler.ts';
 export type { ToolProvider } from './tool-provider.ts';
 export type { BlueskyPostMetadata, BlueskyDataSource } from './bluesky/index.ts';
 export { createBlueskySource } from './bluesky/index.ts';
+export type {
+  GameState,
+  GameStateManager,
+  SpaceMoltEvent,
+  SpaceMoltToolProviderOptions,
+  SpaceMoltSourceOptions,
+  SpaceMoltLifecycle,
+  SpaceMoltLifecycleOptions,
+  EventTier,
+} from './spacemolt/index.ts';
+export {
+  createSpaceMoltSource,
+  createSpaceMoltToolProvider,
+  createGameStateManager,
+  createSpaceMoltLifecycle,
+  seedSpaceMoltCapabilities,
+  cycleSpaceMoltTools,
+  filterToolsByState,
+} from './spacemolt/index.ts';
+// Exported for future DataSourceRegistry highPriorityFilter integration
+export {isHighPriority} from './spacemolt/index.ts';

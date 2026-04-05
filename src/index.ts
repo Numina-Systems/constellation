@@ -23,6 +23,15 @@ import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
+import {
+  createSpaceMoltSource,
+  createSpaceMoltToolProvider,
+  createGameStateManager,
+  createSpaceMoltLifecycle,
+  seedSpaceMoltCapabilities,
+  cycleSpaceMoltTools,
+  readCredentials,
+} from '@/extensions/spacemolt';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
@@ -62,6 +71,7 @@ import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
+import type { SpaceMoltLifecycle } from '@/extensions/spacemolt';
 import type { ExecutionContext } from '@/runtime/types';
 import type { EventQueue } from '@/extensions/bluesky';
 import type { PersistenceProvider } from '@/persistence/types';
@@ -71,6 +81,7 @@ import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
 import type { ContextProvider } from '@/agent/types';
+import type { ToolDefinition } from '@/tool/types';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 
@@ -750,6 +761,75 @@ async function main(): Promise<void> {
     contextProviders.push(activityContextProvider);
   }
 
+  // --- SpaceMolt initialization (optional, before agent creation for beforeTurn callback) ---
+  let spacemoltLifecycle: SpaceMoltLifecycle | null = null;
+  let spacemoltToolCache: Array<ToolDefinition> = [];
+  let spacemoltSource: ReturnType<typeof createSpaceMoltSource> | null = null;
+  let gameStateManager: ReturnType<typeof createGameStateManager> | null = null;
+  let spacemoltToolProvider: ReturnType<typeof createSpaceMoltToolProvider> | null = null;
+
+  if (config.spacemolt?.enabled) {
+    const registrationCode = config.spacemolt.registration_code;
+
+    if (!registrationCode) {
+      console.error("SpaceMolt enabled but registration_code missing");
+    } else {
+      try {
+        // Seed capabilities
+        gameStateManager = createGameStateManager();
+        await seedSpaceMoltCapabilities(memoryStore, embedding);
+
+        // Create source with deferred credential reading
+        spacemoltSource = createSpaceMoltSource({
+          wsUrl: config.spacemolt.ws_url,
+          getCredentials: () => readCredentials(memoryStore),
+          gameStateManager,
+          eventQueueCapacity: config.spacemolt.event_queue_capacity,
+        });
+
+        spacemoltToolProvider = createSpaceMoltToolProvider({
+          mcpUrl: config.spacemolt.mcp_url,
+          registrationCode,
+          usernameHint: config.spacemolt.username,
+          empireHint: config.spacemolt.empire,
+          store: memoryStore,
+          embedding,
+        });
+
+        // Create lifecycle coordinator
+        spacemoltLifecycle = createSpaceMoltLifecycle({
+          source: spacemoltSource,
+          toolProvider: spacemoltToolProvider,
+        });
+
+        // Start if active (or no activity manager)
+        try {
+          await spacemoltLifecycle.start();
+          spacemoltToolCache = await spacemoltToolProvider.discover();
+          console.log(`SpaceMolt connected: ${spacemoltToolCache.length} tools discovered`);
+        } catch (error) {
+          console.error("SpaceMolt connection failed:", error);
+          spacemoltLifecycle = null;
+        }
+      } catch (error) {
+        console.error("SpaceMolt initialization failed:", error);
+        spacemoltLifecycle = null;
+      }
+    }
+  }
+
+  const spacemoltBeforeTurn = spacemoltLifecycle ? () => {
+    if (!spacemoltLifecycle.isRunning()) return;
+    if (!gameStateManager || !spacemoltToolProvider) return;
+    const gameState = gameStateManager.getGameState();
+    cycleSpaceMoltTools({
+      registry,
+      allTools: spacemoltToolCache,
+      gameState,
+      toolProvider: spacemoltToolProvider,
+    });
+  } : undefined;
+
   // Step 1: Build DataSource registrations array (BEFORE agent creation)
   const registrations: Array<DataSourceRegistration> = [];
 
@@ -766,6 +846,12 @@ async function main(): Promise<void> {
             return authorDid !== undefined && highPriorityDids.has(authorDid);
           }
         : undefined,
+    });
+  }
+
+  if (spacemoltLifecycle && spacemoltSource) {
+    registrations.push({
+      source: spacemoltSource,
     });
   }
 
@@ -800,6 +886,7 @@ async function main(): Promise<void> {
     contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
+    beforeTurn: spacemoltBeforeTurn,
   }, mainConversationId);
 
   // Step 3: Create shared external event queue and processing loop (for all DataSource events)
@@ -976,7 +1063,34 @@ async function main(): Promise<void> {
         if (task.name === 'transition-to-sleep') {
           await am.transitionTo('sleeping');
           console.log('[activity] transitioned to sleeping mode');
+
+          // On sleep: stop SpaceMolt if running
+          if (spacemoltLifecycle && spacemoltLifecycle.isRunning()) {
+            try {
+              await spacemoltLifecycle.stop();
+              // Unregister all spacemolt tools
+              for (const def of registry.getDefinitions()) {
+                if (def.name.startsWith('spacemolt:')) {
+                  registry.unregister(def.name);
+                }
+              }
+              console.log('SpaceMolt disconnected for sleep');
+            } catch (error) {
+              console.error('SpaceMolt sleep disconnection failed:', error);
+            }
+          }
         } else if (task.name === 'transition-to-wake') {
+          // On wake: start SpaceMolt if not running
+          if (spacemoltLifecycle && !spacemoltLifecycle.isRunning()) {
+            try {
+              await spacemoltLifecycle.start();
+              spacemoltToolCache = await spacemoltToolProvider?.discover() ?? [];
+              console.log('SpaceMolt reconnected on wake');
+            } catch (error) {
+              console.error('SpaceMolt wake connection failed:', error);
+            }
+          }
+
           await wakeHandler();
         }
       })().catch((error) => {

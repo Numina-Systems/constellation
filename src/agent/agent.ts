@@ -141,6 +141,11 @@ export function createAgent(
 
       const messages = await buildMessages(history, deps.memory);
 
+      // Call pre-turn hook (e.g., tool cycling for SpaceMolt)
+      if (deps.beforeTurn) {
+        deps.beforeTurn();
+      }
+
       // Call the model with current context
       const modelRequest = {
         messages,

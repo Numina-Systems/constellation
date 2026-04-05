@@ -849,3 +849,170 @@ describe("OpenRouterConfigSchema and ModelConfigSchema with openrouter provider"
     });
   });
 });
+
+describe("SpaceMoltConfigSchema", () => {
+  describe("spacemolt-auto-register.AC1.1: Parse spacemolt config with registration_code", () => {
+    it("should parse enabled spacemolt config with registration_code", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: true,
+          registration_code: "code-abc123",
+          mcp_url: "https://game.spacemolt.com/mcp",
+          ws_url: "wss://game.spacemolt.com/ws",
+          event_queue_capacity: 100,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.spacemolt).toBeDefined();
+      expect(result.spacemolt!.enabled).toBe(true);
+      expect(result.spacemolt!.registration_code).toBe("code-abc123");
+      expect(result.spacemolt!.mcp_url).toBe("https://game.spacemolt.com/mcp");
+      expect(result.spacemolt!.ws_url).toBe("wss://game.spacemolt.com/ws");
+      expect(result.spacemolt!.event_queue_capacity).toBe(100);
+    });
+  });
+
+  describe("spacemolt-auto-register.AC1.3: Reject enabled without registration_code", () => {
+    it("should reject enabled spacemolt without registration_code", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: true,
+          mcp_url: "https://game.spacemolt.com/mcp",
+          ws_url: "wss://game.spacemolt.com/ws",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+  });
+
+  describe("spacemolt-auto-register.AC1.4: Optional username and empire hints", () => {
+    it("should parse optional username and empire hints", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: true,
+          registration_code: "code-abc123",
+          username: "agent-name",
+          empire: "galactic-empire",
+          mcp_url: "https://game.spacemolt.com/mcp",
+          ws_url: "wss://game.spacemolt.com/ws",
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.spacemolt).toBeDefined();
+      expect(result.spacemolt!.enabled).toBe(true);
+      expect(result.spacemolt!.registration_code).toBe("code-abc123");
+      expect(result.spacemolt!.username).toBe("agent-name");
+      expect(result.spacemolt!.empire).toBe("galactic-empire");
+    });
+  });
+
+  describe("Additional SpaceMolt tests", () => {
+    it("should parse disabled spacemolt without registration_code", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: false,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.spacemolt).toBeDefined();
+      expect(result.spacemolt!.enabled).toBe(false);
+      expect(result.spacemolt!.registration_code).toBeUndefined();
+    });
+
+    it("should reject invalid mcp_url", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: true,
+          registration_code: "code-abc123",
+          mcp_url: "not-a-url",
+          ws_url: "wss://game.spacemolt.com/ws",
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should apply default values for mcp_url and ws_url", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: true,
+          registration_code: "code-abc123",
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.spacemolt!.mcp_url).toBe("https://game.spacemolt.com/mcp");
+      expect(result.spacemolt!.ws_url).toBe("wss://game.spacemolt.com/ws");
+    });
+
+    it("should apply default value for event_queue_capacity", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        spacemolt: {
+          enabled: true,
+          registration_code: "code-abc123",
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.spacemolt!.event_queue_capacity).toBe(50);
+    });
+
+    it("should allow spacemolt section to be entirely absent", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.spacemolt).toBeUndefined();
+    });
+  });
+});

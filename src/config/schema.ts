@@ -189,6 +189,28 @@ const ActivityConfigSchema = z
     }
   });
 
+const SpaceMoltConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    registration_code: z.string().optional(),
+    username: z.string().optional(),
+    empire: z.string().optional(),
+    mcp_url: z.string().url().default("https://game.spacemolt.com/mcp"),
+    ws_url: z.string().url().default("wss://game.spacemolt.com/ws"),
+    event_queue_capacity: z.number().int().positive().default(50),
+  })
+  .superRefine((data, ctx) => {
+    if (data.enabled) {
+      if (!data.registration_code) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "registration_code is required when spacemolt is enabled",
+          path: ["registration_code"],
+        });
+      }
+    }
+  });
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -201,6 +223,7 @@ const AppConfigSchema = z.object({
   skills: SkillConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
   activity: ActivityConfigSchema.optional(),
+  spacemolt: SpaceMoltConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -216,5 +239,6 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
+export type SpaceMoltConfig = z.infer<typeof SpaceMoltConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, SpaceMoltConfigSchema };

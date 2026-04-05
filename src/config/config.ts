@@ -65,8 +65,14 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["email"] = emailObj;
   }
 
+  if (parsed["spacemolt"] && process.env["SPACEMOLT_REGISTRATION_CODE"]) {
+    const spacemoltObj = parsed["spacemolt"] as Record<string, unknown>;
+    spacemoltObj["registration_code"] = process.env["SPACEMOLT_REGISTRATION_CODE"];
+    envOverrides["spacemolt"] = spacemoltObj;
+  }
+
   const merged = { ...parsed, ...envOverrides };
   return AppConfigSchema.parse(merged);
 }
 
-export type { AppConfig, AgentConfig, ModelConfig, OpenRouterConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig, EmailConfig, ActivityConfig } from "./schema.ts";
+export type { AppConfig, AgentConfig, ModelConfig, OpenRouterConfig, EmbeddingConfig, DatabaseConfig, RuntimeConfig, BlueskyConfig, SummarizationConfig, WebConfig, EmailConfig, ActivityConfig, SpaceMoltConfig } from "./schema.ts";

@@ -61,6 +61,7 @@ export type AgentDependencies = {
   contextProviders?: ReadonlyArray<ContextProvider>;
   skills?: SkillRegistry;
   sourceInstructions?: ReadonlyMap<string, string>;
+  beforeTurn?: () => void;
 };
 
 export type Agent = {

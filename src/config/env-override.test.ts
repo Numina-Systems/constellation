@@ -137,3 +137,73 @@ url = "postgresql://localhost/test"
     expect(config.model.api_key).toBe("sk-or-config-key");
   });
 });
+
+describe("spacemolt-auto-register.AC1.2: SPACEMOLT_REGISTRATION_CODE env override", () => {
+  let configPath: string;
+  const originalEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    configPath = join(tmpdir(), `test-config-spacemolt-${Date.now()}.toml`);
+    originalEnv["SPACEMOLT_REGISTRATION_CODE"] = process.env["SPACEMOLT_REGISTRATION_CODE"];
+  });
+
+  afterEach(() => {
+    if (originalEnv["SPACEMOLT_REGISTRATION_CODE"] === undefined) {
+      delete process.env["SPACEMOLT_REGISTRATION_CODE"];
+    } else {
+      process.env["SPACEMOLT_REGISTRATION_CODE"] = originalEnv["SPACEMOLT_REGISTRATION_CODE"];
+    }
+    try {
+      rmSync(configPath);
+    } catch {
+      // ignore
+    }
+  });
+
+  it("should use SPACEMOLT_REGISTRATION_CODE env var to override config registration_code", () => {
+    const tomlContent = `
+[model]
+provider = "anthropic"
+name = "claude-3-sonnet-20240229"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+
+[database]
+url = "postgresql://localhost/test"
+
+[spacemolt]
+enabled = true
+registration_code = "config-reg-code"
+`;
+    writeFileSync(configPath, tomlContent);
+    process.env["SPACEMOLT_REGISTRATION_CODE"] = "env-reg-code";
+
+    const config = loadConfig(configPath);
+
+    expect(config.spacemolt?.enabled).toBe(true);
+    expect(config.spacemolt?.registration_code).toBe("env-reg-code");
+  });
+
+  it("should not apply env overrides if spacemolt section is absent in config", () => {
+    const tomlContent = `
+[model]
+provider = "anthropic"
+name = "claude-3-sonnet-20240229"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+
+[database]
+url = "postgresql://localhost/test"
+`;
+    writeFileSync(configPath, tomlContent);
+    process.env["SPACEMOLT_REGISTRATION_CODE"] = "env-reg-code";
+
+    const config = loadConfig(configPath);
+
+    expect(config.spacemolt).toBeUndefined();
+  });
+});

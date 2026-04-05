@@ -1,0 +1,718 @@
+import {describe, test, expect, beforeEach, afterEach} from 'bun:test';
+import {createSpaceMoltSource, type Credentials} from './source';
+import {createGameStateManager} from './state';
+import type {SpaceMoltEvent} from './types';
+
+const mockGetCredentials = async (): Promise<Credentials> => ({
+  username: 'testuser',
+  password: 'testpass',
+});
+
+// Mock WebSocket for testing
+class MockWebSocket {
+  readonly url: string;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: Event) => void) | null = null;
+
+  private sentMessages: Array<string> = [];
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  send(data: string): void {
+    this.sentMessages.push(data);
+  }
+
+  close(): void {
+    if (this.onclose) {
+      this.onclose(new Event('close'));
+    }
+  }
+
+  getSentMessages(): Array<string> {
+    return [...this.sentMessages];
+  }
+
+  // Helper to simulate server messages synchronously
+  simulateMessage(event: SpaceMoltEvent): void {
+    if (this.onmessage) {
+      this.onmessage(
+        new MessageEvent('message', {
+          data: JSON.stringify(event),
+        }),
+      );
+    }
+  }
+
+  // Trigger the onopen handler
+  triggerOpen(): void {
+    if (this.onopen) {
+      this.onopen(new Event('open'));
+    }
+  }
+}
+
+// WebSocket global mock requires any cast since TypeScript doesn't recognize the mutable global
+let originalWebSocket: any;
+
+describe('createSpaceMoltSource', () => {
+  beforeEach(() => {
+    // WebSocket global mock requires any cast
+    originalWebSocket = (global as any).WebSocket;
+  });
+
+  afterEach(() => {
+    // WebSocket global mock requires any cast
+    (global as any).WebSocket = originalWebSocket;
+  });
+
+  test('connects and authenticates via login message', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    // Start connection
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {version: '1.0'},
+    });
+
+    // Poll for login message to be sent (condition-based instead of fixed timeout)
+    const startTime = Date.now();
+    while (createdSocket!.getSentMessages().length === 0 && Date.now() - startTime < 5000) {
+      await new Promise(r => setTimeout(r, 10));
+    }
+
+    // Verify login was sent
+    const sent = createdSocket!.getSentMessages();
+    expect(sent.length).toBeGreaterThan(0);
+
+    const loginMsg = sent.find(msg => msg.includes('login'));
+    expect(loginMsg).toBeDefined();
+    if (loginMsg) {
+      const parsed = JSON.parse(loginMsg);
+      expect(parsed.type).toBe('login');
+      expect(parsed.payload.username).toBe('testuser');
+      expect(parsed.payload.password).toBe('testpass');
+    }
+
+    // Send logged_in response
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {
+        docked_at_base: true,
+      },
+    });
+
+    // Wait for connection to complete
+    await connectPromise;
+
+    // Verify connection succeeded
+    expect(source.name).toBe('spacemolt');
+    expect(gameStateManager.getGameState()).toBe('DOCKED');
+  });
+
+  test('classifies combat_update as high priority and calls messageHandler', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const messages: Array<{content: string}> = [];
+    source.onMessage(msg => {
+      messages.push({content: msg.content});
+    });
+
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Send combat_update event
+    createdSocket!.simulateMessage({
+      type: 'combat_update',
+      payload: {
+        attacker: 'Alice',
+        target: 'Bob',
+        damage: 50,
+        damage_type: 'kinetic',
+      },
+    });
+
+    await connectPromise;
+
+    expect(messages.length).toBe(1);
+    expect(messages[0]?.content).toContain('Combat:');
+    expect(messages[0]?.content).toContain('Alice');
+    expect(messages[0]?.content).toContain('Bob');
+  });
+
+  test('classifies chat_message as normal priority and calls messageHandler', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const messages: Array<{content: string}> = [];
+    source.onMessage(msg => {
+      messages.push({content: msg.content});
+    });
+
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Send chat_message event
+    createdSocket!.simulateMessage({
+      type: 'chat_message',
+      payload: {
+        channel: 'general',
+        sender: 'Alice',
+        content: 'Hello everyone',
+      },
+    });
+
+    await connectPromise;
+
+    expect(messages.length).toBe(1);
+    expect(messages[0]?.content).toContain('Chat');
+    expect(messages[0]?.content).toContain('Alice');
+  });
+
+  test('does not call messageHandler for internal events like tick', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const messages: Array<string> = [];
+    source.onMessage(msg => {
+      messages.push(msg.content);
+    });
+
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Send tick event (internal)
+    createdSocket!.simulateMessage({
+      type: 'tick',
+      payload: {tick_number: 123},
+    });
+
+    await connectPromise;
+
+    // Tick is internal, so messageHandler should not be called
+    expect(messages.length).toBe(0);
+  });
+
+  test('updates game state manager for all events', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Send combat_update (which transitions to COMBAT state)
+    createdSocket!.simulateMessage({
+      type: 'combat_update',
+      payload: {
+        attacker: 'Alice',
+        target: 'Bob',
+        damage: 50,
+        damage_type: 'kinetic',
+      },
+    });
+
+    await connectPromise;
+
+    // Game state should be updated to COMBAT
+    expect(gameStateManager.getGameState()).toBe('COMBAT');
+  });
+
+  test('initializes game state to DOCKED when docked_at_base is true', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    expect(gameStateManager.getGameState()).toBe('DOCKED');
+  });
+
+  test('initializes game state to UNDOCKED when docked_at_base is false', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('DOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    // Simulate server responses synchronously
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: false},
+    });
+
+    await connectPromise;
+
+    expect(gameStateManager.getGameState()).toBe('UNDOCKED');
+  });
+
+  test('AC5.2 + AC5.4: disconnect() sets shouldReconnect to false', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    createdSocket!.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Disconnect (explicitly sets shouldReconnect to false)
+    await source.disconnect();
+
+    // Track if WebSocket constructor is called again (reconnection attempt)
+    let connectionAttempts = 0;
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        connectionAttempts++;
+        super(url);
+      }
+    };
+
+    // Trigger close event - should NOT attempt reconnection
+    createdSocket!.close();
+
+    // Wait a bit for any async reconnection to fail/succeed
+    await new Promise(r => setTimeout(r, 50));
+
+    // No new connection should have been attempted
+    expect(connectionAttempts).toBe(0);
+  });
+
+  test('AC5.3: WebSocket closes unexpectedly during wake and reconnects', async () => {
+    let socketInstances: MockWebSocket[] = [];
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socketInstances.push(this);
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    const firstSocket = socketInstances[0]!;
+    firstSocket.triggerOpen();
+    firstSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    firstSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Now simulate unexpected close (triggering reconnection)
+    firstSocket.close();
+
+    // Wait for reconnection attempt with condition-based polling
+    const maxWaitMs = 5000;
+    const pollIntervalMs = 50;
+    const startTime = Date.now();
+    while (socketInstances.length <= 1 && Date.now() - startTime < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+
+    // A new socket should have been created (reconnection attempt)
+    expect(socketInstances.length).toBeGreaterThan(1);
+  });
+
+  test('handler persists through reconnection after unexpected close', async () => {
+    let socketInstances: MockWebSocket[] = [];
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socketInstances.push(this);
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: mockGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    // Register the handler once before initial connect
+    const messages: Array<{content: string}> = [];
+    source.onMessage(msg => {
+      messages.push({content: msg.content});
+    });
+
+    const connectPromise = source.connect();
+
+    const firstSocket = socketInstances[0]!;
+    firstSocket.triggerOpen();
+    firstSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    firstSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Send a message before close to verify handler works
+    firstSocket.simulateMessage({
+      type: 'chat_message',
+      payload: {
+        channel: 'general',
+        sender: 'Alice',
+        content: 'Hello before close',
+      },
+    });
+
+    expect(messages).toHaveLength(1);
+
+    // Trigger unexpected close which causes reconnection
+    firstSocket.close();
+
+    // Wait for reconnection to complete
+    const maxWaitMs = 5000;
+    const pollIntervalMs = 50;
+    const startTime = Date.now();
+    while (socketInstances.length <= 1 && Date.now() - startTime < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+
+    expect(socketInstances.length).toBeGreaterThan(1);
+
+    // Simulate successful authentication on reconnected socket
+    const secondSocket = socketInstances[1]!;
+    secondSocket.triggerOpen();
+    secondSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    secondSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Allow connection to settle
+    await new Promise(r => setTimeout(r, 0));
+
+    // Send a message AFTER reconnection - this should work because handler persists
+    secondSocket.simulateMessage({
+      type: 'chat_message',
+      payload: {
+        channel: 'general',
+        sender: 'Bob',
+        content: 'Hello after reconnect',
+      },
+    });
+
+    // Should have received both messages (before and after reconnection)
+    expect(messages.length).toBe(2);
+    expect(messages[0]?.content).toContain('Alice');
+    expect(messages[1]?.content).toContain('Bob');
+  });
+
+  test('spacemolt-auto-register.AC4.2: throws when getCredentials returns null', async () => {
+    let createdSocket: MockWebSocket | null = null;
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        createdSocket = this;
+      }
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: async () => null,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+    createdSocket!.triggerOpen();
+    createdSocket!.simulateMessage({ type: 'welcome', payload: {} });
+
+    await expect(connectPromise).rejects.toThrow('credentials not available');
+  });
+
+  test('spacemolt-auto-register.AC4.3: getCredentials is called on reconnection', async () => {
+    let socketInstances: MockWebSocket[] = [];
+
+    (global as any).WebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socketInstances.push(this);
+      }
+    };
+
+    let getCredentialsCalls = 0;
+    const trackingGetCredentials = async () => {
+      getCredentialsCalls++;
+      return { username: 'testuser', password: 'testpass' };
+    };
+
+    const gameStateManager = createGameStateManager('UNDOCKED');
+    const source = createSpaceMoltSource({
+      wsUrl: 'ws://localhost:8080/game',
+      getCredentials: trackingGetCredentials,
+      gameStateManager,
+      eventQueueCapacity: 100,
+    });
+
+    const connectPromise = source.connect();
+
+    const firstSocket = socketInstances[0]!;
+    firstSocket.triggerOpen();
+    firstSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    firstSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    await connectPromise;
+
+    // Verify initial getCredentials call
+    expect(getCredentialsCalls).toBe(1);
+
+    // Trigger unexpected close which causes reconnection
+    firstSocket.close();
+
+    // Wait for reconnection to complete
+    const maxWaitMs = 5000;
+    const pollIntervalMs = 50;
+    const startTime = Date.now();
+    while (socketInstances.length <= 1 && Date.now() - startTime < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+
+    expect(socketInstances.length).toBeGreaterThan(1);
+
+    // Simulate successful authentication on reconnected socket
+    const secondSocket = socketInstances[1]!;
+    secondSocket.triggerOpen();
+    secondSocket.simulateMessage({
+      type: 'welcome',
+      payload: {},
+    });
+
+    secondSocket.simulateMessage({
+      type: 'logged_in',
+      payload: {docked_at_base: true},
+    });
+
+    // Flush microtasks to allow connection to settle
+    await new Promise(r => setTimeout(r, 0));
+
+    // Verify getCredentials was called again on reconnection
+    expect(getCredentialsCalls).toBeGreaterThanOrEqual(2);
+  });
+});

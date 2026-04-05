@@ -414,6 +414,20 @@ describe("createOpenRouterAdapter", () => {
           });
         }
 
+        if (responseType === "no_choices") {
+          responseBody = {
+            id: "msg-no-choices",
+            object: "chat.completion",
+            created: 1678886400,
+            model: "gpt-4",
+            usage: {
+              prompt_tokens: 10,
+              completion_tokens: 0,
+              total_tokens: 10,
+            },
+          };
+        }
+
         return new Response(JSON.stringify(responseBody), {
           status: 200,
           headers: responseHeaders,
@@ -1020,6 +1034,29 @@ describe("createOpenRouterAdapter", () => {
       expect(syncData!.limit).toBe(1000);
       expect(syncData!.remaining).toBe(999);
       expect(syncData!.resetAt).toBe(1678886400000);
+    });
+  });
+
+  describe("malformed response handling", () => {
+    it("should throw descriptive error when response has no choices property", async () => {
+      nextResponseType = "no_choices";
+
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl + "/v1",
+      };
+
+      const adapter = createOpenRouterAdapter(config);
+
+      await expect(
+        adapter.complete({
+          model: "gpt-4",
+          max_tokens: 100,
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      ).rejects.toThrow("No choices in response");
     });
   });
 });

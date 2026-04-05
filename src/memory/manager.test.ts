@@ -596,4 +596,49 @@ describe('MemoryManager', () => {
       expect(blocks[0]?.tier).toBe('core');
     });
   });
+
+  describe('deleteBlock logs event before deletion', () => {
+    it('deleteBlock does not throw FK violation', async () => {
+      const manager = createMemoryManager(store, mockEmbedding, TEST_OWNER);
+
+      // Create a block via manager (which also logs a create event)
+      const result = await manager.write('Block To Delete', 'Some content');
+      expect(result.applied).toBe(true);
+
+      if (result.applied) {
+        const blockId = result.block.id;
+
+        // This should NOT throw a FK violation
+        await manager.deleteBlock(blockId);
+
+        // Block should be gone
+        const blocks = await manager.list();
+        const found = blocks.find((b) => b.id === blockId);
+        expect(found).toBeUndefined();
+      }
+    });
+
+    it('deleteBlock logs a delete event that persists with null block_id', async () => {
+      const manager = createMemoryManager(store, mockEmbedding, TEST_OWNER);
+
+      // Create a block
+      const result = await manager.write('Audited Delete', 'Content');
+      expect(result.applied).toBe(true);
+
+      if (result.applied) {
+        const blockId = result.block.id;
+
+        await manager.deleteBlock(blockId);
+
+        // The delete event should still exist in memory_events with block_id = NULL
+        const rows = await persistence.query<{ id: string; block_id: string | null; event_type: string }>(
+          "SELECT id, block_id, event_type FROM memory_events WHERE event_type = 'delete' AND old_content IS NULL AND new_content IS NULL ORDER BY created_at DESC LIMIT 1",
+          [],
+        );
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.block_id).toBeNull();
+      }
+    });
+  });
 });

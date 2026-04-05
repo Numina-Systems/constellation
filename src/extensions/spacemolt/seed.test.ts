@@ -67,6 +67,9 @@ describe("seedSpaceMoltCapabilities", () => {
     expect(createdBlocks.length).toBe(1);
 
     const block = createdBlocks[0];
+    if (!block) {
+      throw new Error("Expected block to be created");
+    }
     expect(block["label"]).toBe("spacemolt:capabilities");
     expect(block["tier"]).toBe("working");
     expect(block["pinned"]).toBe(true);
@@ -133,7 +136,11 @@ describe("seedSpaceMoltCapabilities", () => {
     await seedSpaceMoltCapabilities(store, embedding);
 
     expect(createdBlocks.length).toBe(1);
-    const content = createdBlocks[0]["content"] as string;
+    const block = createdBlocks[0];
+    if (!block) {
+      throw new Error("Expected block to be created");
+    }
+    const content = block["content"] as string;
 
     // Verify key strategy words are present
     expect(content.toLowerCase()).toContain("predict");

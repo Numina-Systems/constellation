@@ -138,26 +138,20 @@ url = "postgresql://localhost/test"
   });
 });
 
-describe("spacemolt-integration.AC1.2: SPACEMOLT_PASSWORD env override", () => {
+describe("spacemolt-auto-register.AC1.2: SPACEMOLT_REGISTRATION_CODE env override", () => {
   let configPath: string;
   const originalEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     configPath = join(tmpdir(), `test-config-spacemolt-${Date.now()}.toml`);
-    originalEnv["SPACEMOLT_PASSWORD"] = process.env["SPACEMOLT_PASSWORD"];
-    originalEnv["SPACEMOLT_USERNAME"] = process.env["SPACEMOLT_USERNAME"];
+    originalEnv["SPACEMOLT_REGISTRATION_CODE"] = process.env["SPACEMOLT_REGISTRATION_CODE"];
   });
 
   afterEach(() => {
-    if (originalEnv["SPACEMOLT_PASSWORD"] === undefined) {
-      delete process.env["SPACEMOLT_PASSWORD"];
+    if (originalEnv["SPACEMOLT_REGISTRATION_CODE"] === undefined) {
+      delete process.env["SPACEMOLT_REGISTRATION_CODE"];
     } else {
-      process.env["SPACEMOLT_PASSWORD"] = originalEnv["SPACEMOLT_PASSWORD"];
-    }
-    if (originalEnv["SPACEMOLT_USERNAME"] === undefined) {
-      delete process.env["SPACEMOLT_USERNAME"];
-    } else {
-      process.env["SPACEMOLT_USERNAME"] = originalEnv["SPACEMOLT_USERNAME"];
+      process.env["SPACEMOLT_REGISTRATION_CODE"] = originalEnv["SPACEMOLT_REGISTRATION_CODE"];
     }
     try {
       rmSync(configPath);
@@ -166,7 +160,7 @@ describe("spacemolt-integration.AC1.2: SPACEMOLT_PASSWORD env override", () => {
     }
   });
 
-  it("should use SPACEMOLT_PASSWORD env var to override config password", () => {
+  it("should use SPACEMOLT_REGISTRATION_CODE env var to override config registration_code", () => {
     const tomlContent = `
 [model]
 provider = "anthropic"
@@ -181,72 +175,15 @@ url = "postgresql://localhost/test"
 
 [spacemolt]
 enabled = true
-username = "agent-name"
-password = "config-password"
+registration_code = "config-reg-code"
 `;
     writeFileSync(configPath, tomlContent);
-    process.env["SPACEMOLT_PASSWORD"] = "env-password";
+    process.env["SPACEMOLT_REGISTRATION_CODE"] = "env-reg-code";
 
     const config = loadConfig(configPath);
 
     expect(config.spacemolt?.enabled).toBe(true);
-    expect(config.spacemolt?.password).toBe("env-password");
-  });
-
-  it("should use SPACEMOLT_USERNAME env var to override config username", () => {
-    const tomlContent = `
-[model]
-provider = "anthropic"
-name = "claude-3-sonnet-20240229"
-
-[embedding]
-provider = "openai"
-model = "text-embedding-3-small"
-
-[database]
-url = "postgresql://localhost/test"
-
-[spacemolt]
-enabled = true
-username = "config-username"
-password = "agent-password"
-`;
-    writeFileSync(configPath, tomlContent);
-    process.env["SPACEMOLT_USERNAME"] = "env-username";
-
-    const config = loadConfig(configPath);
-
-    expect(config.spacemolt?.enabled).toBe(true);
-    expect(config.spacemolt?.username).toBe("env-username");
-  });
-
-  it("should override both username and password when both env vars are set", () => {
-    const tomlContent = `
-[model]
-provider = "anthropic"
-name = "claude-3-sonnet-20240229"
-
-[embedding]
-provider = "openai"
-model = "text-embedding-3-small"
-
-[database]
-url = "postgresql://localhost/test"
-
-[spacemolt]
-enabled = true
-username = "config-username"
-password = "config-password"
-`;
-    writeFileSync(configPath, tomlContent);
-    process.env["SPACEMOLT_USERNAME"] = "env-username";
-    process.env["SPACEMOLT_PASSWORD"] = "env-password";
-
-    const config = loadConfig(configPath);
-
-    expect(config.spacemolt?.enabled).toBe(true);
-    expect(config.spacemolt?.username).toBe("env-username");
-    expect(config.spacemolt?.password).toBe("env-password");
+    expect(config.spacemolt?.registration_code).toBe("env-reg-code");
   });
 
   it("should not apply env overrides if spacemolt section is absent in config", () => {
@@ -263,8 +200,7 @@ model = "text-embedding-3-small"
 url = "postgresql://localhost/test"
 `;
     writeFileSync(configPath, tomlContent);
-    process.env["SPACEMOLT_USERNAME"] = "env-username";
-    process.env["SPACEMOLT_PASSWORD"] = "env-password";
+    process.env["SPACEMOLT_REGISTRATION_CODE"] = "env-reg-code";
 
     const config = loadConfig(configPath);
 

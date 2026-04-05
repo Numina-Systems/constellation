@@ -21,7 +21,7 @@ type ToolCallGroupProps = {
 };
 
 export function ToolCallGroup({ bus, collapsed }: ToolCallGroupProps) {
-  // Filter for tool:start events
+  // Filter for tool:start events (note: tool:start doesn't have turnIndex in current schema)
   const startFilter = React.useCallback(
     (event: AgentEvent): event is Extract<AgentEvent, { type: 'tool:start' }> =>
       event.type === 'tool:start',
@@ -30,7 +30,7 @@ export function ToolCallGroup({ bus, collapsed }: ToolCallGroupProps) {
 
   const startEvents = useAgentEvents(bus, startFilter);
 
-  // Filter for tool:result events
+  // Filter for tool:result events (note: tool:result doesn't have turnIndex in current schema)
   const resultFilter = React.useCallback(
     (event: AgentEvent): event is Extract<AgentEvent, { type: 'tool:result' }> =>
       event.type === 'tool:result',

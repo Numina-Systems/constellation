@@ -20,6 +20,9 @@ type Message = {
   id: number;
   role: 'user' | 'assistant';
   content: string;
+  hadTools: boolean;
+  hadThinking: boolean;
+  turnIndex: number;
 };
 
 export function App({ agent, bus, modelName }: AppProps) {
@@ -51,10 +54,24 @@ export function App({ agent, bus, modelName }: AppProps) {
     []
   );
 
+  const toolStartFilter = React.useCallback(
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'tool:start' }> =>
+      event.type === 'tool:start',
+    []
+  );
+
+  const thinkingFilter = React.useCallback(
+    (event: AgentEvent): event is Extract<AgentEvent, { type: 'stream:thinking' }> =>
+      event.type === 'stream:thinking',
+    []
+  );
+
   // Subscribe to turn events
   const turnStartEvents = useAgentEvents(bus, turnStartFilter);
   const streamChunkEvents = useAgentEvents(bus, streamChunkFilter);
   const turnEndEvents = useAgentEvents(bus, turnEndFilter);
+  const toolStartEvents = useAgentEvents(bus, toolStartFilter);
+  const thinkingEvents = useAgentEvents(bus, thinkingFilter);
 
   // Handle turn:start events
   React.useEffect(() => {
@@ -80,20 +97,40 @@ export function App({ agent, bus, modelName }: AppProps) {
       // Capture the current turn text from the ref
       if (currentTurnTextRef.current.length > 0) {
         const messageId = messageIdCounterRef.current++;
+        // Check if this turn had tools or thinking events
+        const hadTools = toolStartEvents.length > 0;
+        const hadThinking = thinkingEvents.some((e) => e.turnIndex === turnIndex);
         setMessages((prev) => [
           ...prev,
-          { id: messageId, role: 'assistant', content: currentTurnTextRef.current },
+          {
+            id: messageId,
+            role: 'assistant',
+            content: currentTurnTextRef.current,
+            hadTools,
+            hadThinking,
+            turnIndex,
+          },
         ]);
       }
       currentTurnTextRef.current = '';
     }
     lastProcessedTurnEndRef.current = turnEndEvents.length - 1;
-  }, [turnEndEvents]);
+  }, [turnEndEvents, toolStartEvents, thinkingEvents, turnIndex]);
 
   const handleSubmit = (text: string) => {
     // Add user message to conversation with unique ID
     const messageId = messageIdCounterRef.current++;
-    setMessages((prev) => [...prev, { id: messageId, role: 'user', content: text }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: messageId,
+        role: 'user',
+        content: text,
+        hadTools: false,
+        hadThinking: false,
+        turnIndex: turnIndex,
+      },
+    ]);
     // Call agent to process the message (fire-and-forget)
     agent.processMessage(text).catch((error) => {
       console.error('Failed to process message:', error);

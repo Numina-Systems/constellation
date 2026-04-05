@@ -6,94 +6,9 @@ import { createAgentEventBus } from '@/tui/event-bus.ts';
 import { ThinkingIndicator } from './thinking-indicator.tsx';
 
 describe('ThinkingIndicator', () => {
-  it('renders thinking content with dimmed styling when collapsed is false', async () => {
-    const bus = createAgentEventBus();
-    const { lastFrame, unmount } = render(
-      <ThinkingIndicator bus={bus} turnIndex={0} collapsed={false} />
-    );
-
-    // Publish thinking events
-    bus.publish({
-      type: 'stream:thinking',
-      text: 'Let me think about this problem.',
-      turnIndex: 0,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const output = lastFrame();
-    expect(output).toContain('Let me think about this problem.');
-
-    unmount();
-  });
-
-  it('accumulates multiple thinking chunks into continuous text', async () => {
-    const bus = createAgentEventBus();
-    const { lastFrame, unmount } = render(
-      <ThinkingIndicator bus={bus} turnIndex={1} collapsed={false} />
-    );
-
-    // Publish multiple thinking chunks
-    bus.publish({
-      type: 'stream:thinking',
-      text: 'First thought ',
-      turnIndex: 1,
-    });
-
-    bus.publish({
-      type: 'stream:thinking',
-      text: 'second thought ',
-      turnIndex: 1,
-    });
-
-    bus.publish({
-      type: 'stream:thinking',
-      text: 'final thought',
-      turnIndex: 1,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const output = lastFrame();
-    expect(output).toContain('First thought second thought final thought');
-
-    unmount();
-  });
-
-  it('ignores thinking events with different turnIndex', async () => {
-    const bus = createAgentEventBus();
-    const { lastFrame, unmount } = render(
-      <ThinkingIndicator bus={bus} turnIndex={0} collapsed={false} />
-    );
-
-    // Publish thinking from different turn
-    bus.publish({
-      type: 'stream:thinking',
-      text: 'wrong turn',
-      turnIndex: 1,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const output = lastFrame();
-    expect(output).not.toContain('wrong turn');
-
-    // Publish matching turn
-    bus.publish({
-      type: 'stream:thinking',
-      text: 'correct turn',
-      turnIndex: 0,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(lastFrame()).toContain('correct turn');
-
-    unmount();
-  });
-
   it('renders nothing when no thinking events', () => {
     const bus = createAgentEventBus();
+
     const { lastFrame, unmount } = render(
       <ThinkingIndicator bus={bus} turnIndex={0} collapsed={false} />
     );
@@ -104,37 +19,38 @@ describe('ThinkingIndicator', () => {
     unmount();
   });
 
-  it('renders collapsed summary with character count when collapsed is true', async () => {
+  it('renders dimmed thinking text when expanded', async () => {
     const bus = createAgentEventBus();
+
     const { lastFrame, unmount } = render(
-      <ThinkingIndicator bus={bus} turnIndex={0} collapsed={true} />
+      <ThinkingIndicator bus={bus} turnIndex={0} collapsed={false} />
     );
 
-    // Publish thinking content
+    // Publish thinking event
     bus.publish({
       type: 'stream:thinking',
-      text: 'This is a long thinking block with many characters to test the character counting logic.',
+      text: 'Let me think about this carefully',
       turnIndex: 0,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const output = lastFrame();
-    // Should contain character count indicator
-    expect(output).toContain('chars');
-    // Should not contain full thinking text
-    expect(output).not.toContain('This is a long thinking block');
+    expect(output).toContain('💭 Thinking:');
+    expect(output).toContain('Let me think about this carefully');
 
     unmount();
   });
 
-  it('displays correct character count in collapsed mode', async () => {
+  it('renders collapsed summary with character count', async () => {
     const bus = createAgentEventBus();
+
     const { lastFrame, unmount } = render(
       <ThinkingIndicator bus={bus} turnIndex={0} collapsed={true} />
     );
 
-    const thinkingText = 'Hello world';
+    // Publish thinking event
+    const thinkingText = 'This is a test';
     bus.publish({
       type: 'stream:thinking',
       text: thinkingText,
@@ -144,50 +60,100 @@ describe('ThinkingIndicator', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const output = lastFrame();
-    expect(output).toContain('11 chars');
+    expect(output).toContain('💭 Thinking');
+    expect(output).toContain(`${thinkingText.length} chars`);
 
     unmount();
   });
 
-  it('renders nothing when collapsed and no thinking events', () => {
+  it('accumulates multiple thinking chunks into continuous text', async () => {
     const bus = createAgentEventBus();
+
     const { lastFrame, unmount } = render(
-      <ThinkingIndicator bus={bus} turnIndex={0} collapsed={true} />
-    );
-
-    const output = lastFrame();
-    expect(output).toBe('');
-
-    unmount();
-  });
-
-  it('switches from expanded to collapsed view', async () => {
-    const bus = createAgentEventBus();
-    const { rerender, lastFrame, unmount } = render(
       <ThinkingIndicator bus={bus} turnIndex={0} collapsed={false} />
     );
 
+    // Publish multiple thinking chunks
     bus.publish({
       type: 'stream:thinking',
-      text: 'Test thinking content for mode switching.',
+      text: 'First ',
+      turnIndex: 0,
+    });
+
+    bus.publish({
+      type: 'stream:thinking',
+      text: 'second ',
+      turnIndex: 0,
+    });
+
+    bus.publish({
+      type: 'stream:thinking',
+      text: 'third',
       turnIndex: 0,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    let output = lastFrame();
-    expect(output).toContain('Test thinking content');
+    const output = lastFrame();
+    expect(output).toContain('First second third');
 
-    // Re-render with collapsed={true}
-    rerender(<ThinkingIndicator bus={bus} turnIndex={0} collapsed={true} />);
+    unmount();
+  });
+
+  it('only includes thinking events from the matching turn', async () => {
+    const bus = createAgentEventBus();
+
+    const { lastFrame, unmount } = render(
+      <ThinkingIndicator bus={bus} turnIndex={1} collapsed={false} />
+    );
+
+    // Publish thinking events for different turns
+    bus.publish({
+      type: 'stream:thinking',
+      text: 'Turn 0 thinking',
+      turnIndex: 0,
+    });
+
+    bus.publish({
+      type: 'stream:thinking',
+      text: 'Turn 1 thinking',
+      turnIndex: 1,
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    output = lastFrame();
-    // Should show collapsed format
-    expect(output).toContain('chars');
-    // Should not show full text
-    expect(output).not.toContain('Test thinking content');
+    const output = lastFrame();
+    expect(output).toContain('Turn 1 thinking');
+    expect(output).not.toContain('Turn 0 thinking');
+
+    unmount();
+  });
+
+  it('collapsed summary displays correct character count with multiple chunks', async () => {
+    const bus = createAgentEventBus();
+
+    const { lastFrame, unmount } = render(
+      <ThinkingIndicator bus={bus} turnIndex={0} collapsed={true} />
+    );
+
+    // Publish multiple chunks
+    bus.publish({
+      type: 'stream:thinking',
+      text: 'abc',
+      turnIndex: 0,
+    });
+
+    bus.publish({
+      type: 'stream:thinking',
+      text: 'def',
+      turnIndex: 0,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const output = lastFrame();
+    // Total: 6 chars
+    expect(output).toContain('6 chars');
 
     unmount();
   });

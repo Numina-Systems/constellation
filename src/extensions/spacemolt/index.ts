@@ -10,3 +10,4 @@ export type {SpaceMoltSourceOptions} from './source.ts';
 export {createSpaceMoltLifecycle} from './lifecycle.ts';
 export type {SpaceMoltLifecycle, SpaceMoltLifecycleOptions} from './lifecycle.ts';
 export {seedSpaceMoltCapabilities} from './seed.ts';
+export {cycleSpaceMoltTools} from './tool-cycling.ts';

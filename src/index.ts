@@ -29,6 +29,7 @@ import {
   createGameStateManager,
   createSpaceMoltLifecycle,
   seedSpaceMoltCapabilities,
+  cycleSpaceMoltTools,
 } from '@/extensions/spacemolt';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
@@ -759,6 +760,60 @@ async function main(): Promise<void> {
     contextProviders.push(activityContextProvider);
   }
 
+  // --- SpaceMolt initialization (optional, before agent creation for beforeTurn callback) ---
+  let spacemoltLifecycle: SpaceMoltLifecycle | null = null;
+  let spacemoltToolCache: Array<ToolDefinition> = [];
+  let gameStateManager = createGameStateManager();
+  let spacemoltToolProvider: ReturnType<typeof createSpaceMoltToolProvider> | null = null;
+
+  if (config.spacemolt?.enabled) {
+    const spacemoltPassword = config.spacemolt.password;
+    const spacemoltUsername = config.spacemolt.username;
+
+    if (!spacemoltPassword || !spacemoltUsername) {
+      console.error("SpaceMolt enabled but username or password missing");
+    } else {
+      try {
+        // Seed capabilities
+        await seedSpaceMoltCapabilities(memoryStore, embedding);
+
+        // Create source and tool provider
+        const spacemoltSource = createSpaceMoltSource({
+          wsUrl: config.spacemolt.ws_url,
+          username: spacemoltUsername,
+          password: spacemoltPassword,
+          gameStateManager,
+          eventQueueCapacity: config.spacemolt.event_queue_capacity,
+        });
+
+        spacemoltToolProvider = createSpaceMoltToolProvider({
+          mcpUrl: config.spacemolt.mcp_url,
+          username: spacemoltUsername,
+          password: spacemoltPassword,
+        });
+
+        // Create lifecycle coordinator
+        spacemoltLifecycle = createSpaceMoltLifecycle({
+          source: spacemoltSource,
+          toolProvider: spacemoltToolProvider,
+        });
+
+        // Start if active (or no activity manager)
+        try {
+          await spacemoltLifecycle.start();
+          spacemoltToolCache = await spacemoltToolProvider.discover();
+          console.log(`SpaceMolt connected: ${spacemoltToolCache.length} tools discovered`);
+        } catch (error) {
+          console.error("SpaceMolt connection failed:", error);
+          spacemoltLifecycle = null;
+        }
+      } catch (error) {
+        console.error("SpaceMelt initialization failed:", error);
+        spacemoltLifecycle = null;
+      }
+    }
+  }
+
   const agent = createAgent({
     model,
     memory,
@@ -780,6 +835,15 @@ async function main(): Promise<void> {
     owner: AGENT_OWNER,
     contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
+    beforeTurn: spacemoltLifecycle?.isRunning() ? () => {
+      const gameState = gameStateManager.getGameState();
+      cycleSpaceMoltTools({
+        registry,
+        allTools: spacemoltToolCache,
+        gameState,
+        toolProvider: spacemoltToolProvider!,
+      });
+    } : undefined,
   }, mainConversationId);
 
   if (blueskyConnected && blueskySource) {
@@ -809,6 +873,15 @@ async function main(): Promise<void> {
         owner: AGENT_OWNER,
         contextProviders: blueskyContextProviders.length > 0 ? blueskyContextProviders : undefined,
         skills: skillRegistry,
+        beforeTurn: spacemoltLifecycle?.isRunning() ? () => {
+          const gameState = gameStateManager.getGameState();
+          cycleSpaceMoltTools({
+            registry,
+            allTools: spacemoltToolCache,
+            gameState,
+            toolProvider: spacemoltToolProvider!,
+          });
+        } : undefined,
       }, blueskyConversationId);
 
       // Set up event queue and processing loop
@@ -857,61 +930,6 @@ async function main(): Promise<void> {
       }
 
       console.log(`bluesky datasource connected (watching ${config.bluesky.watched_dids.length} DIDs)`);
-  }
-
-  // --- SpaceMolt initialization (optional) ---
-  let spacemoltLifecycle: SpaceMoltLifecycle | null = null;
-  let spacemoltToolCache: Array<ToolDefinition> = [];
-
-  if (config.spacemolt?.enabled) {
-    const spacemoltPassword = config.spacemolt.password;
-    const spacemoltUsername = config.spacemolt.username;
-
-    if (!spacemoltPassword || !spacemoltUsername) {
-      console.error("SpaceMolt enabled but username or password missing");
-    } else {
-      try {
-        // Seed capabilities
-        await seedSpaceMoltCapabilities(memoryStore, embedding);
-
-        // Create game state manager
-        const gameStateManager = createGameStateManager();
-
-        // Create source and tool provider
-        const spacemoltSource = createSpaceMoltSource({
-          wsUrl: config.spacemolt.ws_url,
-          username: spacemoltUsername,
-          password: spacemoltPassword,
-          gameStateManager,
-          eventQueueCapacity: config.spacemolt.event_queue_capacity,
-        });
-
-        const spacemoltToolProvider = createSpaceMoltToolProvider({
-          mcpUrl: config.spacemolt.mcp_url,
-          username: spacemoltUsername,
-          password: spacemoltPassword,
-        });
-
-        // Create lifecycle coordinator
-        spacemoltLifecycle = createSpaceMoltLifecycle({
-          source: spacemoltSource,
-          toolProvider: spacemoltToolProvider,
-        });
-
-        // Start if active (or no activity manager)
-        try {
-          await spacemoltLifecycle.start();
-          spacemoltToolCache = await spacemoltToolProvider.discover();
-          console.log(`SpaceMolt connected: ${spacemoltToolCache.length} tools discovered`);
-        } catch (error) {
-          console.error("SpaceMolt connection failed:", error);
-          spacemoltLifecycle = null;
-        }
-      } catch (error) {
-        console.error("SpaceMolt initialization failed:", error);
-        spacemoltLifecycle = null;
-      }
-    }
   }
 
   // Set up scheduler for periodic tasks

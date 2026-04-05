@@ -60,6 +60,7 @@ export type AgentDependencies = {
   owner?: string;
   contextProviders?: ReadonlyArray<ContextProvider>;
   skills?: SkillRegistry;
+  beforeTurn?: () => void;
 };
 
 export type Agent = {

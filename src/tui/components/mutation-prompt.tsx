@@ -77,12 +77,8 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
     }
   }, [currentRequest, feedbackText, bus]);
 
-  // Handle keyboard input when not in feedback mode
+  // Handle keyboard input only when mutation prompt is active and not in feedback mode
   useInput((input) => {
-    if (!currentRequest || feedbackMode) {
-      return;
-    }
-
     const key = input.toLowerCase();
     if (key === 'y') {
       handleApprove();
@@ -91,7 +87,7 @@ export function MutationPrompt({ bus }: MutationPromptProps) {
     } else if (key === 'f') {
       setFeedbackMode(true);
     }
-  });
+  }, { isActive: currentRequest !== null && !feedbackMode });
 
   // Don't render anything if no current request
   if (!currentRequest) {

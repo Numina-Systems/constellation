@@ -117,3 +117,23 @@ jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
 # fetch_timeout = 30000
 # max_fetch_size = 1048576
 # cache_ttl = 300000
+
+# --- MCP Server Integration ---
+# Connect to external MCP servers for additional tools and prompts.
+# [mcp]
+# enabled = true
+#
+# [mcp.servers.filesystem]
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+#
+# [mcp.servers.github]
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+#
+# [mcp.servers.remote-tools]
+# transport = "http"
+# url = "http://localhost:3001/mcp"

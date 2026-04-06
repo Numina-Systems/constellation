@@ -21,6 +21,7 @@ import type { PersistenceProvider } from '@/persistence/types';
 import type { Interface as ReadlineInterface } from 'readline';
 import type { TraceStore, OperationTrace } from '@/reflexion';
 import type { DataSourceRegistry } from '@/extensions/data-source';
+import type { McpClient } from '@/mcp';
 
 // ============================================================================
 // Helper factories for mocking
@@ -223,6 +224,119 @@ describe('composition root wiring: shutdown handler with DataSource registry (AC
     // Should not throw with undefined registry
     const handler = createShutdownHandler(rl, persistence);
     expect(typeof handler).toBe('function');
+  });
+});
+
+// ============================================================================
+// MCP Client Shutdown Wiring:
+// Verify that createShutdownHandler calls disconnect() on provided MCP clients
+// ============================================================================
+
+describe('composition root wiring: MCP client shutdown', () => {
+  const createMockReadline = (): ReadlineInterface => {
+    return {
+      close: mock(() => {}),
+      once: mock(() => {}),
+      on: mock(() => {}),
+      write: mock(() => {}),
+      setPrompt: mock(() => {}),
+      prompt: mock(() => {}),
+    } as unknown as ReadlineInterface;
+  };
+
+  const createMockPersistence = (): PersistenceProvider => {
+    return {
+      connect: mock(async () => {}),
+      disconnect: mock(async () => {}),
+      runMigrations: mock(async () => {}),
+      query: mock(async () => []),
+      withTransaction: mock(async (fn) => fn(mock(async () => []))),
+    };
+  };
+
+  it('calls disconnect() on MCP clients during shutdown', async () => {
+    const rl = createMockReadline();
+    const persistence = createMockPersistence();
+
+    // Create mock MCP clients with disconnect methods
+    const mockClient1 = {
+      serverName: 'github',
+      disconnect: mock(async () => {}),
+    } as unknown as McpClient;
+    const mockClient2 = {
+      serverName: 'filesystem',
+      disconnect: mock(async () => {}),
+    } as unknown as McpClient;
+
+    const originalExit = process.exit;
+    process.exit = mock(() => {}) as unknown as typeof process.exit;
+
+    try {
+      const handler = createShutdownHandler(rl, persistence, null, null, null, [mockClient1, mockClient2]);
+      await handler();
+      expect(mockClient1.disconnect).toHaveBeenCalled();
+      expect(mockClient2.disconnect).toHaveBeenCalled();
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
+  it('accepts empty MCP clients array', async () => {
+    const rl = createMockReadline();
+    const persistence = createMockPersistence();
+    const originalExit = process.exit;
+    process.exit = mock(() => {}) as unknown as typeof process.exit;
+
+    try {
+      const handler = createShutdownHandler(rl, persistence, null, null, null, []);
+      await handler(); // Should not throw
+      expect(typeof handler).toBe('function');
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
+  it('accepts undefined MCP clients parameter', async () => {
+    const rl = createMockReadline();
+    const persistence = createMockPersistence();
+    const originalExit = process.exit;
+    process.exit = mock(() => {}) as unknown as typeof process.exit;
+
+    try {
+      const handler = createShutdownHandler(rl, persistence, null, null, null, undefined);
+      await handler(); // Should not throw
+      expect(typeof handler).toBe('function');
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
+  it('handles disconnect() errors gracefully', async () => {
+    const rl = createMockReadline();
+    const persistence = createMockPersistence();
+    const consoleMock = mock(() => {});
+    const originalError = console.error;
+    console.error = consoleMock;
+
+    const mockClient = {
+      serverName: 'bad-server',
+      disconnect: mock(async () => {
+        throw new Error('disconnect failed');
+      }),
+    } as unknown as McpClient;
+
+    const originalExit = process.exit;
+    process.exit = mock(() => {}) as unknown as typeof process.exit;
+
+    try {
+      const handler = createShutdownHandler(rl, persistence, null, null, null, [mockClient]);
+      await handler(); // Should not throw
+      expect(mockClient.disconnect).toHaveBeenCalled();
+      expect(consoleMock).toHaveBeenCalled();
+    } finally {
+      console.error = originalError;
+      process.exit = originalExit;
+    }
   });
 });
 

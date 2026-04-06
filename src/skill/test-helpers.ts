@@ -4,6 +4,17 @@ import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { SkillStore } from './store.ts';
 import type { SkillDefinition } from './types.ts';
 
+export type MockSkillRegistryType = {
+  load(): Promise<void>;
+  getAll(): SkillDefinition[];
+  getByName(name: string): SkillDefinition | null;
+  search(query: string, limit?: number): Promise<Array<{ id: string; name: string; description: string; score: number }>>;
+  getRelevant(context: string, limit?: number, threshold?: number): Promise<SkillDefinition[]>;
+  createAgentSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+  updateAgentSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+  injectSkills(skills: ReadonlyArray<SkillDefinition>): Promise<void>;
+};
+
 export type MockSkillStoreType = SkillStore & {
   data: Map<string, { contentHash: string; embedding: ReadonlyArray<number> }>;
   setScores: (scores: Map<string, number>) => void;
@@ -108,5 +119,19 @@ export function createTestSkillWithCompanions(
     source: 'builtin',
     filePath: `/test/${name}.md`,
     contentHash: `hash-${name}`,
+  };
+}
+
+export function createMockSkillRegistry(overrides?: Partial<MockSkillRegistryType>): MockSkillRegistryType {
+  return {
+    load: async () => {},
+    getAll: () => [],
+    getByName: () => null,
+    search: async () => [],
+    getRelevant: async () => [],
+    createAgentSkill: async () => createTestSkill('test', 'test', 'test'),
+    updateAgentSkill: async () => createTestSkill('test', 'test', 'test'),
+    injectSkills: async () => {},
+    ...overrides,
   };
 }

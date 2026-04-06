@@ -1354,6 +1354,7 @@ describe('Skill integration', () => {
       updateAgentSkill: async () => {
         throw new Error('not implemented');
       },
+      injectSkills: async () => {},
     };
 
     const deps: AgentDependencies = {

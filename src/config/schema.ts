@@ -1,6 +1,7 @@
 // pattern: Functional Core
 import { z } from "zod";
 import { Cron } from "croner";
+import { McpConfigSchema } from "@/mcp/schema.ts";
 
 const AgentConfigSchema = z.object({
   max_tool_rounds: z.number().int().positive().default(20),
@@ -201,6 +202,7 @@ const AppConfigSchema = z.object({
   skills: SkillConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
   activity: ActivityConfigSchema.optional(),
+  mcp: McpConfigSchema.default({}),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -216,5 +218,6 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
+export type McpConfig = z.infer<typeof McpConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema };

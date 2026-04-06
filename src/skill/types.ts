@@ -2,7 +2,7 @@
 
 import type { ToolParameter } from '../tool/types.ts';
 
-export type SkillSource = 'builtin' | 'agent';
+export type SkillSource = 'builtin' | 'agent' | 'mcp';
 
 export type SkillToolDefinition = {
   readonly name: string;

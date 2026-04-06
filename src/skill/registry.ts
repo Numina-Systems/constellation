@@ -174,7 +174,7 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
         throw new Error(`skill "${name}" not found`);
       }
       if (existing.source !== 'agent') {
-        throw new Error(`cannot update builtin skill "${name}" — agent skills only`);
+        throw new Error(`cannot update ${existing.source} skill "${name}" — only agent skills can be updated`);
       }
 
       const skillDir = join(agentDir, name);

@@ -10,3 +10,4 @@ export {
 } from './schema.ts';
 export { resolveEnvVars, resolveServerConfigEnv } from './env.ts';
 export { createMcpClient, buildTransportOptions } from './client.ts';
+export { mapInputSchemaToParameters } from './schema-mapper.ts';

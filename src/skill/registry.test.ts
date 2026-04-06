@@ -344,4 +344,228 @@ Builtin content`,
       }
     });
   });
+
+  describe('mcp-client.AC5.3: injectSkills makes skills visible via getAll and getByName', () => {
+    it('should add injected skills to getAll() result', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const initialAll = registry.getAll();
+      expect(initialAll.length).toBe(0);
+
+      const mcpSkill = {
+        id: 'skill:mcp:github:code-review',
+        metadata: {
+          name: 'code-review',
+          description: 'Review code for issues',
+          version: undefined,
+          tags: ['mcp', 'github'],
+          companions: undefined,
+          tools: undefined,
+        },
+        body: 'MCP prompt content for code review',
+        companions: [],
+        source: 'mcp' as const,
+        filePath: 'mcp://github/code-review',
+        contentHash: 'hash-abc123',
+      };
+
+      await registry.injectSkills([mcpSkill]);
+
+      const afterInject = registry.getAll();
+      expect(afterInject.length).toBe(1);
+      expect(afterInject[0]?.metadata.name).toBe('code-review');
+    });
+
+    it('should make injected skills retrievable via getByName', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const mcpSkill = {
+        id: 'skill:mcp:github:code-review',
+        metadata: {
+          name: 'code-review',
+          description: 'Review code for issues',
+          version: undefined,
+          tags: ['mcp', 'github'],
+          companions: undefined,
+          tools: undefined,
+        },
+        body: 'MCP prompt content for code review',
+        companions: [],
+        source: 'mcp' as const,
+        filePath: 'mcp://github/code-review',
+        contentHash: 'hash-abc123',
+      };
+
+      await registry.injectSkills([mcpSkill]);
+
+      const retrieved = registry.getByName('code-review');
+      expect(retrieved).not.toBeNull();
+      expect(retrieved?.metadata.name).toBe('code-review');
+      expect(retrieved?.source).toBe('mcp');
+    });
+
+    it('should return null for non-existent skill via getByName', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const retrieved = registry.getByName('nonexistent-skill');
+      expect(retrieved).toBeNull();
+    });
+
+    it('should inject multiple skills at once', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const skills = [
+        {
+          id: 'skill:mcp:github:code-review',
+          metadata: {
+            name: 'code-review',
+            description: 'Review code',
+            version: undefined,
+            tags: ['mcp', 'github'],
+            companions: undefined,
+            tools: undefined,
+          },
+          body: 'Code review prompt',
+          companions: [],
+          source: 'mcp' as const,
+          filePath: 'mcp://github/code-review',
+          contentHash: 'hash1',
+        },
+        {
+          id: 'skill:mcp:slack:fetch-messages',
+          metadata: {
+            name: 'fetch-messages',
+            description: 'Fetch messages',
+            version: undefined,
+            tags: ['mcp', 'slack'],
+            companions: undefined,
+            tools: undefined,
+          },
+          body: 'Fetch messages prompt',
+          companions: [],
+          source: 'mcp' as const,
+          filePath: 'mcp://slack/fetch-messages',
+          contentHash: 'hash2',
+        },
+      ];
+
+      await registry.injectSkills(skills);
+
+      const all = registry.getAll();
+      expect(all.length).toBe(2);
+      expect(registry.getByName('code-review')).not.toBeNull();
+      expect(registry.getByName('fetch-messages')).not.toBeNull();
+    });
+  });
+
+  describe('mcp-client.AC5.4: injectSkills embeds skills for semantic search', () => {
+    it('should upsert embedding for injected skill', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const mcpSkill = {
+        id: 'skill:mcp:github:code-review',
+        metadata: {
+          name: 'code-review',
+          description: 'Review code for quality issues',
+          version: undefined,
+          tags: ['mcp', 'github'],
+          companions: undefined,
+          tools: undefined,
+        },
+        body: 'This is the prompt body for code review',
+        companions: [],
+        source: 'mcp' as const,
+        filePath: 'mcp://github/code-review',
+        contentHash: 'hash-abc123',
+      };
+
+      await registry.injectSkills([mcpSkill]);
+
+      // Verify the mock store's upsertEmbedding was called by checking store.data
+      expect(store.data.has('skill:mcp:github:code-review')).toBe(true);
+      const stored = store.data.get('skill:mcp:github:code-review');
+      expect(stored).toBeDefined();
+      expect(stored?.contentHash).toBe('hash-abc123');
+      expect(Array.isArray(stored?.embedding)).toBe(true);
+      expect(stored!.embedding.length).toBeGreaterThan(0);
+    });
+
+    it('should embed multiple skills for search index', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const skills = [
+        {
+          id: 'skill:mcp:github:code-review',
+          metadata: {
+            name: 'code-review',
+            description: 'Review code',
+            version: undefined,
+            tags: ['mcp', 'github'],
+            companions: undefined,
+            tools: undefined,
+          },
+          body: 'Code review prompt',
+          companions: [],
+          source: 'mcp' as const,
+          filePath: 'mcp://github/code-review',
+          contentHash: 'hash1',
+        },
+        {
+          id: 'skill:mcp:slack:fetch-messages',
+          metadata: {
+            name: 'fetch-messages',
+            description: 'Fetch messages',
+            version: undefined,
+            tags: ['mcp', 'slack'],
+            companions: undefined,
+            tools: undefined,
+          },
+          body: 'Fetch messages prompt',
+          companions: [],
+          source: 'mcp' as const,
+          filePath: 'mcp://slack/fetch-messages',
+          contentHash: 'hash2',
+        },
+      ];
+
+      await registry.injectSkills(skills);
+
+      expect(store.data.has('skill:mcp:github:code-review')).toBe(true);
+      expect(store.data.has('skill:mcp:slack:fetch-messages')).toBe(true);
+    });
+
+    it('should participate in semantic search after injection', async () => {
+      const registry = createSkillRegistry({ store, embedding, builtinDir, agentDir });
+      await registry.load();
+
+      const mcpSkill = {
+        id: 'skill:mcp:github:code-review',
+        metadata: {
+          name: 'code-review',
+          description: 'Review code for quality issues',
+          version: undefined,
+          tags: ['mcp', 'github'],
+          companions: undefined,
+          tools: undefined,
+        },
+        body: 'This prompt helps review code',
+        companions: [],
+        source: 'mcp' as const,
+        filePath: 'mcp://github/code-review',
+        contentHash: 'hash-abc123',
+      };
+
+      await registry.injectSkills([mcpSkill]);
+
+      const searchResults = await registry.search('code review quality');
+      expect(searchResults.length).toBeGreaterThan(0);
+      expect(searchResults[0]?.name).toBe('code-review');
+    });
+  });
 });

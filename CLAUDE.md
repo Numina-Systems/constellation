@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-03-12
+Last verified: 2026-04-05
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -13,6 +13,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - Embeddings: OpenAI, Ollama
 - Config: TOML with Zod validation
 - Testing: `bun test`
+- MCP: Model Context Protocol client for connecting to external MCP servers
 
 ## Commands
 - `bun run start` -- Start the daemon REPL
@@ -43,6 +44,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider), DataSource registry factory, and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
+- `src/mcp/` -- MCP (Model Context Protocol) client wrapper (`@modelcontextprotocol/sdk`), config validation, transport management, tool/prompt discovery
 - `src/index.ts` -- Entry point, composition root (single agent with DataSource registry routing), REPL
 
 ## Conventions

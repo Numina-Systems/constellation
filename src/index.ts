@@ -73,6 +73,8 @@ import type { TraceStore } from '@/reflexion';
 import type { ContextProvider } from '@/agent/types';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
+import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv } from '@/mcp';
+import type { McpClient } from '@/mcp';
 
 const AGENT_OWNER = 'spirit';
 
@@ -227,6 +229,7 @@ export function createShutdownHandler(
   dataSourceRegistry?: DataSourceRegistry | null,
   scheduler?: { stop(): void } | null,
   activityManager?: ActivityManager | null,
+  mcpClients?: ReadonlyArray<McpClient>,
 ): () => Promise<void> {
   let shuttingDown = false;
   return async (): Promise<void> => {
@@ -248,6 +251,19 @@ export function createShutdownHandler(
     if (activityManager) {
       const finalState = await activityManager.getState();
       console.log(`[activity] shutdown state: ${finalState.mode}, queued: ${finalState.queuedEventCount}`);
+    }
+    // Disconnect MCP servers
+    if (mcpClients && mcpClients.length > 0) {
+      await Promise.allSettled(
+        mcpClients.map(async (client) => {
+          try {
+            await client.disconnect();
+          } catch (error) {
+            console.error(`[mcp:${client.serverName}] error disconnecting:`, error);
+          }
+        }),
+      );
+      console.log(`[mcp] ${mcpClients.length} server(s) disconnected`);
     }
     await performShutdown(rl, persistence);
     process.exit(0);
@@ -647,6 +663,63 @@ async function main(): Promise<void> {
     }
 
     console.log(`skills loaded (${skillRegistry.getAll().length} skills)`);
+  }
+
+  // --- MCP servers ---
+  const mcpClients: Array<McpClient> = [];
+
+  if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
+    console.log(`[mcp] connecting to ${Object.keys(config.mcp.servers).length} server(s)...`);
+
+    for (const [serverName, rawServerConfig] of Object.entries(config.mcp.servers)) {
+      try {
+        // Resolve env vars in config values
+        const serverConfig = resolveServerConfigEnv(rawServerConfig, process.env);
+
+        // Create and connect client
+        const client = createMcpClient(serverName, serverConfig);
+        await client.connect();
+        mcpClients.push(client);
+
+        // Discover and register tools
+        const provider = createMcpToolProvider(client);
+        const toolDefs = await provider.discover();
+        for (const def of toolDefs) {
+          registry.register({
+            definition: def,
+            handler: async (params) => provider.execute(def.name, params),
+          });
+        }
+        console.log(`[mcp:${serverName}] registered ${toolDefs.length} tool(s)`);
+
+        // Convert prompts to skills and inject
+        if (skillRegistry) {
+          const skills = await mcpPromptsToSkills(client);
+          if (skills.length > 0) {
+            await skillRegistry.injectSkills(skills);
+            console.log(`[mcp:${serverName}] injected ${skills.length} skill(s)`);
+          }
+        }
+
+        // Collect server instructions for context provider
+        const instructions = await client.getInstructions();
+        if (instructions) {
+          contextProviders.push(() => `[MCP: ${serverName}]\n${instructions}`);
+        }
+
+      } catch (error) {
+        // AC6.3, AC6.4: Failed connection doesn't block startup
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[mcp:${serverName}] failed to connect: ${errorMsg}`);
+        console.error(`[mcp] continuing without ${serverName}`);
+      }
+    }
+
+    if (mcpClients.length > 0) {
+      console.log(`[mcp] ${mcpClients.length} server(s) connected`);
+    } else {
+      console.log('[mcp] no servers connected (all failed or none configured)');
+    }
   }
 
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
@@ -1077,7 +1150,7 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager);
+  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager, mcpClients);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

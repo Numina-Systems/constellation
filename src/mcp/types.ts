@@ -1,6 +1,6 @@
-// pattern: Functional Core (type definitions only)
+// Type definitions only — no runtime behaviour
 
-import type { ToolResult } from '@/tool/types.js';
+import type { ToolResult } from '@/tool/types.ts';
 
 export type McpToolInfo = Readonly<{
   name: string;

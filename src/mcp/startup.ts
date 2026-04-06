@@ -5,7 +5,7 @@
  * Pure functions for building context providers and formatting startup summaries.
  */
 
-import type { ContextProvider } from '@/agent/types.js';
+import type { ContextProvider } from '@/agent/types.ts';
 
 /**
  * Create a context provider function for MCP server instructions.

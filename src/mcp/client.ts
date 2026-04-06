@@ -4,9 +4,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import type { McpClient, McpPromptInfo, McpPromptResult, McpToolInfo } from './types.js';
-import type { McpServerConfig } from './schema.js';
-import type { ToolResult } from '@/tool/types.js';
+import type { McpClient, McpPromptInfo, McpPromptResult, McpToolInfo } from './types.ts';
+import type { McpServerConfig } from './schema.ts';
+import type { ToolResult } from '@/tool/types.ts';
 
 /**
  * Transport options for connecting to an MCP server.

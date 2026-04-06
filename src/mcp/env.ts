@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import type { McpServerConfig } from './schema.js';
+import type { McpServerConfig } from './schema.ts';
 
 /**
  * Resolves ${VAR_NAME} patterns in a string using values from env.

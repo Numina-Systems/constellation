@@ -2,8 +2,8 @@
 
 import { describe, it, expect } from 'bun:test';
 import { ZodError } from 'zod';
-import { AppConfigSchema } from '@/config/schema.js';
-import { McpConfigSchema, McpServerConfigSchema } from './schema.js';
+import { AppConfigSchema } from '@/config/schema.ts';
+import { McpConfigSchema, McpServerConfigSchema } from './schema.ts';
 
 describe('mcp-client.AC1: MCP config schema validation', () => {
   describe('mcp-client.AC1.1: Stdio server config with command, args, and env parses correctly', () => {
@@ -183,7 +183,8 @@ describe('mcp-client.AC1: MCP config schema validation', () => {
     });
 
     it('should parse config with no mcp field (defaults to enabled:false, empty servers)', () => {
-      const config: any = {};
+      // Intentionally untyped to test default parsing behaviour
+      const config: Record<string, unknown> = {};
 
       const result = McpConfigSchema.parse(config);
 

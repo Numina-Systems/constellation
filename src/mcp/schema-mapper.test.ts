@@ -1,7 +1,7 @@
 // pattern: Functional Core (tests for pure schema mapping function)
 
 import { describe, it, expect } from 'bun:test';
-import { mapInputSchemaToParameters } from './schema-mapper.js';
+import { mapInputSchemaToParameters } from './schema-mapper.ts';
 
 describe('mapInputSchemaToParameters', () => {
   describe('mcp-client.AC4.4: JSON Schema to ToolParameter mapping', () => {

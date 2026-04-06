@@ -1,8 +1,8 @@
 // pattern: Functional Core (tests for pure functions and disconnected client behaviour)
 
 import { describe, it, expect } from 'bun:test';
-import { mapToolResult, createMcpClient, buildTransportOptions } from './client.js';
-import type { McpServerConfig } from './schema.js';
+import { mapToolResult, createMcpClient, buildTransportOptions } from './client.ts';
+import type { McpServerConfig } from './schema.ts';
 
 describe('mapToolResult', () => {
   describe('AC4.5: Map text ContentBlocks to ToolResult.output', () => {

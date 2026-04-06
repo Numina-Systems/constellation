@@ -1,9 +1,9 @@
 // pattern: Functional Core (tests for provider factory and namespacing)
 
 import { describe, it, expect, beforeEach } from 'bun:test';
-import type { McpClient, McpToolInfo } from './types.js';
-import type { ToolResult } from '@/tool/types.js';
-import { createMcpToolProvider, namespaceTool } from './provider.js';
+import type { McpClient, McpToolInfo } from './types.ts';
+import type { ToolResult } from '@/tool/types.ts';
+import { createMcpToolProvider, namespaceTool } from './provider.ts';
 
 describe('namespaceTool', () => {
   describe('mcp-client.AC4.1: Tool namespacing', () => {

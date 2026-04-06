@@ -1,7 +1,7 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from 'bun:test';
-import { resolveEnvVars, resolveServerConfigEnv } from './env.js';
+import { resolveEnvVars, resolveServerConfigEnv } from './env.ts';
 
 describe('mcp-client.AC1.8: Env var expansion', () => {
   describe('resolveEnvVars: Basic variable expansion', () => {

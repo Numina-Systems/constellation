@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import type { ToolParameter } from '@/tool/types.js';
+import type { ToolParameter } from '@/tool/types.ts';
 
 /**
  * Converts MCP tool inputSchema (JSON Schema format) to Constellation's ToolParameter[].

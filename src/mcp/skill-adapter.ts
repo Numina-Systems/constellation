@@ -37,14 +37,14 @@ export function mcpPromptToSkill(serverName: string, prompt: McpPromptInfo, body
 
 export async function mcpPromptsToSkills(client: McpClient): Promise<Array<SkillDefinition>> {
   const prompts = await client.listPrompts();
-  const skills: Array<SkillDefinition> = [];
 
-  for (const prompt of prompts) {
-    const result = await client.getPrompt(prompt.name);
-    const body = result.messages.map((m) => m.content).join('\n\n');
-    const skill = mcpPromptToSkill(client.serverName, prompt, body);
-    skills.push(skill);
-  }
+  const skills = await Promise.all(
+    prompts.map(async (prompt) => {
+      const result = await client.getPrompt(prompt.name);
+      const body = result.messages.map((m) => m.content).join('\n\n');
+      return mcpPromptToSkill(client.serverName, prompt, body);
+    }),
+  );
 
   return skills;
 }

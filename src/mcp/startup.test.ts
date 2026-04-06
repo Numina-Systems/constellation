@@ -1,6 +1,8 @@
+// pattern: Functional Core (tests for pure functions)
+
 import { describe, it, expect } from 'bun:test';
-import { createMcpInstructionsProvider, formatMcpStartupSummary } from './startup.js';
-import type { McpClient, McpToolInfo } from './types.js';
+import { createMcpInstructionsProvider, formatMcpStartupSummary } from './startup.ts';
+import type { McpClient, McpToolInfo } from './types.ts';
 
 /**
  * Mock MCP client factory for testing graceful degradation scenarios.

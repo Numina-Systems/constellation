@@ -73,7 +73,7 @@ import type { TraceStore } from '@/reflexion';
 import type { ContextProvider } from '@/agent/types';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
-import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv } from '@/mcp';
+import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 
 const AGENT_OWNER = 'spirit';
@@ -667,6 +667,7 @@ async function main(): Promise<void> {
 
   // --- MCP servers ---
   const mcpClients: Array<McpClient> = [];
+  const mcpFailedServers: Array<{name: string; error: string}> = [];
 
   if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
     console.log(`[mcp] connecting to ${Object.keys(config.mcp.servers).length} server(s)...`);
@@ -704,7 +705,7 @@ async function main(): Promise<void> {
         // Collect server instructions for context provider
         const instructions = await client.getInstructions();
         if (instructions) {
-          contextProviders.push(() => `[MCP: ${serverName}]\n${instructions}`);
+          contextProviders.push(createMcpInstructionsProvider(serverName, instructions));
         }
 
       } catch (error) {
@@ -712,14 +713,14 @@ async function main(): Promise<void> {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error(`[mcp:${serverName}] failed to connect: ${errorMsg}`);
         console.error(`[mcp] continuing without ${serverName}`);
+        mcpFailedServers.push({name: serverName, error: errorMsg});
       }
     }
 
-    if (mcpClients.length > 0) {
-      console.log(`[mcp] ${mcpClients.length} server(s) connected`);
-    } else {
-      console.log('[mcp] no servers connected (all failed or none configured)');
-    }
+    // Format and log summary using testable helper
+    const connectedNames = mcpClients.map(c => c.serverName);
+    const summary = formatMcpStartupSummary(connectedNames, mcpFailedServers);
+    console.log(`[mcp] ${summary}`);
   }
 
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials

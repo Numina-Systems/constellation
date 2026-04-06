@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import { describe, it, expect } from 'bun:test';
 import { createMcpInstructionsProvider, formatMcpStartupSummary } from './startup.js';
 import type { McpClient, McpToolInfo } from './types.js';

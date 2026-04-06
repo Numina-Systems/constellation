@@ -61,6 +61,11 @@ describe('Skill management tools', () => {
         map.set(name, updated);
         return updated;
       },
+      async injectSkills(skillsToInject) {
+        for (const skill of skillsToInject) {
+          map.set(skill.metadata.name, skill);
+        }
+      },
     };
   }
 

@@ -211,5 +211,20 @@ export function createSkillRegistry(options: CreateSkillRegistryOptions): SkillR
 
       return skill;
     },
+
+    async injectSkills(skills: ReadonlyArray<SkillDefinition>): Promise<void> {
+      for (const skill of skills) {
+        skillsByName.set(skill.metadata.name, skill);
+        idToName.set(skill.id, skill.metadata.name);
+      }
+
+      for (const skill of skills) {
+        const embeddingText = buildEmbeddingText(skill.metadata, skill.body);
+        const vector = await embedding.embed(embeddingText);
+        await store.upsertEmbedding(skill.id, skill.metadata.name, skill.metadata.description, skill.contentHash, vector);
+      }
+
+      console.log(`[skill] injected ${skills.length} virtual skills`);
+    },
   };
 }

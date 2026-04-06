@@ -53,4 +53,5 @@ export interface SkillRegistry {
   getRelevant(context: string, limit?: number, threshold?: number): Promise<Array<SkillDefinition>>;
   createAgentSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
   updateAgentSkill(name: string, description: string, body: string, tags?: ReadonlyArray<string>): Promise<SkillDefinition>;
+  injectSkills(skills: ReadonlyArray<SkillDefinition>): Promise<void>;
 }

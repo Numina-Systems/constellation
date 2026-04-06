@@ -1,7 +1,7 @@
 // pattern: Functional Core (tests for pure functions and disconnected client behaviour)
 
 import { describe, it, expect } from 'bun:test';
-import { mapToolResult, createMcpClient } from './client.js';
+import { mapToolResult, createMcpClient, buildTransportOptions } from './client.js';
 import type { McpServerConfig } from './schema.js';
 
 describe('mapToolResult', () => {
@@ -196,6 +196,168 @@ describe('createMcpClient disconnected behaviour', () => {
 
       expect(client1.serverName).toBe('server-1');
       expect(client2.serverName).toBe('server-2');
+    });
+  });
+});
+
+describe('buildTransportOptions', () => {
+  describe('AC2.1: Stdio transport creation', () => {
+    it('should create stdio transport with command and args', () => {
+      const config: McpServerConfig = {
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp/test'],
+        env: {},
+      };
+      const processEnv = {};
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('stdio');
+      if (result.type === 'stdio') {
+        expect(result.command).toBe('npx');
+        expect(result.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem', '/tmp/test']);
+      }
+    });
+
+    it('should copy args array to prevent mutation', () => {
+      const config: McpServerConfig = {
+        transport: 'stdio',
+        command: 'node',
+        args: ['script.js'],
+        env: {},
+      };
+      const processEnv = {};
+
+      const result = buildTransportOptions(config, processEnv);
+
+      // Modify returned args to verify copy was made
+      if (result.type === 'stdio') {
+        result.args[0] = 'modified';
+        expect(config.args[0]).toBe('script.js');
+      }
+    });
+  });
+
+  describe('AC2.2: Environment variable merging', () => {
+    it('should merge config env with processEnv, with config env taking precedence', () => {
+      const config: McpServerConfig = {
+        transport: 'stdio',
+        command: 'node',
+        args: [],
+        env: { CUSTOM: 'from-config', OVERRIDE: 'config-value' },
+      };
+      const processEnv = {
+        PATH: '/usr/bin',
+        HOME: '/home/test',
+        OVERRIDE: 'process-value',
+      };
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('stdio');
+      if (result.type === 'stdio') {
+        expect(result.env['PATH']).toBe('/usr/bin');
+        expect(result.env['HOME']).toBe('/home/test');
+        expect(result.env['CUSTOM']).toBe('from-config');
+        expect(result.env['OVERRIDE']).toBe('config-value');
+      }
+    });
+
+    it('should handle empty config env and preserve processEnv', () => {
+      const config: McpServerConfig = {
+        transport: 'stdio',
+        command: 'node',
+        args: [],
+        env: {},
+      };
+      const processEnv = {
+        PATH: '/usr/bin',
+        HOME: '/home/test',
+        USER: 'testuser',
+      };
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('stdio');
+      if (result.type === 'stdio') {
+        expect(result.env['PATH']).toBe('/usr/bin');
+        expect(result.env['HOME']).toBe('/home/test');
+        expect(result.env['USER']).toBe('testuser');
+      }
+    });
+
+    it('should handle undefined values in processEnv', () => {
+      const config: McpServerConfig = {
+        transport: 'stdio',
+        command: 'node',
+        args: [],
+        env: { CUSTOM: 'value' },
+      };
+      const processEnv = {
+        DEFINED: 'yes',
+        UNDEFINED: undefined,
+      };
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('stdio');
+      if (result.type === 'stdio') {
+        expect(result.env['DEFINED']).toBe('yes');
+        expect(result.env['UNDEFINED']).toBeUndefined();
+        expect(result.env['CUSTOM']).toBe('value');
+      }
+    });
+  });
+
+  describe('AC3.1: HTTP transport creation', () => {
+    it('should create HTTP transport with URL', () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const processEnv = {};
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('http');
+      if (result.type === 'http') {
+        expect(result.url).toBeInstanceOf(URL);
+        expect(result.url.href).toBe('http://localhost:3001/mcp');
+      }
+    });
+
+    it('should handle HTTPS URLs', () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'https://api.example.com/mcp',
+      };
+      const processEnv = {};
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('http');
+      if (result.type === 'http') {
+        expect(result.url).toBeInstanceOf(URL);
+        expect(result.url.href).toBe('https://api.example.com/mcp');
+      }
+    });
+
+    it('should handle URLs with port numbers', () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:8080/services/mcp',
+      };
+      const processEnv = {};
+
+      const result = buildTransportOptions(config, processEnv);
+
+      expect(result.type).toBe('http');
+      if (result.type === 'http') {
+        expect(result.url.hostname).toBe('localhost');
+        expect(result.url.port).toBe('8080');
+        expect(result.url.pathname).toBe('/services/mcp');
+      }
     });
   });
 });

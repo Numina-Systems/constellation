@@ -16,7 +16,7 @@ type TransportOptions =
   | {
       readonly type: 'stdio';
       readonly command: string;
-      readonly args: Array<string>;
+      readonly args: ReadonlyArray<string>;
       readonly env: Record<string, string | undefined>;
     }
   | {
@@ -102,11 +102,11 @@ export function createMcpClient(serverName: string, config: McpServerConfig): Mc
         opts.type === 'stdio'
           ? new StdioClientTransport({
               command: opts.command,
-              args: opts.args,
+              args: [...opts.args], // SDK expects mutable array
               env: Object.fromEntries(
                 Object.entries(opts.env)
                   .filter(([, v]) => v !== undefined)
-                  .map(([k, v]) => [k, v as string]),
+                  .map(([k, v]) => [k, v as string]), // Safe: undefined values filtered on previous line
               ),
             })
           : new StreamableHTTPClientTransport(opts.url);
@@ -172,7 +172,7 @@ export function createMcpClient(serverName: string, config: McpServerConfig): Mc
           : [];
         const isError = typeof result.isError === 'boolean' ? result.isError : false;
         return mapToolResult(
-          content as ReadonlyArray<{ readonly type: string; readonly text?: string }>,
+          content as ReadonlyArray<{ readonly type: string; readonly text?: string }>, // SDK ContentBlock type is wider than our mapping needs
           isError,
         );
       } catch (error) {

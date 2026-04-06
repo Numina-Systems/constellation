@@ -175,6 +175,21 @@ describe('createMcpClient disconnected behaviour', () => {
     });
   });
 
+  describe('AC4.6: getPrompt returns empty when disconnected', () => {
+    it('should return { description: undefined, messages: [] } when getPrompt called before connect', async () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('test-server', config);
+
+      const result = await client.getPrompt('test-prompt', { arg: 'value' });
+
+      expect(result.description).toBeUndefined();
+      expect(result.messages).toEqual([]);
+    });
+  });
+
   describe('serverName property', () => {
     it('should return the server name passed to factory', () => {
       const config: McpServerConfig = {
@@ -231,10 +246,10 @@ describe('buildTransportOptions', () => {
 
       const result = buildTransportOptions(config, processEnv);
 
-      // Modify returned args to verify copy was made
+      // Verify identity: returned args are a different array instance
       if (result.type === 'stdio') {
-        result.args[0] = 'modified';
-        expect(config.args[0]).toBe('script.js');
+        expect(result.args !== config.args).toBe(true);
+        expect(result.args[0]).toBe('script.js');
       }
     });
   });

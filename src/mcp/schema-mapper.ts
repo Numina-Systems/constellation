@@ -29,6 +29,7 @@ export function mapInputSchemaToParameters(
       continue;
     }
 
+    // Narrowed by typeof + null check above
     const prop = propertySchema as Record<string, unknown>;
 
     // Map JSON Schema type to ToolParameterType

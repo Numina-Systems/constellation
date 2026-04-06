@@ -75,6 +75,9 @@ describe('createMcpToolProvider', () => {
       });
 
       expect(result).toEqual(callToolResult);
+      // Verify original tool name was passed to callTool
+      const mockClientWithCapture = mockClient as ReturnType<typeof createMockMcpClient>;
+      expect(mockClientWithCapture.lastCallToolName).toBe('search');
     });
 
     it('should return error for unknown tool during execute', async () => {
@@ -177,6 +180,12 @@ describe('createMcpToolProvider', () => {
       });
 
       expect(result).toEqual(callToolResult);
+      // Verify callTool was called with the original name 'search', not the namespaced name
+      const mockClientWithCapture = mockClient as ReturnType<typeof createMockMcpClient>;
+      expect(mockClientWithCapture.lastCallToolName).toBe('search');
+      expect(mockClientWithCapture.callToolCalls).toHaveLength(1);
+      expect(mockClientWithCapture.callToolCalls[0]?.name).toBe('search');
+      expect(mockClientWithCapture.callToolCalls[0]?.args).toEqual({ query: 'foo' });
     });
 
     it('should discover multiple tools with correct namespacing', async () => {
@@ -217,15 +226,19 @@ describe('createMcpToolProvider', () => {
 function createMockMcpClient(options?: {
   tools?: Array<McpToolInfo>;
   callToolResult?: ToolResult;
-}): McpClient {
+}): McpClient & { lastCallToolName?: string; callToolCalls: Array<{ name: string; args: Record<string, unknown> }> } {
   const tools = options?.tools ?? [];
   const callToolResult = options?.callToolResult ?? {
     success: true,
     output: 'mock response',
   };
 
+  const callToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+
   return {
     serverName: 'test-server',
+    lastCallToolName: undefined,
+    callToolCalls,
     async connect() {
       // Mock implementation
     },
@@ -235,7 +248,10 @@ function createMockMcpClient(options?: {
     async listTools() {
       return tools;
     },
-    async callTool(_name: string, _args: Record<string, unknown>) {
+    async callTool(name: string, args: Record<string, unknown>) {
+      // Capture the call for assertion
+      callToolCalls.push({ name, args });
+      this.lastCallToolName = name;
       return callToolResult;
     },
     async listPrompts() {

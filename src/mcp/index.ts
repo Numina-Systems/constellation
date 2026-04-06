@@ -12,3 +12,4 @@ export { resolveEnvVars, resolveServerConfigEnv } from './env.ts';
 export { createMcpClient, buildTransportOptions } from './client.ts';
 export { mapInputSchemaToParameters } from './schema-mapper.ts';
 export { createMcpToolProvider, namespaceTool } from './provider.ts';
+export { mcpPromptToSkill, mcpPromptsToSkills } from './skill-adapter.ts';

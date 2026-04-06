@@ -340,7 +340,7 @@ Builtin content`,
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         expect(message).toContain('cannot update builtin skill');
-        expect(message).toContain('agent skills only');
+        expect(message).toContain('only agent skills can be updated');
       }
     });
   });

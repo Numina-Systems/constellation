@@ -131,3 +131,71 @@ describe('mapToolResult', () => {
     });
   });
 });
+
+describe('createMcpClient disconnected behaviour', () => {
+  describe('AC4.6: listTools returns empty when disconnected', () => {
+    it('should return empty array when listTools called before connect', async () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('test-server', config);
+
+      const tools = await client.listTools();
+
+      expect(tools).toEqual([]);
+    });
+  });
+
+  describe('AC4.6: listPrompts returns empty when disconnected', () => {
+    it('should return empty array when listPrompts called before connect', async () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('test-server', config);
+
+      const prompts = await client.listPrompts();
+
+      expect(prompts).toEqual([]);
+    });
+  });
+
+  describe('AC7.2: getInstructions returns undefined when disconnected', () => {
+    it('should return undefined when getInstructions called before connect', async () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('test-server', config);
+
+      const instructions = await client.getInstructions();
+
+      expect(instructions).toBeUndefined();
+    });
+  });
+
+  describe('serverName property', () => {
+    it('should return the server name passed to factory', () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('my-server-name', config);
+
+      expect(client.serverName).toBe('my-server-name');
+    });
+
+    it('should maintain server name across multiple instances', () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client1 = createMcpClient('server-1', config);
+      const client2 = createMcpClient('server-2', config);
+
+      expect(client1.serverName).toBe('server-1');
+      expect(client2.serverName).toBe('server-2');
+    });
+  });
+});

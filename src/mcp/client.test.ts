@@ -1,0 +1,133 @@
+// pattern: Functional Core (tests for pure functions and disconnected client behaviour)
+
+import { describe, it, expect } from 'bun:test';
+import { mapToolResult, createMcpClient } from './client.js';
+import type { McpServerConfig } from './schema.js';
+
+describe('mapToolResult', () => {
+  describe('AC4.5: Map text ContentBlocks to ToolResult.output', () => {
+    it('should concatenate single text block to output with success true', () => {
+      const content = [{ type: 'text', text: 'hello world' }];
+      const result = mapToolResult(content, false);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('hello world');
+      expect(result.error).toBeUndefined();
+    });
+
+    it('should concatenate multiple text blocks with newline separator', () => {
+      const content = [
+        { type: 'text', text: 'first line' },
+        { type: 'text', text: 'second line' },
+        { type: 'text', text: 'third line' },
+      ];
+      const result = mapToolResult(content, false);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('first line\nsecond line\nthird line');
+    });
+
+    it('should ignore non-text content blocks', () => {
+      const content = [
+        { type: 'text', text: 'text content' },
+        { type: 'image', url: 'https://example.com/image.png' },
+        { type: 'text', text: 'more text' },
+      ];
+      const result = mapToolResult(content, false);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('text content\nmore text');
+    });
+
+    it('should handle empty content array', () => {
+      const content: Array<{ readonly type: string; readonly text?: string }> = [];
+      const result = mapToolResult(content, false);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('');
+      expect(result.error).toBeUndefined();
+    });
+
+    it('should handle text blocks without text property', () => {
+      const content = [
+        { type: 'text', text: 'valid' },
+        { type: 'text' },
+        { type: 'text', text: 'also valid' },
+      ];
+      const result = mapToolResult(content, false);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('valid\nalso valid');
+    });
+  });
+
+  describe('AC4.7: Map isError=true to ToolResult.success=false', () => {
+    it('should set success false and include error when isError is true', () => {
+      const content = [{ type: 'text', text: 'error message' }];
+      const result = mapToolResult(content, true);
+
+      expect(result.success).toBe(false);
+      expect(result.output).toBe('error message');
+      expect(result.error).toBe('error message');
+    });
+
+    it('should include multiple text blocks in error output', () => {
+      const content = [
+        { type: 'text', text: 'first error' },
+        { type: 'text', text: 'second error' },
+      ];
+      const result = mapToolResult(content, true);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('first error\nsecond error');
+    });
+
+    it('should return empty error when no text blocks and isError true', () => {
+      const content = [{ type: 'image', url: 'https://example.com/image.png' }];
+      const result = mapToolResult(content, true);
+
+      expect(result.success).toBe(false);
+      expect(result.output).toBe('');
+      expect(result.error).toBe('');
+    });
+
+    it('should default isError to false when undefined', () => {
+      const content = [{ type: 'text', text: 'output' }];
+      const result = mapToolResult(content, undefined);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('output');
+      expect(result.error).toBeUndefined();
+    });
+  });
+
+  describe('AC4.6: Handle disconnected client callTool', () => {
+    it('should return success false when calling tool on disconnected client', async () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('test-server', config);
+
+      // Don't call connect() - client remains disconnected
+      const result = await client.callTool('test_tool', { arg: 'value' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not connected');
+      expect(result.output).toBe('');
+    });
+
+    it('should include server name in disconnection error message', async () => {
+      const config: McpServerConfig = {
+        transport: 'http',
+        url: 'http://localhost:3001/mcp',
+      };
+      const client = createMcpClient('my-special-server', config);
+
+      const result = await client.callTool('any_tool', {});
+
+      expect(result.error).toContain('my-special-server');
+      expect(result.error).toContain('not connected');
+    });
+  });
+});

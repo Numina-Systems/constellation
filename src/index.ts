@@ -43,6 +43,8 @@ import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
+import { detectTuiMode } from '@/tui/detect';
+import type { AgentEventBus } from '@/tui';
 import {
   createActivityManager,
   createActivityContextProvider,
@@ -431,6 +433,13 @@ Use execute_code for anything beyond basic memory operations — API calls, file
 async function main(): Promise<void> {
   console.log('constellation daemon starting...\n');
 
+  // Detect TUI mode from command line arguments
+  const tuiDetection = detectTuiMode(process.argv, process.stdout.isTTY === true);
+  if (tuiDetection.warning) {
+    console.warn(tuiDetection.warning);
+  }
+  const shouldUseTui = tuiDetection.useTui;
+
   // Load configuration
   const config = loadConfig();
 
@@ -777,6 +786,14 @@ async function main(): Promise<void> {
     }
   }
 
+  // Create event bus conditionally for TUI mode
+  // Dynamic import is deferred to only load React/Ink when TUI is actually used
+  let eventBus: AgentEventBus | undefined;
+  if (shouldUseTui) {
+    const tuiModule = await import('@/tui');
+    eventBus = tuiModule.createAgentEventBus();
+  }
+
   // Step 2: Create agent with source instructions
   const agent = createAgent({
     model,
@@ -800,6 +817,7 @@ async function main(): Promise<void> {
     contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
+    eventBus,
   }, mainConversationId);
 
   // Step 3: Create shared external event queue and processing loop (for all DataSource events)
@@ -1057,49 +1075,95 @@ async function main(): Promise<void> {
     console.log('[activity] all activity tasks registered');
   }
 
-  // Set up readline interface for REPL
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  const interactionHandler = createInteractionLoop({
-    agent,
-    memory,
-    persistence,
-    readline: rl,
-  });
-
-  // Set up graceful shutdown
+  // Set up graceful shutdown helper
   const schedulerWrapper = {
     stop: () => {
       agentScheduler.stop();
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager);
 
-  process.on('SIGINT', shutdownHandler);
-  process.on('SIGTERM', shutdownHandler);
+  if (shouldUseTui) {
+    // TUI mode: render Ink application
+    const { renderApp, createMutationPromptViaBus } = await import('@/tui');
 
-  // REPL loop
-  console.log('Type your message (press Ctrl+C to exit):\n');
+    const mutationCallback = createMutationPromptViaBus(eventBus!); // guaranteed by shouldUseTui guard
 
-  rl.setPrompt('> ');
-  rl.on('line', async (line: string) => {
-    const trimmed = line.trim();
-    if (trimmed) {
-      try {
-        await interactionHandler(trimmed);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`error: ${errorMsg}`);
+    const { waitUntilExit } = renderApp({
+      agent,
+      bus: eventBus!, // guaranteed by shouldUseTui guard
+      modelName: config.model.name,
+      onProcessMutations: async () => {
+        await processPendingMutations(memory, mutationCallback);
+      },
+    });
+
+    // Set up graceful shutdown for TUI (mirrors REPL shutdown handler)
+    let tuiShuttingDown = false;
+    const tuiShutdown = async () => {
+      if (tuiShuttingDown) return;
+      tuiShuttingDown = true;
+      console.log('\nShutting down...');
+      schedulerWrapper.stop();
+      console.log('scheduler stopped');
+      if (dataSourceRegistry) {
+        try {
+          await dataSourceRegistry.shutdown();
+          console.log('data sources disconnected');
+        } catch (error) {
+          console.error('error disconnecting data sources:', error);
+        }
       }
-    }
-    rl.prompt();
-  });
+      if (activityManager) {
+        const finalState = await activityManager.getState();
+        console.log(`[activity] shutdown state: ${finalState.mode}, queued: ${finalState.queuedEventCount}`);
+      }
+      await persistence.disconnect();
+      console.log('database disconnected');
+      process.exit(0);
+    };
 
-  rl.prompt();
+    process.on('SIGINT', tuiShutdown);
+    process.on('SIGTERM', tuiShutdown);
+
+    await waitUntilExit();
+  } else {
+    // REPL mode: existing readline interface (unchanged)
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const interactionHandler = createInteractionLoop({
+      agent,
+      memory,
+      persistence,
+      readline: rl,
+    });
+
+    const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager);
+
+    process.on('SIGINT', shutdownHandler);
+    process.on('SIGTERM', shutdownHandler);
+
+    console.log('Type your message (press Ctrl+C to exit):\n');
+
+    rl.setPrompt('> ');
+    rl.on('line', async (line: string) => {
+      const trimmed = line.trim();
+      if (trimmed) {
+        try {
+          await interactionHandler(trimmed);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`error: ${errorMsg}`);
+        }
+      }
+      rl.prompt();
+    });
+
+    rl.prompt();
+  }
 }
 
 // Run main entry point only when file is executed directly

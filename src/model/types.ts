@@ -87,6 +87,7 @@ export type StreamEventContentBlockDelta = {
     type: string;
     text?: string;
     input?: string;
+    thinking?: string;
     index: number;
   };
 };
@@ -96,6 +97,7 @@ export type StreamEventMessageStop = {
   message: {
     stop_reason: StopReason;
   };
+  usage?: UsageStats;
 };
 
 export type StreamEvent =

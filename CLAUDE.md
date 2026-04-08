@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-03-12
+Last verified: 2026-04-05
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -12,10 +12,11 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - LLM: Anthropic SDK, OpenAI-compatible endpoints, Ollama (native `/api/chat`), OpenRouter
 - Embeddings: OpenAI, Ollama
 - Config: TOML with Zod validation
+- TUI: React 19 + Ink 6 (terminal UI with streaming, tool display, mutation prompts)
 - Testing: `bun test`
 
 ## Commands
-- `bun run start` -- Start the daemon REPL
+- `bun run start` -- Start the daemon REPL (add `--tui` for terminal UI mode)
 - `bun run build` -- Type-check (`tsc --noEmit`)
 - `bun test` -- Run all tests
 - `bun run migrate` -- Run database migrations
@@ -34,7 +35,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
 - `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
-- `src/agent/` -- Agent loop, context building, compression, context providers, per-turn skill injection, per-turn trace recording
+- `src/agent/` -- Agent loop, context building, compression, context providers, per-turn skill injection, per-turn trace recording, optional event bus integration for TUI streaming
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/scheduler/` -- PostgreSQL-backed cron scheduler with owner isolation (agent-owned vs system-owned tasks)
@@ -43,7 +44,8 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider), DataSource registry factory, and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
-- `src/index.ts` -- Entry point, composition root (single agent with DataSource registry routing), REPL
+- `src/tui/` -- Terminal UI (React/Ink): event bus, streaming display, tool call rendering, mutation prompts, status bar, `--tui` flag detection
+- `src/index.ts` -- Entry point, composition root (single agent with DataSource registry routing), REPL or TUI mode
 
 ## Conventions
 - **Functional Core / Imperative Shell**: Every file annotates its pattern (`// pattern: Functional Core` or `// pattern: Imperative Shell`)

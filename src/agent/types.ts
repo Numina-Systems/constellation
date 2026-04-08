@@ -15,6 +15,7 @@ import type { Compactor } from '../compaction/types.ts';
 import type { TraceRecorder } from '../reflexion/types.ts';
 import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
+import type { AgentEventBus } from '../tui/types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -61,6 +62,7 @@ export type AgentDependencies = {
   contextProviders?: ReadonlyArray<ContextProvider>;
   skills?: SkillRegistry;
   sourceInstructions?: ReadonlyMap<string, string>;
+  eventBus?: AgentEventBus;
 };
 
 export type Agent = {

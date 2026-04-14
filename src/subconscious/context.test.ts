@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect } from 'bun:test';
 import type { InterestRegistry, Interest, ExplorationLogEntry } from './types.ts';
 import { createSubconsciousContextProvider } from './context.ts';
@@ -232,6 +230,47 @@ describe('subconscious.AC4.5: Inner Life context injection', () => {
     expect(result).toContain('Found 3 papers on lattice-based cryptography');
     expect(result).toContain('experimented with');
     expect(result).toContain('transformer implementation');
+  });
+
+  it('truncates exploration outcomes exceeding 100 characters', async () => {
+    const longOutcome = 'A'.repeat(150);
+    const explorationLog: Array<ExplorationLogEntry> = [
+      {
+        id: 'log-1',
+        owner: 'test',
+        interestId: 'int-1',
+        curiosityThreadId: null,
+        action: 'investigated',
+        toolsUsed: ['web_search'],
+        outcome: longOutcome,
+        createdAt: new Date('2026-04-14T10:00:00Z'),
+      },
+    ];
+
+    const activeInterests: Array<Interest> = [
+      {
+        id: 'int-1',
+        owner: 'test',
+        name: 'Test',
+        description: 'Test',
+        source: 'emergent',
+        engagementScore: 5.0,
+        status: 'active',
+        lastEngagedAt: new Date(),
+        createdAt: new Date(),
+      },
+    ];
+
+    const registry = createMockInterestRegistry(activeInterests, explorationLog, []);
+    const provider = createSubconsciousContextProvider(registry, 'test');
+
+    provider();
+    await Bun.sleep(20);
+    const result = provider();
+
+    expect(result).toBeDefined();
+    expect(result).toContain('A'.repeat(100) + '…');
+    expect(result).not.toContain('A'.repeat(101));
   });
 
   it('shows dormant interest count', async () => {

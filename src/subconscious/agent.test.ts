@@ -13,7 +13,9 @@ import { createToolRegistry } from '@/tool/registry';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import { createMockEmbeddingProvider } from '@/integration/test-helpers';
+import { createCompactor } from '@/compaction';
 import type { ModelProvider, ModelResponse, ModelRequest, StreamEvent } from '@/model/types';
+import type { CompactionConfig } from '@/compaction/types';
 import { randomUUID } from 'crypto';
 
 const DB_CONNECTION_STRING = 'postgresql://constellation:constellation@localhost:5432/constellation';
@@ -43,6 +45,29 @@ function createMockModelProvider(): ModelProvider {
       };
     },
   };
+}
+
+/**
+ * Create a test Deno runtime with standard config.
+ */
+function createTestRuntime(registry: ReturnType<typeof createToolRegistry>) {
+  return createDenoExecutor(
+    {
+      max_code_size: 10000,
+      max_output_size: 10000,
+      code_timeout: 5000,
+      working_dir: '/tmp',
+      max_tool_rounds: 5,
+      context_budget: 100000,
+      max_context_tokens: 200000,
+      max_tool_calls_per_exec: 25,
+      allowed_hosts: [],
+      allowed_read_paths: [],
+      allowed_write_paths: [],
+      allowed_run: [],
+    },
+    registry,
+  );
 }
 
 async function cleanupTables(): Promise<void> {
@@ -83,25 +108,7 @@ describe('SubconsciousAgent', () => {
       );
 
       const registry = createToolRegistry();
-
-      const runtime = createDenoExecutor(
-        {
-          max_code_size: 10000,
-          max_output_size: 10000,
-          code_timeout: 5000,
-          working_dir: '/tmp',
-          max_tool_rounds: 5,
-          context_budget: 100000,
-          max_context_tokens: 200000,
-          max_tool_calls_per_exec: 25,
-          allowed_hosts: [],
-          allowed_read_paths: [],
-          allowed_write_paths: [],
-          allowed_run: [],
-        },
-        registry,
-      );
-
+      const runtime = createTestRuntime(registry);
       const mockModel = createMockModelProvider();
 
       const mainAgent = createAgent({
@@ -160,7 +167,7 @@ describe('SubconsciousAgent', () => {
   });
 
   describe('AC2.2: Inner conversation compacts independently from main conversation', () => {
-    it('verifies that messages in one conversation do not appear in the other', async () => {
+    it('compacts one agent conversation and verifies the other is unchanged', async () => {
       const mainConversationId = randomUUID();
       const subconsciousConversationId = randomUUID();
 
@@ -171,23 +178,7 @@ describe('SubconsciousAgent', () => {
       );
 
       const registry = createToolRegistry();
-      const runtime = createDenoExecutor(
-        {
-          max_code_size: 10000,
-          max_output_size: 10000,
-          code_timeout: 5000,
-          working_dir: '/tmp',
-          max_tool_rounds: 5,
-          context_budget: 100000,
-          max_context_tokens: 200000,
-          max_tool_calls_per_exec: 25,
-          allowed_hosts: [],
-          allowed_read_paths: [],
-          allowed_write_paths: [],
-          allowed_run: [],
-        },
-        registry,
-      );
+      const runtime = createTestRuntime(registry);
       const mockModel = createMockModelProvider();
 
       const mainAgent = createAgent({
@@ -220,31 +211,59 @@ describe('SubconsciousAgent', () => {
         },
       }, subconsciousConversationId);
 
-      // Add 3 messages to main agent
-      for (let i = 0; i < 3; i++) {
+      // Add 5 messages to main agent
+      for (let i = 0; i < 5; i++) {
         await mainAgent.processMessage(`Main message ${i + 1}`);
       }
 
-      // Add 2 messages to subconscious agent
-      for (let i = 0; i < 2; i++) {
+      // Add 3 messages to subconscious agent
+      for (let i = 0; i < 3; i++) {
         await subconsciousAgent.processMessage(`Subconscious message ${i + 1}`);
       }
 
-      // Get history from each agent
-      const mainAgentHistory = await mainAgent.getConversationHistory();
-      const subconsciousAgentHistory = await subconsciousAgent.getConversationHistory();
+      // Get history lengths before compaction
+      const mainHistoryBeforeCompaction = await mainAgent.getConversationHistory();
+      const subconsciousHistoryBeforeCompaction = await subconsciousAgent.getConversationHistory();
+      const mainHistoryLengthBefore = mainHistoryBeforeCompaction.length;
+      const subconsciousHistoryLengthBefore = subconsciousHistoryBeforeCompaction.length;
 
-      // Main agent history should only contain main messages, not subconscious
-      expect(mainAgentHistory.length).toBeGreaterThan(0);
-      const mainMessagesText = mainAgentHistory.map(m => m.content || '').join(' ');
-      expect(mainMessagesText).toContain('Main message');
-      expect(mainMessagesText).not.toContain('Subconscious message');
+      expect(mainHistoryLengthBefore).toBeGreaterThan(0);
+      expect(subconsciousHistoryLengthBefore).toBeGreaterThan(0);
 
-      // Subconscious agent history should only contain subconscious messages, not main
-      expect(subconsciousAgentHistory.length).toBeGreaterThan(0);
-      const subconsciousMessagesText = subconsciousAgentHistory.map(m => m.content || '').join(' ');
+      // Create compactor and compact the main agent's conversation
+      const compactionConfig: CompactionConfig = {
+        chunkSize: 2,
+        keepRecent: 1,
+        maxSummaryTokens: 256,
+        clipFirst: 1,
+        clipLast: 1,
+        prompt: null,
+      };
+
+      const compactor = createCompactor({
+        model: mockModel,
+        memory,
+        persistence,
+        config: compactionConfig,
+        modelName: 'test-model',
+      });
+
+      // Compact the main agent's conversation
+      await compactor.compress(mainHistoryBeforeCompaction, mainConversationId);
+
+      // Get history after compacting main agent
+      const mainHistoryAfterCompaction = await mainAgent.getConversationHistory();
+      const subconsciousHistoryAfterCompaction = await subconsciousAgent.getConversationHistory();
+
+      // Main agent's history may change (but should still have content)
+      expect(mainHistoryAfterCompaction.length).toBeGreaterThan(0);
+
+      // Subconscious agent's history length should be UNCHANGED
+      expect(subconsciousHistoryAfterCompaction.length).toBe(subconsciousHistoryLengthBefore);
+
+      // Verify the subconscious history content is still intact
+      const subconsciousMessagesText = subconsciousHistoryAfterCompaction.map(m => m.content || '').join(' ');
       expect(subconsciousMessagesText).toContain('Subconscious message');
-      expect(subconsciousMessagesText).not.toContain('Main message');
     });
   });
 
@@ -259,23 +278,7 @@ describe('SubconsciousAgent', () => {
       );
 
       const registry = createToolRegistry();
-      const runtime = createDenoExecutor(
-        {
-          max_code_size: 10000,
-          max_output_size: 10000,
-          code_timeout: 5000,
-          working_dir: '/tmp',
-          max_tool_rounds: 5,
-          context_budget: 100000,
-          max_context_tokens: 200000,
-          max_tool_calls_per_exec: 25,
-          allowed_hosts: [],
-          allowed_read_paths: [],
-          allowed_write_paths: [],
-          allowed_run: [],
-        },
-        registry,
-      );
+      const runtime = createTestRuntime(registry);
       const mockModel = createMockModelProvider();
 
       // Create agent with fresh conversation ID

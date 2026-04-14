@@ -818,8 +818,6 @@ async function main(): Promise<void> {
   }, mainConversationId);
 
   // Create subconscious agent if enabled
-  // Note: subconsciousAgent is used by the impulse event handler in Phase 4
-  // @ts-ignore TS6133: variable used by impulse scheduler in Phase 4
   let subconsciousAgent: Agent | undefined;
 
   if (config.subconscious?.enabled && config.subconscious.inner_conversation_id) {

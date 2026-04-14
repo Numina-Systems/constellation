@@ -43,7 +43,7 @@ type ExplorationLogRow = {
   interest_id: string | null;
   curiosity_thread_id: string | null;
   action: string;
-  tools_used: ReadonlyArray<string> | string;
+  tools_used: ReadonlyArray<string> | string; // JSONB: driver may return parsed array or raw string
   outcome: string;
   created_at: string;
 };

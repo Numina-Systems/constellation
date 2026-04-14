@@ -103,18 +103,18 @@ export function createSubconsciousTools(deps: SubconsciousToolDeps): Array<Tool>
             };
           }
 
-          const updates: Record<string, unknown> = {};
+          const updates: { name?: string; description?: string; engagementScore?: number } = {};
           if (params['name'] !== undefined) {
-            updates['name'] = params['name'];
+            updates.name = params['name'] as string;
           }
           if (params['description'] !== undefined) {
-            updates['description'] = params['description'];
+            updates.description = params['description'] as string;
           }
           if (params['engagement_score'] !== undefined) {
-            updates['engagementScore'] = params['engagement_score'];
+            updates.engagementScore = params['engagement_score'] as number;
           }
 
-          const interest = await deps.registry.updateInterest(id, updates as Parameters<typeof deps.registry.updateInterest>[1]);
+          const interest = await deps.registry.updateInterest(id, updates);
           if (!interest) {
             return {
               success: false,

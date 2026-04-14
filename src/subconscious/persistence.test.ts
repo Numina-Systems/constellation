@@ -238,7 +238,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const open1 = await registry.createCuriosityThread({
+      await registry.createCuriosityThread({
         interestId: interest.id,
         owner: TEST_OWNER,
         question: 'What is zero divided by zero?',
@@ -246,7 +246,7 @@ describe('InterestRegistry', () => {
         resolution: null,
       });
 
-      const open2 = await registry.createCuriosityThread({
+      await registry.createCuriosityThread({
         interestId: interest.id,
         owner: TEST_OWNER,
         question: 'What is infinity?',
@@ -734,7 +734,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const int3 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Score 3',
         description: 'Mid',
@@ -743,7 +743,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const int4 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Score 4',
         description: 'High',
@@ -752,7 +752,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const int5 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Score 5',
         description: 'Highest',
@@ -778,7 +778,7 @@ describe('InterestRegistry', () => {
     });
 
     it('is idempotent when already at cap', async () => {
-      const int1 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Test 1',
         description: 'Test',
@@ -787,7 +787,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const int2 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Test 2',
         description: 'Test',
@@ -796,7 +796,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const int3 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Test 3',
         description: 'Test',
@@ -818,7 +818,7 @@ describe('InterestRegistry', () => {
     });
 
     it('returns empty array when under cap', async () => {
-      const int1 = await registry.createInterest({
+      await registry.createInterest({
         owner: TEST_OWNER,
         name: 'Test 1',
         description: 'Test',
@@ -898,7 +898,7 @@ describe('InterestRegistry', () => {
         status: 'active',
       });
 
-      const resolved = await registry.createCuriosityThread({
+      await registry.createCuriosityThread({
         interestId: interest.id,
         owner: TEST_OWNER,
         question: 'What is gravity?',

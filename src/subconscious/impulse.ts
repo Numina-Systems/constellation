@@ -98,3 +98,74 @@ function formatMemories(memories: ReadonlyArray<string>): string {
 
   return memories.map((memory) => `- ${memory}`).join('\n');
 }
+
+export function buildMorningAgendaEvent(context: Readonly<ImpulseContext>): ExternalEvent {
+  const lines: Array<string> = [];
+
+  lines.push('[Morning Agenda]');
+  lines.push('Good morning. Here\'s what you\'ve been working on and what\'s ahead.');
+  lines.push('');
+  lines.push('[Active Interests]');
+  lines.push(formatInterests(context.interests));
+  lines.push('');
+  lines.push('[Recent Explorations]');
+  lines.push(formatExplorations(context.recentExplorations));
+  lines.push('');
+  lines.push('[Recent Activity]');
+  lines.push(formatTraceSummary(context.recentTraces));
+  lines.push('');
+  lines.push('Review your interests and explorations. Decide:');
+  lines.push('1. Which interests to continue pursuing today');
+  lines.push('2. Whether any interests should be parked or abandoned');
+  lines.push('3. What new questions have emerged');
+  lines.push('');
+  lines.push('Use manage_interest and manage_curiosity to plan your day.');
+
+  const prompt = lines.join('\n');
+
+  return {
+    source: 'subconscious:morning-agenda',
+    content: prompt,
+    metadata: {
+      taskType: 'morning-agenda',
+      impulseType: 'transition',
+    },
+    timestamp: context.timestamp,
+  };
+}
+
+export function buildWrapUpEvent(context: Readonly<ImpulseContext>): ExternalEvent {
+  const lines: Array<string> = [];
+
+  lines.push('[Wrap Up]');
+  lines.push('End of day. Reflect on what happened today and prepare for tomorrow.');
+  lines.push('');
+  lines.push('[Active Interests]');
+  lines.push(formatInterests(context.interests));
+  lines.push('');
+  lines.push('[Recent Explorations]');
+  lines.push(formatExplorations(context.recentExplorations));
+  lines.push('');
+  lines.push('[Recent Activity]');
+  lines.push(formatTraceSummary(context.recentTraces));
+  lines.push('');
+  lines.push('Reflect on today\'s work:');
+  lines.push('1. What did you learn?');
+  lines.push('2. What curiosity threads should you pick up tomorrow?');
+  lines.push('3. Are there any interests that have run their course?');
+  lines.push('4. Write any insights to memory for future reference.');
+  lines.push('');
+  lines.push('Use manage_interest and manage_curiosity to update your state before sleep.');
+
+  const prompt = lines.join('\n');
+
+  return {
+    source: 'subconscious:wrap-up',
+    content: prompt,
+    metadata: {
+      taskType: 'wrap-up',
+      impulseType: 'transition',
+    },
+    timestamp: context.timestamp,
+  };
+}

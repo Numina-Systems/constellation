@@ -43,7 +43,7 @@ type ExplorationLogRow = {
   interest_id: string | null;
   curiosity_thread_id: string | null;
   action: string;
-  tools_used: ReadonlyArray<string>;
+  tools_used: ReadonlyArray<string> | string;
   outcome: string;
   created_at: string;
 };
@@ -82,7 +82,7 @@ function parseExplorationLogEntry(row: ExplorationLogRow): ExplorationLogEntry {
     interestId: row.interest_id,
     curiosityThreadId: row.curiosity_thread_id,
     action: row.action,
-    toolsUsed: row.tools_used,
+    toolsUsed: Array.isArray(row.tools_used) ? row.tools_used : JSON.parse(row.tools_used as string),
     outcome: row.outcome,
     createdAt: new Date(row.created_at),
   };
@@ -220,10 +220,10 @@ export function createInterestRegistry(
     const id = randomUUID();
     const rows = await persistence.query<CuriosityThreadRow>(
       `INSERT INTO curiosity_threads
-       (id, interest_id, owner, question, status)
-       VALUES ($1, $2, $3, $4, $5)
+       (id, interest_id, owner, question, status, resolution)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [id, thread.interestId, thread.owner, thread.question, thread.status],
+      [id, thread.interestId, thread.owner, thread.question, thread.status, thread.resolution],
     );
 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -373,35 +373,37 @@ export function createInterestRegistry(
     owner: string,
     maxActive: number,
   ): Promise<ReadonlyArray<Interest>> {
-    // Step 1: Count active interests
-    const countRows = await persistence.query<{ count: number }>(
-      `SELECT COUNT(*) as count FROM interests WHERE owner = $1 AND status = 'active'`,
-      [owner],
-    );
+    return persistence.withTransaction(async (query) => {
+      // Step 1: Count active interests
+      const countRows = await query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM interests WHERE owner = $1 AND status = 'active'`,
+        [owner],
+      );
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const activeCount = countRows[0]!.count;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const activeCount = parseInt(countRows[0]!.count, 10);
 
-    if (activeCount <= maxActive) {
-      return [];
-    }
+      if (activeCount <= maxActive) {
+        return [];
+      }
 
-    // Step 2: Dormant-ify the lowest-scoring interests
-    const excessCount = activeCount - maxActive;
-    const rows = await persistence.query<InterestRow>(
-      `UPDATE interests
-       SET status = 'dormant'
-       WHERE id IN (
-         SELECT id FROM interests
-         WHERE owner = $1 AND status = 'active'
-         ORDER BY engagement_score ASC
-         LIMIT $2
-       )
-       RETURNING *`,
-      [owner, excessCount],
-    );
+      // Step 2: Dormant-ify the lowest-scoring interests
+      const excessCount = activeCount - maxActive;
+      const rows = await query<InterestRow>(
+        `UPDATE interests
+         SET status = 'dormant'
+         WHERE id IN (
+           SELECT id FROM interests
+           WHERE owner = $1 AND status = 'active'
+           ORDER BY engagement_score ASC
+           LIMIT $2
+         )
+         RETURNING *`,
+        [owner, excessCount],
+      );
 
-    return rows.map(parseInterest);
+      return rows.map(parseInterest);
+    });
   }
 
   async function bumpEngagement(

@@ -41,6 +41,8 @@ import { createPostgresScheduler } from '@/scheduler';
 import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
+import { createSubconsciousTools } from '@/tool/builtin/subconscious';
+import { createInterestRegistry } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
 import {
@@ -500,6 +502,9 @@ async function main(): Promise<void> {
   await persistence.runMigrations();
   console.log('migrations completed\n');
 
+  // Create interest registry
+  const interestRegistry = createInterestRegistry(persistence);
+
   // Seed core memory on first run
   const memoryStore = createPostgresMemoryStore(persistence);
   await seedCoreMemory(memoryStore, embedding, 'persona.md');
@@ -841,6 +846,15 @@ async function main(): Promise<void> {
     persistence,
   });
   for (const tool of schedulingTools) {
+    registry.register(tool);
+  }
+
+  // Register subconscious tools
+  const subconsciousTools = createSubconsciousTools({
+    registry: interestRegistry,
+    owner: AGENT_OWNER,
+  });
+  for (const tool of subconsciousTools) {
     registry.register(tool);
   }
 

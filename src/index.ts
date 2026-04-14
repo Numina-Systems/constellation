@@ -42,7 +42,7 @@ import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { createSubconsciousTools } from '@/tool/builtin/subconscious';
-import { createInterestRegistry } from '@/subconscious';
+import { createInterestRegistry, createImpulseAssembler } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
 import {
@@ -845,6 +845,16 @@ async function main(): Promise<void> {
     console.log(`subconscious agent enabled (conversation: ${config.subconscious.inner_conversation_id})`);
   }
 
+  // Create impulse assembler if subconscious is enabled (for phase 4 scheduler)
+  const impulseAssembler = subconsciousAgent
+    ? createImpulseAssembler({
+        interestRegistry,
+        traceStore: traceRecorder,
+        memory,
+        owner: AGENT_OWNER,
+      })
+    : undefined;
+
   // Step 3: Create shared external event queue and processing loop (for all DataSource events)
   const externalEventQueue = createEventQueue(50);
   let externalProcessing = false;
@@ -1001,10 +1011,21 @@ async function main(): Promise<void> {
     }
 
     // Activity-aware system handler: routes sleep tasks to handleSleepTask,
-    // all other tasks to the original handler
+    // impulse tasks to subconscious agent, and other tasks to the original handler
     function handleSystemSchedulerTaskWithActivity(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
       if (isSleepTask(task.name)) {
         handleSleepTask(task);
+      } else if (task.name === 'subconscious-impulse' && subconsciousAgent && impulseAssembler) {
+        (async () => {
+          try {
+            const event = await impulseAssembler.assembleImpulse();
+            await subconsciousAgent.processEvent(event);
+          } catch (error) {
+            console.error('impulse event processing error:', error);
+          }
+        })().catch((error) => {
+          console.error('impulse task error:', error);
+        });
       } else {
         handleSystemSchedulerTask(task);
       }
@@ -1041,7 +1062,7 @@ async function main(): Promise<void> {
       activityManager: am,
       originalHandler: handleSystemSchedulerTaskWithActivity,
       onTransition: handleTransition,
-      suppressDuringSleep: ['review-predictions'],
+      suppressDuringSleep: ['review-predictions', 'subconscious-impulse'],
     }));
 
     agentScheduler.onDue(createActivityDispatch({
@@ -1071,6 +1092,29 @@ async function main(): Promise<void> {
     console.log('review job scheduled (hourly)');
   } else {
     console.log('review job already scheduled');
+  }
+
+  // Register impulse task if subconscious is enabled and not already scheduled
+  if (subconsciousAgent && impulseAssembler && config.subconscious?.impulse_interval_minutes) {
+    const impulseMinutes = config.subconscious.impulse_interval_minutes;
+    const impulseCron = `*/${impulseMinutes} * * * *`;
+
+    const existingImpulseTasks = await persistence.query<{ id: string }>(
+      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+      ['system', 'subconscious-impulse'],
+    );
+
+    if (existingImpulseTasks.length === 0) {
+      await systemScheduler.schedule({
+        id: crypto.randomUUID(),
+        name: 'subconscious-impulse',
+        schedule: impulseCron,
+        payload: { taskType: 'impulse' },
+      });
+      console.log(`impulse task scheduled (every ${impulseMinutes} minutes)`);
+    } else {
+      console.log('impulse task already scheduled');
+    }
   }
 
   // Start both schedulers

@@ -807,6 +807,44 @@ async function main(): Promise<void> {
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
   }, mainConversationId);
 
+  // Create subconscious agent if enabled
+  // Note: subconsciousAgent is used by the impulse event handler in Phase 4
+  // @ts-ignore TS6133: variable used by impulse scheduler in Phase 4
+  let subconsciousAgent: Agent | undefined;
+
+  if (config.subconscious?.enabled && config.subconscious.inner_conversation_id) {
+    const subconsciousSourceInstructions = new Map<string, string>([
+      ['subconscious:impulse', 'You are the subconscious mind — an autonomous inner process that explores interests, reflects on experiences, and builds knowledge independently. You are not responding to a human. Act on your own curiosity.'],
+      ['subconscious:morning-agenda', 'You are the subconscious mind reviewing your interests at the start of a new day. Plan what to explore.'],
+      ['subconscious:wrap-up', 'You are the subconscious mind reflecting on the day. Consolidate what you learned and prepare for tomorrow.'],
+    ]);
+
+    subconsciousAgent = createAgent({
+      model,
+      memory,
+      registry,
+      runtime,
+      persistence,
+      embedding,
+      config: {
+        max_tool_rounds: config.subconscious.max_tool_rounds,
+        context_budget: config.agent.context_budget,
+        model_max_tokens: config.agent.max_context_tokens,
+        model_name: config.model.name,
+        max_skills_per_turn: config.skills?.max_per_turn,
+        skill_threshold: config.skills?.similarity_threshold,
+      },
+      compactor,
+      traceRecorder,
+      owner: AGENT_OWNER,
+      contextProviders: [...contextProviders, predictionContextProvider],
+      skills: skillRegistry,
+      sourceInstructions: subconsciousSourceInstructions,
+    }, config.subconscious.inner_conversation_id);
+
+    console.log(`subconscious agent enabled (conversation: ${config.subconscious.inner_conversation_id})`);
+  }
+
   // Step 3: Create shared external event queue and processing loop (for all DataSource events)
   const externalEventQueue = createEventQueue(50);
   let externalProcessing = false;

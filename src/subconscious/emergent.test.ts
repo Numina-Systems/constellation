@@ -130,7 +130,7 @@ describe('subconscious.AC3: Interest registry tracks what the agent cares about'
 
       // Apply decay (7 day half-life)
       const decayedCount = await registry.applyEngagementDecay(TEST_OWNER, 7);
-      expect(decayedCount === 5).toBe(true); // All 5 interests decayed
+      expect(decayedCount).toBe(5);
 
       // Get scores after decay to verify they changed
       const afterDecay = await registry.listInterests(TEST_OWNER);

@@ -1022,6 +1022,23 @@ async function main(): Promise<void> {
 
     // Activity-aware system handler: routes sleep tasks to handleSleepTask,
     // impulse tasks to subconscious agent, and other tasks to the original handler
+    async function runPostImpulseHousekeeping(): Promise<void> {
+      try {
+        const halfLife = config.subconscious?.engagement_half_life_days ?? 7;
+        const maxActive = config.subconscious?.max_active_interests ?? 10;
+
+        await interestRegistry.applyEngagementDecay(AGENT_OWNER, halfLife);
+
+        const dormanted = await interestRegistry.enforceActiveInterestCap(AGENT_OWNER, maxActive);
+
+        if (dormanted.length > 0) {
+          console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActive})`);
+        }
+      } catch (error) {
+        console.error('[subconscious] housekeeping error:', error);
+      }
+    }
+
     function handleSystemSchedulerTaskWithActivity(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
       if (isSleepTask(task.name)) {
         handleSleepTask(task);
@@ -1030,24 +1047,7 @@ async function main(): Promise<void> {
           try {
             const event = await impulseAssembler.assembleImpulse();
             await subconsciousAgent.processEvent(event);
-
-            // Post-impulse housekeeping
-            try {
-              const halfLife = config.subconscious?.engagement_half_life_days ?? 7;
-              const maxActive = config.subconscious?.max_active_interests ?? 10;
-
-              // Apply engagement decay to all active interests
-              await interestRegistry.applyEngagementDecay(AGENT_OWNER, halfLife);
-
-              // Enforce active interest cap — dormant lowest-scoring if over cap
-              const dormanted = await interestRegistry.enforceActiveInterestCap(AGENT_OWNER, maxActive);
-
-              if (dormanted.length > 0) {
-                console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActive})`);
-              }
-            } catch (error) {
-              console.error('[subconscious] housekeeping error:', error);
-            }
+            await runPostImpulseHousekeeping();
           } catch (error) {
             console.error('impulse event processing error:', error);
           }
@@ -1080,24 +1080,7 @@ async function main(): Promise<void> {
             try {
               const wrapUpEvent = await impulseAssembler.assembleWrapUp();
               await subconsciousAgent.processEvent(wrapUpEvent);
-
-              // Post-impulse housekeeping
-              try {
-                const halfLife = config.subconscious?.engagement_half_life_days ?? 7;
-                const maxActive = config.subconscious?.max_active_interests ?? 10;
-
-                // Apply engagement decay to all active interests
-                await interestRegistry.applyEngagementDecay(AGENT_OWNER, halfLife);
-
-                // Enforce active interest cap — dormant lowest-scoring if over cap
-                const dormanted = await interestRegistry.enforceActiveInterestCap(AGENT_OWNER, maxActive);
-
-                if (dormanted.length > 0) {
-                  console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActive})`);
-                }
-              } catch (error) {
-                console.error('[subconscious] housekeeping error:', error);
-              }
+              await runPostImpulseHousekeeping();
             } catch (error) {
               console.error('[subconscious] wrap-up error:', error);
             }
@@ -1110,24 +1093,7 @@ async function main(): Promise<void> {
             try {
               const morningEvent = await impulseAssembler.assembleMorningAgenda();
               await subconsciousAgent.processEvent(morningEvent);
-
-              // Post-impulse housekeeping
-              try {
-                const halfLife = config.subconscious?.engagement_half_life_days ?? 7;
-                const maxActive = config.subconscious?.max_active_interests ?? 10;
-
-                // Apply engagement decay to all active interests
-                await interestRegistry.applyEngagementDecay(AGENT_OWNER, halfLife);
-
-                // Enforce active interest cap — dormant lowest-scoring if over cap
-                const dormanted = await interestRegistry.enforceActiveInterestCap(AGENT_OWNER, maxActive);
-
-                if (dormanted.length > 0) {
-                  console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActive})`);
-                }
-              } catch (error) {
-                console.error('[subconscious] housekeeping error:', error);
-              }
+              await runPostImpulseHousekeeping();
             } catch (error) {
               console.error('[subconscious] morning agenda error:', error);
             }

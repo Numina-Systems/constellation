@@ -13,6 +13,10 @@ export type ImpulseContext = {
   readonly timestamp: Date;
 };
 
+export function buildImpulseCron(intervalMinutes: number): string {
+  return `*/${intervalMinutes} * * * *`;
+}
+
 export function buildImpulseEvent(context: Readonly<ImpulseContext>): ExternalEvent {
   const lines: Array<string> = [];
 

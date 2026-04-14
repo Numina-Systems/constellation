@@ -12,7 +12,7 @@ export type {
 } from './types.ts';
 
 export { createInterestRegistry } from './persistence.ts';
-export { buildImpulseEvent } from './impulse.ts';
+export { buildImpulseEvent, buildImpulseCron } from './impulse.ts';
 export type { ImpulseContext } from './impulse.ts';
 export { createImpulseAssembler } from './impulse-assembler.ts';
 export type { ImpulseAssembler } from './impulse-assembler.ts';

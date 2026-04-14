@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'bun:test';
+import { buildImpulseCron } from './impulse';
 import { createActivityDispatch } from '@/activity/dispatch';
+import { SUPPRESS_DURING_SLEEP } from '@/index';
 import type { ActivityManager } from '@/activity/types';
 
 describe('subconscious.AC1.1: Impulse scheduling', () => {
-  it('converts impulse_interval_minutes to valid cron expression', () => {
-    const impulseMinutes = 20;
-    const impulseCron = `*/${impulseMinutes} * * * *`;
+  it('buildImpulseCron converts interval_minutes to valid cron expression', () => {
+    const cron = buildImpulseCron(20);
 
-    // Verify cron expression format
-    const parts = impulseCron.split(' ');
+    // Verify the function produces a valid 5-part cron expression
+    const parts = cron.split(' ');
     expect(parts).toHaveLength(5);
     expect(parts[0]).toBe('*/20');
     expect(parts[1]).toBe('*');
@@ -17,7 +18,7 @@ describe('subconscious.AC1.1: Impulse scheduling', () => {
     expect(parts[4]).toBe('*');
   });
 
-  it('converts various interval minutes to cron expressions', () => {
+  it('buildImpulseCron handles various interval minutes', () => {
     const testCases = [
       { minutes: 5, expected: '*/5 * * * *' },
       { minutes: 10, expected: '*/10 * * * *' },
@@ -27,7 +28,7 @@ describe('subconscious.AC1.1: Impulse scheduling', () => {
     ];
 
     for (const testCase of testCases) {
-      const cron = `*/${testCase.minutes} * * * *`;
+      const cron = buildImpulseCron(testCase.minutes);
       expect(cron).toBe(testCase.expected);
     }
   });
@@ -57,8 +58,8 @@ describe('subconscious.AC1.4: Impulse suppression during sleep', () => {
     // Call dispatch with a suppressed task during sleep
     testDispatch({ id: 'task-1', name: 'subconscious-impulse', schedule: '', payload: {} });
 
-    // Wait for async dispatch to complete
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Flush microtasks to allow the async dispatch to complete
+    await new Promise((resolve) => setImmediate(resolve));
 
     // Handler should NOT have been called during sleep
     expect(handlerCalled).toBe(false);
@@ -87,17 +88,16 @@ describe('subconscious.AC1.4: Impulse suppression during sleep', () => {
     // Call dispatch with a suppressed task during wake hours
     testDispatch({ id: 'task-1', name: 'subconscious-impulse', schedule: '', payload: {} });
 
-    // Wait for async dispatch to complete
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Flush microtasks to allow the async dispatch to complete
+    await new Promise((resolve) => setImmediate(resolve));
 
     // Handler SHOULD have been called during wake
     expect(handlerCalled).toBe(true);
   });
 
-  it('impulse task name is in suppress list', () => {
-    // This verifies the expected configuration from src/index.ts
-    const suppressDuringSleep = ['review-predictions', 'subconscious-impulse'];
-
-    expect(suppressDuringSleep).toContain('subconscious-impulse');
+  it('impulse task name is in suppress list from configuration', () => {
+    // Imports actual SUPPRESS_DURING_SLEEP from src/index.ts
+    // This verifies that 'subconscious-impulse' is configured to be suppressed during sleep
+    expect(SUPPRESS_DURING_SLEEP).toContain('subconscious-impulse');
   });
 });

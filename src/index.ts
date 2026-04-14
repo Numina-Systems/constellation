@@ -42,7 +42,7 @@ import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { createSubconsciousTools } from '@/tool/builtin/subconscious';
-import { createInterestRegistry, createImpulseAssembler } from '@/subconscious';
+import { createInterestRegistry, createImpulseAssembler, buildImpulseCron } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
 import {
@@ -77,6 +77,8 @@ import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 
 const AGENT_OWNER = 'spirit';
+
+export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse'] as const;
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -1062,7 +1064,7 @@ async function main(): Promise<void> {
       activityManager: am,
       originalHandler: handleSystemSchedulerTaskWithActivity,
       onTransition: handleTransition,
-      suppressDuringSleep: ['review-predictions', 'subconscious-impulse'],
+      suppressDuringSleep: SUPPRESS_DURING_SLEEP,
     }));
 
     agentScheduler.onDue(createActivityDispatch({
@@ -1097,7 +1099,7 @@ async function main(): Promise<void> {
   // Register impulse task if subconscious is enabled and not already scheduled
   if (subconsciousAgent && impulseAssembler && config.subconscious?.impulse_interval_minutes) {
     const impulseMinutes = config.subconscious.impulse_interval_minutes;
-    const impulseCron = `*/${impulseMinutes} * * * *`;
+    const impulseCron = buildImpulseCron(impulseMinutes);
 
     const existingImpulseTasks = await persistence.query<{ id: string }>(
       `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,

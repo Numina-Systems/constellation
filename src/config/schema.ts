@@ -189,6 +189,25 @@ const ActivityConfigSchema = z
     }
   });
 
+const SubconsciousConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    inner_conversation_id: z.string().optional(),
+    impulse_interval_minutes: z.number().min(5).max(120).default(20),
+    max_tool_rounds: z.number().min(1).max(20).default(5),
+    engagement_half_life_days: z.number().min(1).max(90).default(7),
+    max_active_interests: z.number().min(1).max(50).default(10),
+  })
+  .superRefine((data, ctx) => {
+    if (data.enabled && !data.inner_conversation_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "inner_conversation_id is required when subconscious is enabled",
+        path: ["inner_conversation_id"],
+      });
+    }
+  });
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -201,6 +220,7 @@ const AppConfigSchema = z.object({
   skills: SkillConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
   activity: ActivityConfigSchema.optional(),
+  subconscious: SubconsciousConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -216,5 +236,6 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
+export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, SubconsciousConfigSchema };

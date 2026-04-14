@@ -42,7 +42,12 @@ import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
 import { createSubconsciousTools } from '@/tool/builtin/subconscious';
-import { createInterestRegistry, createImpulseAssembler, buildImpulseCron } from '@/subconscious';
+import {
+  createInterestRegistry,
+  createImpulseAssembler,
+  buildImpulseCron,
+  createSubconsciousContextProvider,
+} from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
 import {
@@ -562,6 +567,9 @@ async function main(): Promise<void> {
     config.bluesky.watched_dids,
   );
 
+  // Create subconscious context provider
+  const subconsciousContextProvider = createSubconsciousContextProvider(interestRegistry, AGENT_OWNER);
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -804,7 +812,7 @@ async function main(): Promise<void> {
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider],
+    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider, subconsciousContextProvider],
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
   }, mainConversationId);

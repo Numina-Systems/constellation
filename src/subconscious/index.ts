@@ -16,3 +16,4 @@ export { buildImpulseEvent, buildImpulseCron } from './impulse.ts';
 export type { ImpulseContext } from './impulse.ts';
 export { createImpulseAssembler } from './impulse-assembler.ts';
 export type { ImpulseAssembler } from './impulse-assembler.ts';
+export { createSubconsciousContextProvider } from './context.ts';

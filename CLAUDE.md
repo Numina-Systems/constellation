@@ -29,7 +29,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
 - `src/search/` -- Hybrid search (semantic + keyword + RRF) across memory and conversations
-- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search)
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search, subconscious)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers

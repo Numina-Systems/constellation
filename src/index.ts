@@ -1057,9 +1057,27 @@ async function main(): Promise<void> {
     const handleTransition = (task: { name: string }): void => {
       (async () => {
         if (task.name === 'transition-to-sleep') {
+          // Dispatch wrap-up to subconscious before sleep
+          if (subconsciousAgent && impulseAssembler) {
+            try {
+              const wrapUpEvent = await impulseAssembler.assembleWrapUp();
+              await subconsciousAgent.processEvent(wrapUpEvent);
+            } catch (error) {
+              console.error('[subconscious] wrap-up error:', error);
+            }
+          }
           await am.transitionTo('sleeping');
           console.log('[activity] transitioned to sleeping mode');
         } else if (task.name === 'transition-to-wake') {
+          // Dispatch morning agenda to subconscious before queue drain
+          if (subconsciousAgent && impulseAssembler) {
+            try {
+              const morningEvent = await impulseAssembler.assembleMorningAgenda();
+              await subconsciousAgent.processEvent(morningEvent);
+            } catch (error) {
+              console.error('[subconscious] morning agenda error:', error);
+            }
+          }
           await wakeHandler();
         }
       })().catch((error) => {

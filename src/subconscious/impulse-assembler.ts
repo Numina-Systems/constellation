@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import { buildImpulseEvent } from './impulse';
+import { buildImpulseEvent, buildMorningAgendaEvent, buildWrapUpEvent } from './impulse';
 import type { ExternalEvent } from '@/agent/types';
 import type { InterestRegistry } from './types';
 import type { TraceStore } from '@/reflexion';
@@ -20,7 +20,7 @@ export type ImpulseAssembler = {
 };
 
 export function createImpulseAssembler(deps: Readonly<ImpulseAssemblerDeps>): ImpulseAssembler {
-  async function assembleImpulse(): Promise<ExternalEvent> {
+  async function fetchContext() {
     const [interests, explorations, traces, memories] = await Promise.all([
       deps.interestRegistry.listInterests(deps.owner, { status: 'active' }),
       deps.interestRegistry.listExplorationLog(deps.owner, 10),
@@ -32,13 +32,13 @@ export function createImpulseAssembler(deps: Readonly<ImpulseAssemblerDeps>): Im
       fetchRecentMemories(),
     ]);
 
-    return buildImpulseEvent({
+    return {
       interests,
       recentExplorations: explorations,
       recentTraces: traces,
       recentMemories: memories,
       timestamp: new Date(),
-    });
+    };
   }
 
   async function fetchRecentMemories(): Promise<ReadonlyArray<string>> {
@@ -50,16 +50,19 @@ export function createImpulseAssembler(deps: Readonly<ImpulseAssemblerDeps>): Im
     return results.map((result) => result.block.content);
   }
 
-  function assembleMorningAgenda(): Promise<ExternalEvent> {
-    return Promise.reject(
-      new Error('Morning agenda not implemented yet — see Phase 6'),
-    );
+  async function assembleImpulse(): Promise<ExternalEvent> {
+    const context = await fetchContext();
+    return buildImpulseEvent(context);
   }
 
-  function assembleWrapUp(): Promise<ExternalEvent> {
-    return Promise.reject(
-      new Error('Wrap-up not implemented yet — see Phase 6'),
-    );
+  async function assembleMorningAgenda(): Promise<ExternalEvent> {
+    const context = await fetchContext();
+    return buildMorningAgendaEvent(context);
+  }
+
+  async function assembleWrapUp(): Promise<ExternalEvent> {
+    const context = await fetchContext();
+    return buildWrapUpEvent(context);
   }
 
   return {

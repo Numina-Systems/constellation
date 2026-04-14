@@ -11,4 +11,4 @@ export type {
   InterestRegistry,
 } from './types.ts';
 
-// export { createInterestRegistry } from './persistence.ts';
+export { createInterestRegistry } from './persistence.ts';

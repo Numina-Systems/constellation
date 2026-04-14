@@ -79,7 +79,8 @@ function createMockInterestRegistry(): InterestRegistry & {
         result = result.filter((i) => i.source === filters.source);
       }
       if (filters?.minScore !== undefined) {
-        result = result.filter((i) => i.engagementScore >= filters.minScore);
+        const minScore = filters.minScore;
+        result = result.filter((i) => i.engagementScore >= minScore);
       }
 
       return result;

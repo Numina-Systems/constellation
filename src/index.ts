@@ -49,6 +49,7 @@ import {
   createSubconsciousContextProvider,
   createContinuationBudget,
   createContinuationJudge,
+  runContinuationLoop,
 } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
@@ -1065,9 +1066,29 @@ async function main(): Promise<void> {
       } else if (task.name === 'subconscious-impulse' && subconsciousAgent && impulseAssembler) {
         (async () => {
           try {
+            continuationBudget?.resetEvent();
+            let roundStart = new Date();
             const event = await impulseAssembler.assembleImpulse();
-            await subconsciousAgent.processEvent(event);
+            const responseText = await subconsciousAgent.processEvent(event);
             await runPostImpulseHousekeeping();
+
+            // Continuation loop (best-effort, errors don't break normal flow)
+            if (continuationBudget && continuationJudge) {
+              await runContinuationLoop(
+                {
+                  judge: continuationJudge,
+                  budget: continuationBudget,
+                  queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
+                  queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
+                  assembleEvent: () => impulseAssembler.assembleImpulse(),
+                  processEvent: (e) => subconsciousAgent.processEvent(e),
+                  onHousekeeping: runPostImpulseHousekeeping,
+                  eventType: 'impulse',
+                },
+                responseText,
+                roundStart,
+              );
+            }
           } catch (error) {
             console.error('impulse event processing error:', error);
           }

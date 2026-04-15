@@ -45,8 +45,8 @@ describe('Skill management tools', () => {
         if (!existing) {
           throw new Error('skill not found');
         }
-        if (existing.source === 'builtin') {
-          throw new Error('cannot update builtin skill');
+        if (existing.source !== 'agent') {
+          throw new Error(`cannot update ${existing.source} skill "${name}" — only agent skills can be updated`);
         }
         const updated: SkillDefinition = {
           ...existing,
@@ -60,6 +60,11 @@ describe('Skill management tools', () => {
         };
         map.set(name, updated);
         return updated;
+      },
+      async injectSkills(skillsToInject) {
+        for (const skill of skillsToInject) {
+          map.set(skill.metadata.name, skill);
+        }
       },
     };
   }
@@ -443,6 +448,65 @@ describe('Skill management tools', () => {
       expect(result.success).toBe(true);
       const created = registry.getByName('skill-no-tags');
       expect(created?.metadata.tags).toEqual([]);
+    });
+  });
+
+  describe('mcp-client.AC5.5: skill_create rejects creating MCP skills', () => {
+    it('should create agent skills with source "agent", never "mcp"', async () => {
+      const registry = createMockRegistry([]);
+      const tools = createSkillTools(registry);
+      const skill_create = tools.find((t) => t.definition.name === 'skill_create');
+      expect(skill_create).toBeDefined();
+
+      if (!skill_create) return;
+
+      const result = await skill_create.handler({
+        name: 'my-skill',
+        description: 'A test skill',
+        body: 'body',
+      });
+
+      expect(result.success).toBe(true);
+      const created = registry.getByName('my-skill');
+      expect(created).toBeDefined();
+      expect(created?.source).toBe('agent');
+    });
+  });
+
+  describe('mcp-client.AC5.6: skill_update rejects updating MCP skills', () => {
+    it('should reject update attempts on MCP skills with source-specific error', async () => {
+      const mcpSkill: SkillDefinition = {
+        id: 'skill:mcp:github:code-review',
+        metadata: {
+          name: 'code-review',
+          description: 'Review code',
+          version: undefined,
+          tags: ['mcp', 'github'],
+        },
+        body: 'MCP prompt content',
+        companions: [],
+        source: 'mcp',
+        filePath: 'mcp://github/code-review',
+        contentHash: 'hash-value',
+      };
+
+      const registry = createMockRegistry([mcpSkill]);
+      const tools = createSkillTools(registry);
+      const skill_update = tools.find((t) => t.definition.name === 'skill_update');
+      expect(skill_update).toBeDefined();
+
+      if (!skill_update) return;
+
+      const result = await skill_update.handler({
+        name: 'code-review',
+        description: 'Updated description',
+        body: 'new body',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('cannot update');
+      expect(result.error).toContain('mcp');
     });
   });
 });

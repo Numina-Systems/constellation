@@ -33,6 +33,9 @@ Provides a tool registry that manages registration, parameter validation, dispat
 - `memory_read(query, limit?, tier?)` -- Semantic search across memory
 - `memory_write(label, content, tier?, reason?)` -- Write/update memory block
 - `memory_list(tier?)` -- List memory blocks
+- `memory_delete(id)` -- Delete a memory block by ID
+- `memory_move(id, tier)` -- Move a memory block to a different tier
+- `memory_stats(tier?)` -- Get block count and total content size in bytes
 - `execute_code(code)` -- Definition only; dispatched by agent to runtime
 - `compact_context()` -- Definition only; dispatched by agent to compactor for context compression
 - `web_search(query, limit?)` -- Search via provider fallback chain

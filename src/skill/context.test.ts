@@ -128,6 +128,7 @@ describe('Skill injection pipeline', () => {
         getRelevant: async () => [skill1, skill2],
         createAgentSkill: async () => skill1,
         updateAgentSkill: async () => skill1,
+        injectSkills: async () => {},
       };
 
       const result = await buildSystemPromptWithSkills(basePrompt, mockRegistry, 'write python', 3, 0.3);
@@ -161,6 +162,7 @@ describe('Skill injection pipeline', () => {
         },
         createAgentSkill: async () => relevantSkill,
         updateAgentSkill: async () => relevantSkill,
+        injectSkills: async () => {},
       };
 
       // With low threshold, should include skill
@@ -190,6 +192,7 @@ describe('Skill injection pipeline', () => {
         },
         createAgentSkill: async () => createTestSkill('test', 'test', 'test'),
         updateAgentSkill: async () => createTestSkill('test', 'test', 'test'),
+        injectSkills: async () => {},
       };
 
       await buildSystemPromptWithSkills(basePrompt, mockRegistry, 'test', 5, 0.3);
@@ -225,6 +228,7 @@ describe('Skill injection pipeline', () => {
         },
         createAgentSkill: async () => createTestSkill('test', 'test', 'test'),
         updateAgentSkill: async () => createTestSkill('test', 'test', 'test'),
+        injectSkills: async () => {},
       };
 
       const result = await buildSystemPromptWithSkills(basePrompt, mockRegistry, 'test', 3, 0.3);

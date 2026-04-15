@@ -23,6 +23,9 @@ function isRetryableError(error: unknown): boolean {
   if (error instanceof OpenAI.RateLimitError) {
     return true;
   }
+  if (error instanceof OpenAI.APIConnectionTimeoutError) {
+    return true;
+  }
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
     if (message.includes("timeout") || message.includes("econnrefused")) {
@@ -38,6 +41,13 @@ function classifyError(error: unknown): never {
       "auth",
       false,
       error.message || "authentication failed"
+    );
+  }
+  if (error instanceof OpenAI.APIConnectionTimeoutError) {
+    throw new ModelError(
+      "timeout",
+      true,
+      error.message || "request timed out"
     );
   }
   if (error instanceof OpenAI.RateLimitError) {
@@ -193,7 +203,8 @@ export function createOpenRouterAdapter(
             const body = buildRequestBody(request, config, false);
 
             return await client.chat.completions.create(
-              body as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
+              body as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+              ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
             );
           } catch (error) {
             classifyError(error);
@@ -247,7 +258,8 @@ export function createOpenRouterAdapter(
             const body = buildRequestBody(request, config, true);
 
             return await client.chat.completions.create(
-              body as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming
+              body as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
+              ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
             );
           } catch (error) {
             classifyError(error);

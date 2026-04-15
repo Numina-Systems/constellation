@@ -6,12 +6,14 @@ Last verified: 2026-04-05
 Implements a three-tier memory system (core/working/archival) with permission-based write access, semantic search via pgvector, event sourcing, and a mutation approval flow for human-controlled blocks.
 
 ## Contracts
-- **Exposes**: `MemoryManager` interface (context building, read/write/list/deleteBlock, mutation management), `MemoryStore` port interface, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, all memory types
+- **Exposes**: `MemoryManager` interface (context building, read/write/list/deleteBlock/moveBlock/getStats, mutation management), `MemoryStore` port interface, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, all memory types
 - **Guarantees**:
   - `readonly` blocks cannot be written to
   - `familiar`-permissioned blocks queue a `PendingMutation` instead of writing directly (requires human approval)
   - `append` blocks concatenate content; `readwrite` blocks overwrite
   - `read()` performs semantic search via embedding similarity
+  - `moveBlock()` changes a block's tier atomically (rejects readonly blocks, logs archive event)
+  - `getStats()` returns block count and total content bytes for a tier (or all tiers)
   - All mutations are event-sourced (`memory_events` table). `MemoryEvent.block_id` is nullable -- events survive block deletion (FK `ON DELETE SET NULL`).
   - `buildSystemPrompt()` returns all core blocks formatted for the model system prompt
 - **Expects**: `PersistenceProvider` connected with migrations applied. `EmbeddingProvider` available (graceful fallback to null embedding on failure).

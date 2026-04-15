@@ -203,6 +203,14 @@ function createMockMemoryManager(): MemoryManager {
         resolved_at: new Date(),
       };
     },
+
+    async moveBlock() {
+      throw new Error('not implemented');
+    },
+
+    async getStats() {
+      return { tier: 'all' as const, block_count: 0, total_bytes: 0 };
+    },
   };
 }
 

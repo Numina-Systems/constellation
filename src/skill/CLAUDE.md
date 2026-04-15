@@ -1,12 +1,12 @@
 # Skill
 
-Last verified: 2026-03-01
+Last verified: 2026-04-05
 
 ## Purpose
 Embedding-based skill retrieval system. Skills are structured markdown files (SKILL.md) with YAML frontmatter that teach the agent how to approach specific situations. Retrieved per-turn via semantic similarity.
 
 ## Contracts
-- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface, `createSkillRegistry(options)`, `createPostgresSkillStore(persistence)`, `loadSkills(options)`, `createSkillTools(registry)`, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
+- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface (including `injectSkills()`), `createSkillRegistry(options)`, `createPostgresSkillStore(persistence)`, `loadSkills(options)`, `createSkillTools(registry)`, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
 - **SkillStore interface methods**:
   - `upsertEmbedding()` — Write or update skill embedding
   - `deleteEmbedding()` — Remove skill embedding
@@ -18,13 +18,15 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
   - `SkillRegistry` provides unified interface for loading, searching, and managing skills
   - `LoadResult` captures both successful loads and errors from the loader
   - `getAllIds()` enables orphan cleanup when skills are removed from disk
+  - `injectSkills()` accepts non-filesystem skill sources (e.g. MCP prompts) and embeds them for semantic retrieval
+  - `SkillSource` is `'builtin' | 'agent' | 'mcp'` -- only `'agent'` skills can be updated via `updateAgentSkill()`
   - `formatSkillsSection` formats an array of skills into a markdown system prompt section (returns `undefined` if empty)
   - Skills are injected per-turn via `SkillRegistry.getRelevant()`, with errors logged and execution continuing (skills are optional/supplementary)
 - **Expects**: `yaml` npm package for YAML parsing, `EmbeddingProvider` for skill embeddings
 
 ## Dependencies
 - **Uses**: `src/tool/` (ToolParameter type), `yaml` (YAML parsing)
-- **Used by**: `src/agent/` (per-turn skill retrieval and formatting), `src/index.ts` (composition root wires registry, store, and skill-defined tools)
+- **Used by**: `src/agent/` (per-turn skill retrieval and formatting), `src/index.ts` (composition root wires registry, store, and skill-defined tools), `src/mcp/` (prompt-to-skill conversion via `injectSkills()`)
 
 ## Key Decisions
 - Embedding-based retrieval over system-prompt enumeration: Scales without bloating context

@@ -1,6 +1,6 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createOpenAICompatAdapter, normalizeMessages } from "./openai-compat.js";
 import { ModelError } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
@@ -259,6 +259,196 @@ describe("createOpenAICompatAdapter", () => {
         ],
       });
       expect(response2.content).toBeDefined();
+    });
+  });
+
+  describe("timeout support with mock server", () => {
+    let mockServerUrl = "";
+    let mockServer: ReturnType<typeof Bun.serve> | null = null;
+    let requestDelay = 0;
+
+    beforeAll(async () => {
+      mockServer = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          // Simulate delay if configured
+          if (requestDelay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, requestDelay));
+          }
+
+          // Return valid OpenAI-compatible JSON response for non-streaming
+          const acceptHeader = req.headers.get("accept") || "";
+          if (acceptHeader.includes("text/event-stream")) {
+            // Streaming response (SSE format)
+            const sseChunks = [
+              `data: ${JSON.stringify({
+                id: "chatcmpl-123",
+                object: "chat.completion.chunk",
+                created: 1678886400,
+                model: "gpt-4",
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      role: "assistant",
+                      content: "",
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              })}\n\n`,
+              `data: ${JSON.stringify({
+                id: "chatcmpl-123",
+                object: "chat.completion.chunk",
+                created: 1678886400,
+                model: "gpt-4",
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      content: "Hello",
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              })}\n\n`,
+              `data: ${JSON.stringify({
+                id: "chatcmpl-123",
+                object: "chat.completion.chunk",
+                created: 1678886400,
+                model: "gpt-4",
+                choices: [
+                  {
+                    index: 0,
+                    delta: {},
+                    finish_reason: "stop",
+                  },
+                ],
+              })}\n\n`,
+              `data: [DONE]\n\n`,
+            ];
+
+            return new Response(sseChunks.join(""), {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            });
+          }
+
+          // Non-streaming response
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl-123",
+              object: "chat.completion",
+              created: 1678886400,
+              model: "gpt-4",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: "Hello",
+                  },
+                  finish_reason: "stop",
+                },
+              ],
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }
+          );
+        },
+      });
+
+      mockServerUrl = `http://localhost:${mockServer.port}`;
+    });
+
+    afterAll(() => {
+      mockServer?.stop();
+    });
+
+    it("should pass timeout to complete when provided (AC4.1)", async () => {
+      const config: ModelConfig = {
+        provider: "openai-compat",
+        name: "gpt-4",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenAICompatAdapter(config);
+
+      const response = await adapter.complete({
+        model: "gpt-4",
+        max_tokens: 100,
+        timeout: 5000,
+        messages: [
+          {
+            role: "user",
+            content: "Hello",
+          },
+        ],
+      });
+
+      expect(response.content).toBeDefined();
+      expect(response.content.length).toBeGreaterThan(0);
+    });
+
+    it("should work without timeout (AC4.2)", async () => {
+      const config: ModelConfig = {
+        provider: "openai-compat",
+        name: "gpt-4",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenAICompatAdapter(config);
+
+      const response = await adapter.complete({
+        model: "gpt-4",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "Hello",
+          },
+        ],
+      });
+
+      expect(response.content).toBeDefined();
+      expect(response.content.length).toBeGreaterThan(0);
+    });
+
+    it("should throw ModelError with timeout code when timeout is exceeded (AC4.3)", async () => {
+      requestDelay = 300;
+
+      const config: ModelConfig = {
+        provider: "openai-compat",
+        name: "gpt-4",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenAICompatAdapter(config);
+
+      try {
+        await adapter.complete({
+          model: "gpt-4",
+          max_tokens: 100,
+          timeout: 100,
+          messages: [
+            {
+              role: "user",
+              content: "Hello",
+            },
+          ],
+        });
+        expect(true).toBe(false); // Should not reach here
+      } catch (error) {
+        expect(error).toBeInstanceOf(ModelError);
+        expect((error as ModelError).code).toBe("timeout");
+        expect((error as ModelError).retryable).toBe(true);
+      } finally {
+        requestDelay = 0;
+      }
     });
   });
 

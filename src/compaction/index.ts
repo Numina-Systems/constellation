@@ -11,4 +11,4 @@ export type { BuildSummarizationRequestOptions, BuildResummarizationRequestOptio
 export { DEFAULT_SYSTEM_PROMPT, DEFAULT_DIRECTIVE, buildSummarizationRequest, buildResummarizationRequest } from './prompt.js';
 export { scoreMessage } from './scoring.js';
 export type { CreateCompactorOptions } from './compactor.js';
-export { createCompactor } from './compactor.js';
+export { createCompactor, chunkMessagesByTokenBudget } from './compactor.js';

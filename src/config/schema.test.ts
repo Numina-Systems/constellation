@@ -849,3 +849,154 @@ describe("OpenRouterConfigSchema and ModelConfigSchema with openrouter provider"
     });
   });
 });
+
+describe("SubconsciousConfigSchema", () => {
+  describe("introspection-loop.AC4.2: Introspection config defaults and bounds", () => {
+    it("should apply defaults when parsing minimal subconscious config", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious).toBeDefined();
+      expect(result.subconscious!.introspection_offset_minutes).toBe(3);
+      expect(result.subconscious!.introspection_lookback_hours).toBe(24);
+    });
+
+    it("should reject introspection_offset_minutes: 0 (below min)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_offset_minutes: 0,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject introspection_lookback_hours: 0 (below min)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_lookback_hours: 0,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject introspection_offset_minutes: 31 (above max)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_offset_minutes: 31,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject introspection_lookback_hours: 73 (above max)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_lookback_hours: 73,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should parse valid custom values for introspection_offset_minutes: 5", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_offset_minutes: 5,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious!.introspection_offset_minutes).toBe(5);
+    });
+
+    it("should parse valid custom values for introspection_lookback_hours: 48", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_lookback_hours: 48,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious!.introspection_lookback_hours).toBe(48);
+    });
+
+    it("should parse both custom values together", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          introspection_offset_minutes: 5,
+          introspection_lookback_hours: 48,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious!.introspection_offset_minutes).toBe(5);
+      expect(result.subconscious!.introspection_lookback_hours).toBe(48);
+    });
+  });
+});

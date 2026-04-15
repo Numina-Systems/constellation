@@ -7,19 +7,19 @@ import {
 import type { Interest } from './types';
 
 describe('introspection-loop.AC1.1: Introspection cron offset', () => {
-  it('buildIntrospectionCron produces offset cron expression', () => {
+  it('buildIntrospectionCron produces offset cron with enumerated minutes', () => {
     const cron = buildIntrospectionCron(15, 3);
-    expect(cron).toBe('3/15 * * * *');
+    expect(cron).toBe('3,18,33,48 * * * *');
   });
 
   it('buildIntrospectionCron wraps offset modulo interval', () => {
     const cron = buildIntrospectionCron(15, 20);
-    expect(cron).toBe('5/15 * * * *');
+    expect(cron).toBe('5,20,35,50 * * * *');
   });
 
   it('buildIntrospectionCron handles 30-minute interval', () => {
     const cron = buildIntrospectionCron(30, 5);
-    expect(cron).toBe('5/30 * * * *');
+    expect(cron).toBe('5,35 * * * *');
   });
 });
 

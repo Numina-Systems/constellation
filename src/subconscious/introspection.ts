@@ -18,9 +18,12 @@ export function buildIntrospectionCron(
   impulseIntervalMinutes: number,
   offsetMinutes: number,
 ): string {
-  const effectiveInterval = impulseIntervalMinutes;
-  const offset = offsetMinutes % effectiveInterval;
-  return `${offset}/${effectiveInterval} * * * *`;
+  const offset = offsetMinutes % impulseIntervalMinutes;
+  const minutes: Array<number> = [];
+  for (let m = offset; m < 60; m += impulseIntervalMinutes) {
+    minutes.push(m);
+  }
+  return `${minutes.join(',')} * * * *`;
 }
 
 export function buildIntrospectionEvent(

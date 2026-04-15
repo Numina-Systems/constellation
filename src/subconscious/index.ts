@@ -24,3 +24,4 @@ export type { ImpulseAssembler } from './impulse-assembler.ts';
 export { createIntrospectionAssembler } from './introspection-assembler.ts';
 export type { IntrospectionAssembler } from './introspection-assembler.ts';
 export { createSubconsciousContextProvider } from './context.ts';
+export { createIntrospectionContextProvider } from './introspection-context.ts';

@@ -198,6 +198,8 @@ const SubconsciousConfigSchema = z
     max_tool_rounds: z.number().min(1).max(20).default(5),
     engagement_half_life_days: z.number().min(1).max(90).default(7),
     max_active_interests: z.number().min(1).max(50).default(10),
+    max_continuations_per_event: z.number().min(0).max(10).default(2),
+    max_continuations_per_cycle: z.number().min(0).max(50).default(10),
   })
   .superRefine((data, ctx) => {
     if (data.enabled && !data.inner_conversation_id) {

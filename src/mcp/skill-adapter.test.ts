@@ -1,7 +1,8 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from 'bun:test';
-import { mcpPromptToSkill } from './skill-adapter.ts';
+import { mcpPromptToSkill, mcpPromptsToSkills } from './skill-adapter.ts';
+import type { McpClient } from './types.ts';
 
 describe('mcpPromptToSkill', () => {
   describe('AC5.1: MCP skills have source field set to "mcp"', () => {
@@ -222,6 +223,71 @@ describe('mcpPromptToSkill', () => {
       const skill = mcpPromptToSkill('myserver', prompt, 'body');
 
       expect(skill.metadata.tags).toEqual(['mcp', 'myserver']);
+    });
+  });
+
+  describe('mcpPromptsToSkills: required argument filtering', () => {
+    function createMockClient(prompts: Array<{ name: string; description: string; arguments: Array<{ name: string; required: boolean }> }>): McpClient {
+      return {
+        serverName: 'test-server',
+        connect: async () => {},
+        disconnect: async () => {},
+        listTools: async () => [],
+        callTool: async () => ({ success: false, output: '', error: 'not implemented' }),
+        listPrompts: async () => prompts.map((p) => ({
+          name: p.name,
+          description: p.description,
+          arguments: p.arguments.map((a) => ({ name: a.name, description: undefined, required: a.required })),
+        })),
+        getPrompt: async (name) => {
+          return { description: undefined, messages: [{ role: 'user' as const, content: `body for ${name}` }] };
+        },
+        getInstructions: async () => undefined,
+      };
+    }
+
+    it('should skip prompts with required arguments', async () => {
+      const client = createMockClient([
+        { name: 'no-args', description: 'No args needed', arguments: [] },
+        { name: 'has-required', description: 'Needs args', arguments: [{ name: 'nsid', required: true }] },
+        { name: 'optional-only', description: 'Optional args', arguments: [{ name: 'hint', required: false }] },
+      ]);
+
+      const skills = await mcpPromptsToSkills(client);
+
+      expect(skills).toHaveLength(2);
+      expect(skills.map((s) => s.metadata.name)).toEqual(['no-args', 'optional-only']);
+    });
+
+    it('should return empty array when all prompts have required arguments', async () => {
+      const client = createMockClient([
+        { name: 'a', description: 'A', arguments: [{ name: 'x', required: true }] },
+        { name: 'b', description: 'B', arguments: [{ name: 'y', required: true }] },
+      ]);
+
+      const skills = await mcpPromptsToSkills(client);
+
+      expect(skills).toHaveLength(0);
+    });
+
+    it('should handle getPrompt errors gracefully and continue', async () => {
+      const client = createMockClient([
+        { name: 'good', description: 'Works', arguments: [] },
+        { name: 'bad', description: 'Broken', arguments: [] },
+      ]);
+
+      let callCount = 0;
+      client.getPrompt = async (name) => {
+        callCount++;
+        if (name === 'bad') throw new Error('render failed');
+        return { description: undefined, messages: [{ role: 'user' as const, content: 'body' }] };
+      };
+
+      const skills = await mcpPromptsToSkills(client);
+
+      expect(skills).toHaveLength(1);
+      expect(skills[0]?.metadata.name).toBe('good');
+      expect(callCount).toBe(2);
     });
   });
 

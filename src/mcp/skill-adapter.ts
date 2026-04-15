@@ -35,16 +35,28 @@ export function mcpPromptToSkill(serverName: string, prompt: McpPromptInfo, body
   };
 }
 
+function hasRequiredArguments(prompt: McpPromptInfo): boolean {
+  return prompt.arguments.some((arg) => arg.required === true);
+}
+
 export async function mcpPromptsToSkills(client: McpClient): Promise<Array<SkillDefinition>> {
   const prompts = await client.listPrompts();
+  const skills: Array<SkillDefinition> = [];
 
-  const skills = await Promise.all(
-    prompts.map(async (prompt) => {
+  for (const prompt of prompts) {
+    if (hasRequiredArguments(prompt)) {
+      continue;
+    }
+
+    try {
       const result = await client.getPrompt(prompt.name);
       const body = result.messages.map((m) => m.content).join('\n\n');
-      return mcpPromptToSkill(client.serverName, prompt, body);
-    }),
-  );
+      skills.push(mcpPromptToSkill(client.serverName, prompt, body));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[mcp:${client.serverName}] skipping prompt '${prompt.name}': ${message}`);
+    }
+  }
 
   return skills;
 }

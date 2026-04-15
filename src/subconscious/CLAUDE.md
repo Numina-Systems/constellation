@@ -6,7 +6,9 @@ Last verified: 2026-04-14
 Autonomous curiosity system that gives the agent an inner life of interests, curiosity threads, and self-directed exploration. Runs on a separate conversation with periodic impulse events that prompt reflection, idea generation, and tool-assisted exploration. Engagement scores decay over time to surface genuinely sustained interests.
 
 ## Contracts
-- **Exposes**: `InterestRegistry` port interface, `createInterestRegistry(db)`, `buildImpulseEvent(context)`, `buildImpulseCron(intervalMinutes)`, `buildMorningAgendaEvent(context)`, `buildWrapUpEvent(context)`, `createImpulseAssembler(deps)`, `createSubconsciousContextProvider(registry, owner)`, domain types (`Interest`, `CuriosityThread`, `ExplorationLogEntry`, `InterestRegistryConfig`, `ImpulseContext`, `ImpulseAssembler`)
+- **Exposes**: 
+  - Interest system: `InterestRegistry` port interface, `createInterestRegistry(db)`, `buildImpulseEvent(context)`, `buildImpulseCron(intervalMinutes)`, `buildMorningAgendaEvent(context)`, `buildWrapUpEvent(context)`, `createImpulseAssembler(deps)`, `createSubconsciousContextProvider(registry, owner)`, domain types (`Interest`, `CuriosityThread`, `ExplorationLogEntry`, `InterestRegistryConfig`, `ImpulseContext`, `ImpulseAssembler`)
+  - Continuation system: `ContinuationJudge` port interface, `ContinuationDecision`, `ContinuationJudgeContext` types, `buildContinuationPrompt(context)`, `parseContinuationResponse(text)` pure functions, `createContinuationBudget(config)`, `ContinuationBudget`, `ContinuationBudgetConfig` types, `createContinuationJudge(deps)`, `ContinuationJudgeDeps` type
 - **Guarantees**:
   - `InterestRegistry` CRUD operations are owner-scoped (multi-agent safe)
   - `applyEngagementDecay` uses exponential half-life decay on all active interests
@@ -15,6 +17,10 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
   - `findDuplicateCuriosityThread` prevents duplicate questions per interest
   - Impulse builders (`buildImpulseEvent`, `buildMorningAgendaEvent`, `buildWrapUpEvent`) are pure functions returning `ExternalEvent`
   - Context provider caches results with 2-minute TTL, returns `undefined` when no activity exists
+  - `buildContinuationPrompt` and `parseContinuationResponse` are pure functions (Functional Core)
+  - `parseContinuationResponse` returns `shouldContinue: false` for any malformed input (never throws)
+  - `ContinuationBudget` enforces both per-event and per-cycle limits independently
+  - `ContinuationJudge` adapter returns `shouldContinue: false` on any model error (graceful degradation)
 - **Expects**: PostgreSQL with migration `009_subconscious_schema.sql` applied. `PersistenceProvider` injected for registry. `TraceStore` and `MemoryManager` injected for impulse assembler.
 
 ## Dependencies
@@ -40,4 +46,7 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 - `impulse.ts` -- Pure impulse event builders: regular, morning agenda, wrap-up (Functional Core)
 - `impulse-assembler.ts` -- Gathers context from registry/traces/memory, delegates to impulse builders (Imperative Shell)
 - `context.ts` -- Cached context provider injecting `[Inner Life]` into agent system prompt (Imperative Shell)
+- `continuation.ts` -- Continuation decision types, prompt builder, response parser (Functional Core)
+- `continuation-budget.ts` -- In-memory per-event/per-cycle budget counter (Imperative Shell)
+- `continuation-judge.ts` -- LLM-backed continuation judge adapter using ModelProvider (Imperative Shell)
 - `index.ts` -- Barrel export

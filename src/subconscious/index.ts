@@ -17,3 +17,10 @@ export type { ImpulseContext } from './impulse.ts';
 export { createImpulseAssembler } from './impulse-assembler.ts';
 export type { ImpulseAssembler } from './impulse-assembler.ts';
 export { createSubconsciousContextProvider } from './context.ts';
+
+export { buildContinuationPrompt, parseContinuationResponse } from './continuation.ts';
+export type { ContinuationDecision, ContinuationJudgeContext, ContinuationJudge } from './continuation.ts';
+export { createContinuationBudget } from './continuation-budget.ts';
+export type { ContinuationBudget, ContinuationBudgetConfig } from './continuation-budget.ts';
+export { createContinuationJudge } from './continuation-judge.ts';
+export type { ContinuationJudgeDeps } from './continuation-judge.ts';

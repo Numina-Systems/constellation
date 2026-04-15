@@ -870,7 +870,6 @@ async function main(): Promise<void> {
   // Fallback defaults match Zod schema defaults, covering the case where
   // config.subconscious is entirely absent (section omitted from TOML).
   // Used in runContinuationLoop calls in impulse and introspection handlers (Tasks 5-6).
-  // @ts-ignore TS6133: intentionally unused until task 5 wires impulse continuation
   const continuationBudget = subconsciousAgent
     ? createContinuationBudget({
         maxPerEvent: config.subconscious?.max_continuations_per_event ?? 2,
@@ -878,7 +877,6 @@ async function main(): Promise<void> {
       })
     : undefined;
 
-  // @ts-ignore TS6133: intentionally unused until task 6 wires introspection continuation
   const continuationJudge = subconsciousAgent
     ? createContinuationJudge({
         model,
@@ -1088,7 +1086,7 @@ async function main(): Promise<void> {
         (async () => {
           try {
             continuationBudget?.resetEvent();
-            let roundStart = new Date();
+            const roundStart = new Date();
             const event = await impulseAssembler.assembleImpulse();
             const responseText = await subconsciousAgent.processEvent(event);
             await runPostImpulseHousekeeping();

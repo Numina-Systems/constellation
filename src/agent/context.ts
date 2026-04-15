@@ -196,7 +196,10 @@ export function truncateOldest(
   modelMaxTokens: number,
   overheadTokens: number,
 ): Array<Message> {
-  const availableTokens = modelMaxTokens - overheadTokens;
+  // Apply 10% safety margin to compensate for the chars/4 heuristic
+  // underestimating actual BPE token counts (especially for JSON/code/tool content)
+  const safeLimit = Math.floor(modelMaxTokens * 0.9);
+  const availableTokens = safeLimit - overheadTokens;
 
   if (availableTokens <= 0) {
     return extractMinimumContext(messages);

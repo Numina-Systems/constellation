@@ -153,9 +153,10 @@ export function createAgent(
       );
 
       let finalMessages = messages;
-      if (messageTokens + requestOverhead > modelMaxTokens) {
+      const safeLimit = Math.floor(modelMaxTokens * 0.9);
+      if (messageTokens + requestOverhead > safeLimit) {
         console.warn(
-          `pre-flight guard: estimated ${messageTokens + requestOverhead} tokens exceeds limit ${modelMaxTokens}, truncating oldest messages`,
+          `pre-flight guard: estimated ${messageTokens + requestOverhead} tokens exceeds safe limit ${safeLimit} (model max: ${modelMaxTokens}), truncating oldest messages`,
         );
         finalMessages = truncateOldest(messages, modelMaxTokens, requestOverhead);
       }

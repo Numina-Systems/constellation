@@ -64,6 +64,8 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # # Context overflow guard settings
 # compaction_timeout = 120000       # Timeout in ms for summarisation LLM calls (default: 120000)
 # compaction_max_retries = 2        # Number of retries with halved chunk size on timeout (default: 2)
+# max_chunk_tokens = 100000         # Token budget per chunk (optional; when set, overrides chunk_size with token-based splitting)
+# max_consecutive_failures = 3      # Circuit breaker: skip compaction after N consecutive failures (default: 3)
 
 # Ollama summarization (local models):
 # [summarization]

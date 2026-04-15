@@ -581,6 +581,7 @@ export function createCompactor(
     currentChunkSize: number,
   ): Promise<string> {
     const maxRetries = config.maxRetries ?? 2;
+    const backoffBase = config.backoffBaseMs ?? INITIAL_BACKOFF_MS;
     let chunkSize = currentChunkSize;
     let lastError: unknown;
 
@@ -614,7 +615,7 @@ export function createCompactor(
 
         // Exponential backoff (skip on last attempt)
         if (attempt < maxRetries) {
-          const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+          const backoffMs = backoffBase * Math.pow(2, attempt);
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
       }

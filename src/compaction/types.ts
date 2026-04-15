@@ -58,6 +58,7 @@ export type CompactionConfig = {
   readonly scoring?: ImportanceScoringConfig;
   readonly timeout?: number;
   readonly maxRetries?: number;
+  readonly backoffBaseMs?: number;
 };
 
 export type Compactor = {

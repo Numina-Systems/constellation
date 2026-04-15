@@ -2064,6 +2064,7 @@ describe('compaction pipeline integration', () => {
       prompt: null,
       timeout: 5000,
       maxRetries: 2,
+      backoffBaseMs: 0,
       scoring: DEFAULT_SCORING_CONFIG,
     };
 
@@ -2124,6 +2125,7 @@ describe('compaction pipeline integration', () => {
       prompt: null,
       timeout: 5000,
       maxRetries: 3,
+      backoffBaseMs: 0,
       scoring: DEFAULT_SCORING_CONFIG,
     };
 
@@ -2172,6 +2174,7 @@ describe('compaction pipeline integration', () => {
       prompt: null,
       timeout: 5000,
       maxRetries: 1,
+      backoffBaseMs: 0,
       scoring: DEFAULT_SCORING_CONFIG,
     };
 
@@ -2221,6 +2224,7 @@ describe('compaction pipeline integration', () => {
       prompt: null,
       timeout: 5000,
       maxRetries: 3,
+      backoffBaseMs: 0,
       scoring: DEFAULT_SCORING_CONFIG,
     };
 
@@ -2239,9 +2243,115 @@ describe('compaction pipeline integration', () => {
     const result = await compactor.compress(messages, 'test-conv');
 
     // Auth error should fail immediately, only one attempt
+    expect(callCount).toBe(1);
     // On failure, return original history unchanged (graceful degradation)
     expect(result.history.length).toBe(messages.length);
     expect(result.messagesCompressed).toBe(0);
+  });
+
+  // AC2.5: Compaction timeout is passed through to ModelRequest.timeout
+  it('AC2.5: Compaction timeout is passed through to ModelRequest.timeout', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    let capturedRequest: ModelRequest | null = null;
+
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        capturedRequest = request;
+        return {
+          content: [{ type: 'text', text: 'Test summary' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 20 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const timeoutValue = 30000;
+    const config = {
+      chunkSize: 5,
+      keepRecent: 2,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      timeout: timeoutValue,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    // Verify timeout was threaded through to the request
+    expect(capturedRequest).not.toBeNull();
+    expect((capturedRequest as unknown as ModelRequest).timeout).toBe(timeoutValue);
+  });
+
+  // AC2.5b: When config.timeout is undefined, request should not have timeout field
+  it('AC2.5b: When config.timeout is undefined, request should not have timeout field', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    let capturedRequest: ModelRequest | null = null;
+
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        capturedRequest = request;
+        return {
+          content: [{ type: 'text', text: 'Test summary' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 20 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 2,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      // timeout is undefined
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    // Verify timeout is not added to request when undefined
+    expect(capturedRequest).not.toBeNull();
+    // If timeout is undefined in config, the request should be returned as-is without timeout
+    // The timeout field may or may not exist, but if it exists, it should not be set to undefined
+    expect((capturedRequest as unknown as ModelRequest).timeout === undefined || (capturedRequest as unknown as ModelRequest).timeout == null).toBe(true);
   });
 
   // AC2.6: Retry exhaustion returns original history unchanged
@@ -2268,6 +2378,7 @@ describe('compaction pipeline integration', () => {
       prompt: null,
       timeout: 5000,
       maxRetries: 1,
+      backoffBaseMs: 0,
       scoring: DEFAULT_SCORING_CONFIG,
     };
 

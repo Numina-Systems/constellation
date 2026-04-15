@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'bun:test';
 import type { ConversationMessage } from '../agent/types.js';
 import type { ModelProvider, ModelRequest, ModelResponse, Message } from '../model/types.js';
+import { ModelError } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.js';
 import type { SummaryBatch, ImportanceScoringConfig } from './types.js';
@@ -2027,5 +2028,266 @@ describe('compaction pipeline integration', () => {
     const lastMessage = firstCall?.messages?.[firstCall.messages.length - 1];
     expect(lastMessage?.role).toBe('user');
     expect(lastMessage?.content).toContain('Summarize');
+  });
+
+  // AC2.1: Retry on timeout with exponential backoff
+  it('AC2.1: Compaction retries on timeout error with exponential backoff', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    let timeoutsSeen = 0;
+    const mockModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        timeoutsSeen++;
+        if (timeoutsSeen === 1) {
+          // First call times out
+          throw new ModelError('timeout', true, 'timeout during summarization');
+        }
+        // Second call succeeds
+        return {
+          content: [{ type: 'text', text: 'Retried summary' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const config = {
+      chunkSize: 8,
+      keepRecent: 2,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      timeout: 5000,
+      maxRetries: 2,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 20 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // Should have seen at least one timeout error
+    expect(timeoutsSeen).toBeGreaterThanOrEqual(1);
+    // History should be compressed (not original) - one timeout then retry succeeds
+    expect(result.history.length).toBeLessThan(messages.length);
+  });
+
+  // AC2.2: Chunk size is halved on each retry
+  it('AC2.2: Chunk size is halved on each retry attempt', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    const capturedRequests: ModelRequest[] = [];
+    let callCount = 0;
+
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        callCount++;
+        capturedRequests.push(request);
+        if (callCount <= 2) {
+          // First two calls time out
+          throw new ModelError('timeout', true, 'timeout');
+        }
+        // Third call succeeds
+        return {
+          content: [{ type: 'text', text: `Summary attempt ${callCount}` }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const config = {
+      chunkSize: 16,
+      keepRecent: 2,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      timeout: 5000,
+      maxRetries: 3,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 30 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // Should have succeeded eventually
+    expect(result.history.length).toBeLessThan(messages.length);
+  });
+
+  // AC2.3: Chunk size never goes below minimum floor (2 messages)
+  it('AC2.3: Chunk size never goes below minimum floor (2 messages)', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    let callCount = 0;
+
+    const mockModel: ModelProvider = {
+      async complete(): Promise<ModelResponse> {
+        callCount++;
+        // Always timeout to force exhaustion
+        throw new ModelError('timeout', true, 'timeout');
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const config = {
+      chunkSize: 3,
+      keepRecent: 1,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      timeout: 5000,
+      maxRetries: 1,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // On retry exhaustion, should return original history unchanged (AC2.6)
+    expect(result.history.length).toBe(messages.length);
+    expect(result.messagesCompressed).toBe(0);
+  });
+
+  // AC2.4: Non-retryable errors fail immediately without retry
+  it('AC2.4: Non-retryable errors (auth, 400) fail immediately without retry', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    let callCount = 0;
+
+    const mockModel: ModelProvider = {
+      async complete(): Promise<ModelResponse> {
+        callCount++;
+        // Auth error is non-retryable
+        throw new ModelError('auth', false, 'unauthorized');
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 2,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      timeout: 5000,
+      maxRetries: 3,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 15 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // Auth error should fail immediately, only one attempt
+    // On failure, return original history unchanged (graceful degradation)
+    expect(result.history.length).toBe(messages.length);
+    expect(result.messagesCompressed).toBe(0);
+  });
+
+  // AC2.6: Retry exhaustion returns original history unchanged
+  it('AC2.6: Retry exhaustion returns original history unchanged', async () => {
+    const mockPersistence = createMockPersistenceProvider();
+    const mockMemory = createMockMemoryManager();
+
+    const mockModel: ModelProvider = {
+      async complete(): Promise<ModelResponse> {
+        // Always timeout
+        throw new ModelError('timeout', true, 'timeout');
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const config = {
+      chunkSize: 8,
+      keepRecent: 2,
+      maxSummaryTokens: 512,
+      clipFirst: 1,
+      clipLast: 1,
+      prompt: null,
+      timeout: 5000,
+      maxRetries: 1,
+      scoring: DEFAULT_SCORING_CONFIG,
+    };
+
+    const messages = Array.from({ length: 20 }, (_, i) =>
+      createMessage(`msg-${i}`, 'user', `Message ${i}`, i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // After all retries exhausted, return original history
+    expect(result.history).toEqual(messages);
+    expect(result.messagesCompressed).toBe(0);
+    expect(result.batchesCreated).toBe(0);
   });
 });

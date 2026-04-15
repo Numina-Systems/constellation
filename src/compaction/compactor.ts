@@ -10,6 +10,7 @@
 import { randomUUID } from 'crypto';
 import type { ConversationMessage } from '../agent/types.js';
 import type { ModelProvider, TextBlock, ModelRequest } from '../model/types.js';
+import { ModelError } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider } from '../persistence/types.js';
 import type {
@@ -570,6 +571,58 @@ export function createCompactor(
     );
   }
 
+  const MIN_CHUNK_SIZE = 2;
+  const INITIAL_BACKOFF_MS = 1000;
+
+  async function summarizeChunkWithRetry(
+    messages: ReadonlyArray<ConversationMessage>,
+    existingSummary: string,
+    systemPrompt: string | null,
+    currentChunkSize: number,
+  ): Promise<string> {
+    const maxRetries = config.maxRetries ?? 2;
+    let chunkSize = currentChunkSize;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Re-chunk with current size if we've reduced it
+        const subChunks = attempt === 0
+          ? [messages]
+          : chunkMessages(messages, chunkSize);
+
+        let summary = existingSummary;
+        for (const subChunk of subChunks) {
+          summary = await summarizeChunk(subChunk, summary, systemPrompt);
+        }
+        return summary;
+      } catch (error) {
+        lastError = error;
+
+        // Non-retryable errors fail immediately
+        if (error instanceof ModelError && !error.retryable) {
+          throw error;
+        }
+
+        // Only retry on timeout specifically
+        if (!(error instanceof ModelError && error.code === 'timeout')) {
+          throw error;
+        }
+
+        // Halve chunk size, respect floor
+        chunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(chunkSize / 2));
+
+        // Exponential backoff (skip on last attempt)
+        if (attempt < maxRetries) {
+          const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
   async function compress(
     history: ReadonlyArray<ConversationMessage>,
     conversationId: string,
@@ -608,10 +661,11 @@ export function createCompactor(
       let accumulatedSummary = priorSummary?.content || '';
 
       for (const chunk of chunks) {
-        const summaryText = await summarizeChunk(
+        const summaryText = await summarizeChunkWithRetry(
           chunk,
           accumulatedSummary,
           systemPrompt,
+          config.chunkSize,
         );
         accumulatedSummary = summaryText;
 

@@ -47,6 +47,9 @@ import {
   createImpulseAssembler,
   buildImpulseCron,
   createSubconsciousContextProvider,
+  createIntrospectionAssembler,
+  buildIntrospectionCron,
+  createIntrospectionContextProvider,
 } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
@@ -83,7 +86,7 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 
 const AGENT_OWNER = 'spirit';
 
-export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse'] as const;
+export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse', 'subconscious-introspection'] as const;
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -570,6 +573,9 @@ async function main(): Promise<void> {
   // Create subconscious context provider
   const subconsciousContextProvider = createSubconsciousContextProvider(interestRegistry, AGENT_OWNER);
 
+  // Create introspection context provider
+  const introspectionContextProvider = createIntrospectionContextProvider(memoryStore, AGENT_OWNER);
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -812,7 +818,7 @@ async function main(): Promise<void> {
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider, subconsciousContextProvider],
+    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider, subconsciousContextProvider, introspectionContextProvider],
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
   }, mainConversationId);
@@ -825,6 +831,7 @@ async function main(): Promise<void> {
       ['subconscious:impulse', 'You are the subconscious mind — an autonomous inner process that explores interests, reflects on experiences, and builds knowledge independently. You are not responding to a human. Act on your own curiosity.'],
       ['subconscious:morning-agenda', 'You are the subconscious mind reviewing your interests at the start of a new day. Plan what to explore.'],
       ['subconscious:wrap-up', 'You are the subconscious mind reflecting on the day. Consolidate what you learned and prepare for tomorrow.'],
+      ['subconscious:introspection', 'You are the subconscious mind reviewing your recent observations. Decide which are worth formalizing into tracked interests or curiosity threads, and write the rest into your digest for later reflection. Be selective — not every observation needs to become an interest.'],
     ]);
 
     subconsciousAgent = createAgent({
@@ -845,7 +852,7 @@ async function main(): Promise<void> {
       compactor,
       traceRecorder,
       owner: AGENT_OWNER,
-      contextProviders: [...contextProviders, predictionContextProvider],
+      contextProviders: [...contextProviders, predictionContextProvider, introspectionContextProvider],
       skills: skillRegistry,
       sourceInstructions: subconsciousSourceInstructions,
     }, config.subconscious.inner_conversation_id);
@@ -860,6 +867,18 @@ async function main(): Promise<void> {
         traceStore: traceRecorder,
         memory,
         owner: AGENT_OWNER,
+      })
+    : undefined;
+
+  // Create introspection assembler if subconscious is enabled
+  const introspectionAssembler = subconsciousAgent && config.subconscious?.inner_conversation_id
+    ? createIntrospectionAssembler({
+        persistence,
+        interestRegistry,
+        memoryStore,
+        owner: AGENT_OWNER,
+        subconsciousConversationId: config.subconscious.inner_conversation_id,
+        lookbackHours: config.subconscious?.introspection_lookback_hours ?? 24,
       })
     : undefined;
 
@@ -1052,6 +1071,17 @@ async function main(): Promise<void> {
         })().catch((error) => {
           console.error('impulse task error:', error);
         });
+      } else if (task.name === 'subconscious-introspection' && subconsciousAgent && introspectionAssembler) {
+        (async () => {
+          try {
+            const event = await introspectionAssembler.assembleIntrospection();
+            await subconsciousAgent.processEvent(event);
+          } catch (error) {
+            console.error('introspection event processing error:', error);
+          }
+        })().catch((error) => {
+          console.error('introspection task error:', error);
+        });
       } else {
         handleSystemSchedulerTask(task);
       }
@@ -1160,6 +1190,30 @@ async function main(): Promise<void> {
       console.log(`impulse task scheduled (every ${impulseMinutes} minutes)`);
     } else {
       console.log('impulse task already scheduled');
+    }
+  }
+
+  // Register introspection task if subconscious is enabled and not already scheduled
+  if (subconsciousAgent && introspectionAssembler && config.subconscious?.impulse_interval_minutes) {
+    const impulseMinutes = config.subconscious.impulse_interval_minutes;
+    const offsetMinutes = config.subconscious.introspection_offset_minutes ?? 3;
+    const introspectionCron = buildIntrospectionCron(impulseMinutes, offsetMinutes);
+
+    const existingIntrospectionTasks = await persistence.query<{ id: string }>(
+      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+      ['system', 'subconscious-introspection'],
+    );
+
+    if (existingIntrospectionTasks.length === 0) {
+      await systemScheduler.schedule({
+        id: crypto.randomUUID(),
+        name: 'subconscious-introspection',
+        schedule: introspectionCron,
+        payload: { taskType: 'introspection' },
+      });
+      console.log(`introspection task scheduled (cron: ${introspectionCron}, offset: ${offsetMinutes}m from impulse)`);
+    } else {
+      console.log('introspection task already scheduled');
     }
   }
 

@@ -47,6 +47,8 @@ import {
   createImpulseAssembler,
   buildImpulseCron,
   createSubconsciousContextProvider,
+  createContinuationBudget,
+  createContinuationJudge,
 } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
@@ -860,6 +862,26 @@ async function main(): Promise<void> {
         traceStore: traceRecorder,
         memory,
         owner: AGENT_OWNER,
+      })
+    : undefined;
+
+  // Continuation budget and judge — undefined when subconscious is disabled.
+  // Fallback defaults match Zod schema defaults, covering the case where
+  // config.subconscious is entirely absent (section omitted from TOML).
+  // Used in runContinuationLoop calls in impulse and introspection handlers (Tasks 5-6).
+  // @ts-ignore TS6133: intentionally unused until task 5 wires impulse continuation
+  const continuationBudget = subconsciousAgent
+    ? createContinuationBudget({
+        maxPerEvent: config.subconscious?.max_continuations_per_event ?? 2,
+        maxPerCycle: config.subconscious?.max_continuations_per_cycle ?? 10,
+      })
+    : undefined;
+
+  // @ts-ignore TS6133: intentionally unused until task 6 wires introspection continuation
+  const continuationJudge = subconsciousAgent
+    ? createContinuationJudge({
+        model,
+        modelName: config.model.name,
       })
     : undefined;
 

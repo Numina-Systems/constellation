@@ -979,12 +979,33 @@ async function main(): Promise<void> {
           console.log('[review-gate] skipping review-predictions: no agent-initiated traces since last window');
           return;
         }
+
+        continuationBudget?.resetEvent();
+        const roundStart = new Date();
+        const event = await buildReviewEvent(task, traceRecorder, AGENT_OWNER);
+        const responseText = await agent.processEvent(event);
+
+        // Introspection continuation loop (shared budget with impulse — AC5.2)
+        if (continuationBudget && continuationJudge) {
+          await runContinuationLoop(
+            {
+              judge: continuationJudge,
+              budget: continuationBudget,
+              queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
+              queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
+              assembleEvent: () => buildReviewEvent(task, traceRecorder, AGENT_OWNER),
+              processEvent: (e) => agent.processEvent(e),
+              eventType: 'introspection',
+              // No onHousekeeping — engagement decay is impulse-specific
+            },
+            responseText,
+            roundStart,
+          );
+        }
+        return;
       }
 
-      const event =
-        task.name === 'review-predictions'
-          ? await buildReviewEvent(task, traceRecorder, AGENT_OWNER)
-          : await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
+      const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
 
       schedulerEventQueue.push(event);
       processSchedulerEvent().catch((error) => {

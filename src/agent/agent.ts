@@ -164,7 +164,7 @@ export function createAgent(
       const modelRequest = {
         messages: finalMessages,
         system: systemPrompt,
-        tools: deps.registry.toModelTools(),
+        tools: modelTools,
         model: modelName,
         max_tokens: maxTokens,
       };

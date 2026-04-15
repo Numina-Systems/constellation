@@ -158,6 +158,12 @@ function createResummarizeTestContext(overrides?: {
     async rejectMutation() {
       throw new Error('not implemented');
     },
+    async moveBlock() {
+      throw new Error('not implemented');
+    },
+    async getStats() {
+      return { tier: 'all', block_count: 0, total_bytes: 0 };
+    },
   };
 
   const mockModel: ModelProvider = {
@@ -321,6 +327,12 @@ function createMockMemoryManager(): MemoryManager {
     },
     async rejectMutation() {
       throw new Error('not implemented');
+    },
+    async moveBlock() {
+      throw new Error('not implemented');
+    },
+    async getStats() {
+      return { tier: 'all', block_count: 0, total_bytes: 0 };
     },
     get _archivedBatches() {
       return archivedBatches.map(b => ({ label: b.label, content: b.content }));
@@ -1277,6 +1289,12 @@ describe('Compaction pipeline with mocked dependencies', () => {
         },
         async rejectMutation() {
           throw new Error('not implemented');
+        },
+        async moveBlock() {
+          throw new Error('not implemented');
+        },
+        async getStats() {
+          return { tier: 'all', block_count: 0, total_bytes: 0 };
         },
       } as unknown as MemoryManager;
     }

@@ -226,6 +226,10 @@ function createMockMemoryStore(): MemoryStore {
         resolved_at: new Date(),
       };
     },
+
+    async updateBlockTier() {
+      return mockBlock;
+    },
   };
 }
 

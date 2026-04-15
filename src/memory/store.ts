@@ -30,6 +30,7 @@ export interface MemoryStore {
     content: string,
     embedding: ReadonlyArray<number> | null,
   ): Promise<MemoryBlock>;
+  updateBlockTier(id: string, tier: MemoryTier): Promise<MemoryBlock>;
   deleteBlock(id: string): Promise<void>;
 
   // Semantic search

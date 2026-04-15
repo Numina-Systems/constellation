@@ -47,6 +47,12 @@ export type MemorySearchResult = {
   similarity: number;
 };
 
+export type MemoryStats = {
+  tier: MemoryTier | 'all';
+  block_count: number;
+  total_bytes: number;
+};
+
 export type MemoryWriteResult =
   | { applied: true; block: MemoryBlock }
   | { applied: false; mutation: PendingMutation }

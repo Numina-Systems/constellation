@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import type { MemoryManager } from '../../memory/index.ts';
-import type { MemoryBlock, MemorySearchResult } from '../../memory/index.ts';
+import type { MemoryBlock, MemorySearchResult, MemoryStats } from '../../memory/index.ts';
 import { createMemoryTools } from './memory.ts';
 
 describe('Built-in memory tools', () => {
@@ -17,6 +17,10 @@ describe('Built-in memory tools', () => {
       deleteBlock: async () => {
         // no-op for testing
       },
+      moveBlock: async () => (
+        { id: '', owner: '', tier: 'archival', label: '', content: '', embedding: null, permission: 'readwrite', pinned: false, created_at: new Date(), updated_at: new Date() }
+      ),
+      getStats: async () => ({ tier: 'all', block_count: 0, total_bytes: 0 } as MemoryStats),
       getPendingMutations: async () => [],
       approveMutation: async () => (
         { id: '', owner: '', tier: 'core', label: '', content: '', embedding: null, permission: 'readwrite', pinned: false, created_at: new Date(), updated_at: new Date() }
@@ -337,14 +341,178 @@ describe('Built-in memory tools', () => {
       const mockManager = createMockMemoryManager();
       const tools = createMemoryTools(mockManager);
 
-      expect(tools.length).toBe(3);
-      expect(tools.map((t) => t.definition.name)).toEqual(['memory_read', 'memory_write', 'memory_list']);
+      expect(tools.length).toBe(6);
+      expect(tools.map((t) => t.definition.name)).toEqual(['memory_read', 'memory_write', 'memory_list', 'memory_delete', 'memory_move', 'memory_stats']);
 
       for (const tool of tools) {
         expect(tool.definition.description).toBeDefined();
         expect(tool.definition.parameters.length).toBeGreaterThanOrEqual(0);
         expect(typeof tool.handler).toBe('function');
       }
+    });
+  });
+
+  describe('memory_delete', () => {
+    it('should delete a block by ID and return success', async () => {
+      let capturedId = '';
+
+      const mockManager = createMockMemoryManager();
+      mockManager.deleteBlock = async (id) => {
+        capturedId = id;
+      };
+
+      const tools = createMemoryTools(mockManager);
+      const memory_delete = tools.find((t) => t.definition.name === 'memory_delete');
+      expect(memory_delete).toBeDefined();
+
+      if (!memory_delete) return;
+
+      const result = await memory_delete.handler({ id: 'block-123' });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('block-123');
+      expect(capturedId).toBe('block-123');
+    });
+
+    it('should return error when deletion fails', async () => {
+      const mockManager = createMockMemoryManager();
+      mockManager.deleteBlock = async () => {
+        throw new Error('block not found');
+      };
+
+      const tools = createMemoryTools(mockManager);
+      const memory_delete = tools.find((t) => t.definition.name === 'memory_delete');
+      expect(memory_delete).toBeDefined();
+
+      if (!memory_delete) return;
+
+      const result = await memory_delete.handler({ id: 'nonexistent' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('block not found');
+    });
+  });
+
+  describe('memory_move', () => {
+    it('should move a block to the target tier and return success', async () => {
+      const movedBlock: MemoryBlock = {
+        id: 'block-456',
+        owner: 'test',
+        tier: 'archival',
+        label: 'moved block',
+        content: 'some content',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const mockManager = createMockMemoryManager();
+      mockManager.moveBlock = async () => movedBlock;
+
+      const tools = createMemoryTools(mockManager);
+      const memory_move = tools.find((t) => t.definition.name === 'memory_move');
+      expect(memory_move).toBeDefined();
+
+      if (!memory_move) return;
+
+      const result = await memory_move.handler({ id: 'block-456', tier: 'archival' });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('block-456');
+      expect(result.output).toContain('archival');
+      expect(result.output).toContain('moved block');
+    });
+
+    it('should return error when move fails', async () => {
+      const mockManager = createMockMemoryManager();
+      mockManager.moveBlock = async () => {
+        throw new Error('cannot move a read-only block');
+      };
+
+      const tools = createMemoryTools(mockManager);
+      const memory_move = tools.find((t) => t.definition.name === 'memory_move');
+      expect(memory_move).toBeDefined();
+
+      if (!memory_move) return;
+
+      const result = await memory_move.handler({ id: 'block-readonly', tier: 'archival' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('read-only');
+    });
+
+    it('should pass id and tier to manager.moveBlock', async () => {
+      let capturedId = '';
+      let capturedTier = '';
+
+      const mockManager = createMockMemoryManager();
+      mockManager.moveBlock = async (id, tier) => {
+        capturedId = id;
+        capturedTier = tier;
+        return {
+          id, owner: 'test', tier, label: 'test', content: 'test',
+          embedding: null, permission: 'readwrite' as const, pinned: false,
+          created_at: new Date(), updated_at: new Date(),
+        };
+      };
+
+      const tools = createMemoryTools(mockManager);
+      const memory_move = tools.find((t) => t.definition.name === 'memory_move');
+      expect(memory_move).toBeDefined();
+
+      if (!memory_move) return;
+
+      await memory_move.handler({ id: 'my-block', tier: 'working' });
+
+      expect(capturedId).toBe('my-block');
+      expect(capturedTier).toBe('working');
+    });
+  });
+
+  describe('memory_stats', () => {
+    it('should return stats for all tiers when no tier specified', async () => {
+      const mockManager = createMockMemoryManager();
+      mockManager.getStats = async () => ({
+        tier: 'all',
+        block_count: 117,
+        total_bytes: 45000,
+      });
+
+      const tools = createMemoryTools(mockManager);
+      const memory_stats = tools.find((t) => t.definition.name === 'memory_stats');
+      expect(memory_stats).toBeDefined();
+
+      if (!memory_stats) return;
+
+      const result = await memory_stats.handler({});
+
+      expect(result.success).toBe(true);
+      const parsed = JSON.parse(result.output);
+      expect(parsed.tier).toBe('all');
+      expect(parsed.block_count).toBe(117);
+      expect(parsed.total_bytes).toBe(45000);
+    });
+
+    it('should pass tier filter to manager.getStats', async () => {
+      let capturedTier = '';
+
+      const mockManager = createMockMemoryManager();
+      mockManager.getStats = async (tier) => {
+        capturedTier = tier ?? '';
+        return { tier: tier ?? 'all', block_count: 5, total_bytes: 1000 };
+      };
+
+      const tools = createMemoryTools(mockManager);
+      const memory_stats = tools.find((t) => t.definition.name === 'memory_stats');
+      expect(memory_stats).toBeDefined();
+
+      if (!memory_stats) return;
+
+      await memory_stats.handler({ tier: 'working' });
+
+      expect(capturedTier).toBe('working');
     });
   });
 

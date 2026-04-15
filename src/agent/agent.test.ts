@@ -140,6 +140,12 @@ function createMockMemoryManager(): MemoryManager {
     async rejectMutation() {
       throw new Error('not implemented');
     },
+    async moveBlock() {
+      throw new Error('not implemented');
+    },
+    async getStats() {
+      return { tier: 'all', block_count: 0, total_bytes: 0 };
+    },
   };
 }
 

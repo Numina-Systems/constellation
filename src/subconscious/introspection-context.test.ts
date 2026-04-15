@@ -111,6 +111,22 @@ function createMockMemoryStore(
         resolved_at: new Date(),
       };
     },
+
+    async updateBlockTier(id: string, tier) {
+      calls.push({ method: 'updateBlockTier', args: [id, tier] });
+      return {
+        id,
+        owner: 'test',
+        tier,
+        label: 'test',
+        content: 'test',
+        embedding: null,
+        permission: 'readwrite' as const,
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+    },
   };
 }
 
@@ -452,6 +468,20 @@ describe('createIntrospectionContextProvider', () => {
             feedback: null,
             created_at: new Date(),
             resolved_at: new Date(),
+          };
+        },
+        async updateBlockTier(id: string, tier) {
+          return {
+            id,
+            owner: 'test',
+            tier,
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite' as const,
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
           };
         },
       };

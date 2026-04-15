@@ -5,7 +5,7 @@
  * These tools delegate to the MemoryManager port interface.
  */
 
-import type { MemoryManager, MemoryTier } from '../../memory/index.ts';
+import type { MemoryManager, MemoryTier, MemoryStats } from '../../memory/index.ts';
 import type { Tool } from '../types.ts';
 
 export function createMemoryTools(manager: MemoryManager): Array<Tool> {
@@ -179,5 +179,106 @@ export function createMemoryTools(manager: MemoryManager): Array<Tool> {
     },
   };
 
-  return [memory_read, memory_write, memory_list];
+  const memory_delete: Tool = {
+    definition: {
+      name: 'memory_delete',
+      description:
+        'Delete a memory block by ID. Use memory_list to find block IDs. Irreversible.',
+      parameters: [
+        {
+          name: 'id',
+          type: 'string',
+          description: 'ID of the memory block to delete',
+          required: true,
+        },
+      ],
+    },
+    handler: async (params) => {
+      const id = params['id'] as string;
+
+      try {
+        await manager.deleteBlock(id);
+        return {
+          success: true,
+          output: `memory block deleted: ${id}`,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          output: '',
+          error: error instanceof Error ? error.message : 'failed to delete block',
+        };
+      }
+    },
+  };
+
+  const memory_move: Tool = {
+    definition: {
+      name: 'memory_move',
+      description:
+        'Move a memory block to a different tier (e.g. working → archival). Use memory_list to find block IDs.',
+      parameters: [
+        {
+          name: 'id',
+          type: 'string',
+          description: 'ID of the memory block to move',
+          required: true,
+        },
+        {
+          name: 'tier',
+          type: 'string',
+          description: 'Target memory tier',
+          required: true,
+          enum_values: ['core', 'working', 'archival'],
+        },
+      ],
+    },
+    handler: async (params) => {
+      const id = params['id'] as string;
+      const tier = params['tier'] as MemoryTier;
+
+      try {
+        const block = await manager.moveBlock(id, tier);
+        return {
+          success: true,
+          output: `memory block moved: ${JSON.stringify({ id: block.id, label: block.label, tier: block.tier })}`,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          output: '',
+          error: error instanceof Error ? error.message : 'failed to move block',
+        };
+      }
+    },
+  };
+
+  const memory_stats: Tool = {
+    definition: {
+      name: 'memory_stats',
+      description:
+        'Get memory usage statistics: block count and total content size in bytes. Useful for monitoring working memory growth.',
+      parameters: [
+        {
+          name: 'tier',
+          type: 'string',
+          description: 'Memory tier to get stats for (omit for all tiers)',
+          required: false,
+          enum_values: ['core', 'working', 'archival'],
+        },
+      ],
+    },
+    handler: async (params) => {
+      const tier = params['tier'] as string | undefined;
+
+      const stats: MemoryStats = await manager.getStats(tier as MemoryTier | undefined);
+
+      return {
+        success: true,
+        output: JSON.stringify(stats, null, 2),
+      };
+    },
+  };
+
+  return [memory_read, memory_write, memory_list, memory_delete, memory_move, memory_stats];
 }

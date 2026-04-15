@@ -46,6 +46,8 @@ function createMockMemory(overrides?: Partial<MemoryManager>): MemoryManager {
     getPendingMutations: mock(async () => []),
     approveMutation: mock(async () => ({} as MemoryBlock)),
     rejectMutation: mock(async () => ({} as PendingMutation)),
+    moveBlock: mock(async () => ({} as MemoryBlock)),
+    getStats: mock(async () => ({ tier: 'all' as const, block_count: 0, total_bytes: 0 })),
     ...overrides,
   };
 }

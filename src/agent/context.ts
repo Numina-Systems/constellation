@@ -1,4 +1,4 @@
-// pattern: Functional Core / Imperative Shell
+// pattern: Mixed (pre-existing) — pure functions (shouldCompress, truncateOldest, estimateOverheadTokens, estimateTokens) coexist with I/O functions (buildSystemPrompt, buildMessages) for co-location convenience. Pure functions are independently testable without mocks.
 
 /**
  * Context building utilities for the agent loop.
@@ -10,7 +10,6 @@
 import type { Message, ContentBlock, ToolUseBlock } from '../model/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ConversationMessage, ContextProvider } from './types.ts';
-import type { ToolDefinition } from '../tool/types.ts';
 
 /**
  * Build system prompt from memory manager's core blocks.
@@ -127,10 +126,11 @@ export function estimateTokens(text: string): number {
 /**
  * Estimate overhead tokens from system prompt, tool definitions, and output reservation.
  * Used to calculate available context budget for messages.
+ * Accepts any tool format (converted via toModelTools()) since estimation just JSON.stringifies.
  */
 export function estimateOverheadTokens(
   systemPrompt: string | undefined,
-  tools: ReadonlyArray<ToolDefinition> | undefined,
+  tools: ReadonlyArray<unknown> | undefined,
   maxOutputTokens: number,
 ): number {
   let overhead = maxOutputTokens;
@@ -255,7 +255,7 @@ export function truncateOldest(
     return extractMinimumContext(messages);
   }
 
-  let remainingBudget = availableTokens - protectedTokens;
+  let droppableBudget = availableTokens - protectedTokens;
 
   // Drop oldest droppable messages until remaining fit within budget.
   // Calculate total droppable tokens first, then drop from oldest until we're under budget.
@@ -272,7 +272,7 @@ export function truncateOldest(
   let tokensDropped = 0;
   let dropCount = 0;
   for (const d of droppableWithTokens) {
-    if (droppableTokens - tokensDropped <= remainingBudget) {
+    if (droppableTokens - tokensDropped <= droppableBudget) {
       break;
     }
     tokensDropped += d.tokens;

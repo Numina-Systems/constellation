@@ -108,9 +108,8 @@ export function createAgent(
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
-    const toolDefinitions = deps.registry.getDefinitions();
     const preliminarySystemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
-    const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, toolDefinitions, maxTokens);
+    const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, deps.registry.toModelTools(), maxTokens);
 
     if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
       const result = await deps.compactor.compress(history, id);
@@ -146,8 +145,8 @@ export function createAgent(
       const messages = await buildMessages(history, deps.memory);
 
       // Pre-flight guard: truncate if estimated request exceeds model limit
-      const toolDefinitions = deps.registry.getDefinitions();
-      const requestOverhead = estimateOverheadTokens(systemPrompt, toolDefinitions, maxTokens);
+      const modelTools = deps.registry.toModelTools();
+      const requestOverhead = estimateOverheadTokens(systemPrompt, modelTools, maxTokens);
       const messageTokens = messages.reduce(
         (sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
         0,

@@ -4,7 +4,6 @@ import { describe, test, expect } from 'bun:test';
 import { buildSystemPrompt, shouldCompress, estimateOverheadTokens, truncateOldest } from './context.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ContextProvider, ConversationMessage } from './types.ts';
-import type { ToolDefinition } from '../tool/types.ts';
 import type { Message } from '../model/types.ts';
 
 describe('buildSystemPrompt', () => {
@@ -205,13 +204,13 @@ describe('estimateOverheadTokens', () => {
   test('with system prompt, tools, and maxOutputTokens', () => {
     const systemPrompt = 'System'.repeat(50); // 300 chars = 75 tokens
     const tools = [
-      { name: 'tool1', description: 'Tool 1', parameters: [] },
-      { name: 'tool2', description: 'Tool 2', parameters: [] },
+      { name: 'tool1', description: 'Tool 1', input_schema: {} },
+      { name: 'tool2', description: 'Tool 2', input_schema: {} },
     ];
     const maxOutputTokens = 1000;
 
-    // JSON.stringify(tools) = 113 chars = 29 tokens
-    const expectedOverhead = 75 + 29 + 1000;
+    // JSON.stringify(tools) = 117 chars = 30 tokens
+    const expectedOverhead = 75 + 30 + 1000;
 
     const result = estimateOverheadTokens(systemPrompt, tools, maxOutputTokens);
     expect(result).toBe(expectedOverhead);
@@ -226,7 +225,7 @@ describe('estimateOverheadTokens', () => {
 
   test('with empty tools array returns system prompt and maxOutputTokens', () => {
     const systemPrompt = 'Short';
-    const tools: ReadonlyArray<ToolDefinition> = [];
+    const tools: ReadonlyArray<unknown> = [];
     const maxOutputTokens = 300;
 
     const result = estimateOverheadTokens(systemPrompt, tools, maxOutputTokens);

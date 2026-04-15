@@ -168,6 +168,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
 
   const client = new Anthropic({
     apiKey,
+    ...(config.base_url != null ? { baseURL: config.base_url } : {}),
   });
 
   return {

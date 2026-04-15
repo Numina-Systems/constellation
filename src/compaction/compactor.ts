@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'crypto';
 import type { ConversationMessage } from '../agent/types.js';
-import type { ModelProvider, TextBlock } from '../model/types.js';
+import type { ModelProvider, TextBlock, ModelRequest } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider } from '../persistence/types.js';
 import type {
@@ -539,7 +539,11 @@ export function createCompactor(
       maxTokens: config.maxSummaryTokens,
     });
 
-    const response = await model.complete(request);
+    const requestWithTimeout: ModelRequest = config.timeout != null
+      ? { ...request, timeout: config.timeout }
+      : request;
+
+    const response = await model.complete(requestWithTimeout);
     const summary = response.content
       .filter((b): b is TextBlock => b.type === 'text')
       .map((b) => b.text)

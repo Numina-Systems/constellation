@@ -9,6 +9,7 @@
 import type { Message, ContentBlock, ToolUseBlock } from '../model/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ConversationMessage, ContextProvider } from './types.ts';
+import type { ToolDefinition } from '../tool/types.ts';
 
 /**
  * Build system prompt from memory manager's core blocks.
@@ -123,20 +124,50 @@ export function estimateTokens(text: string): number {
 }
 
 /**
+ * Estimate overhead tokens from system prompt, tool definitions, and output reservation.
+ * Used to calculate available context budget for messages.
+ */
+export function estimateOverheadTokens(
+  systemPrompt: string | undefined,
+  tools: ReadonlyArray<ToolDefinition> | undefined,
+  maxOutputTokens: number,
+): number {
+  let overhead = maxOutputTokens;
+
+  if (systemPrompt) {
+    overhead += estimateTokens(systemPrompt);
+  }
+
+  if (tools && tools.length > 0) {
+    overhead += estimateTokens(JSON.stringify(tools));
+  }
+
+  return overhead;
+}
+
+/**
  * Check if conversation history exceeds context budget.
- * Returns true if estimated tokens exceed budget * modelMaxTokens.
+ * Returns true if estimated tokens (including overhead) exceed budget * modelMaxTokens.
+ * The overheadTokens parameter accounts for system prompt, tool definitions, and output reservation.
  */
 export function shouldCompress(
   history: ReadonlyArray<ConversationMessage>,
   budget: number,
   modelMaxTokens: number,
+  overheadTokens: number = 0,
 ): boolean {
   const budgetInTokens = budget * modelMaxTokens;
+  const availableForMessages = budgetInTokens - overheadTokens;
+
+  if (availableForMessages <= 0) {
+    return true;
+  }
+
   let totalTokens = 0;
 
   for (const msg of history) {
     totalTokens += estimateTokens(msg.content);
-    if (totalTokens > budgetInTokens) {
+    if (totalTokens > availableForMessages) {
       return true;
     }
   }

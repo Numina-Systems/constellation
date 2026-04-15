@@ -416,3 +416,103 @@ max_per_turn = 7
     });
   });
 });
+
+describe("SubconsciousConfigSchema", () => {
+  let tempPath: string;
+
+  beforeEach(() => {
+    tempPath = getTempConfigPath();
+  });
+
+  afterEach(() => {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // file might not exist
+    }
+  });
+
+  describe("subconscious.AC2: Subconscious config validation", () => {
+    it("accepts disabled subconscious with no other fields", () => {
+      const tomlContent = `
+${baseTomlContent}
+[subconscious]
+enabled = false
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.subconscious).toBeDefined();
+      expect(config.subconscious?.enabled).toBe(false);
+    });
+
+    it("accepts enabled subconscious with inner_conversation_id", () => {
+      const tomlContent = `
+${baseTomlContent}
+[subconscious]
+enabled = true
+inner_conversation_id = "abc-123"
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.subconscious).toBeDefined();
+      expect(config.subconscious?.enabled).toBe(true);
+      expect(config.subconscious?.inner_conversation_id).toBe("abc-123");
+    });
+
+    it("rejects enabled subconscious without inner_conversation_id", () => {
+      const tomlContent = `
+${baseTomlContent}
+[subconscious]
+enabled = true
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      expect(() => loadConfig(tempPath)).toThrow();
+    });
+
+    it("applies default values when subconscious is disabled", () => {
+      const tomlContent = `
+${baseTomlContent}
+[subconscious]
+enabled = false
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.subconscious?.enabled).toBe(false);
+      expect(config.subconscious?.impulse_interval_minutes).toBe(20);
+      expect(config.subconscious?.max_tool_rounds).toBe(5);
+      expect(config.subconscious?.engagement_half_life_days).toBe(7);
+      expect(config.subconscious?.max_active_interests).toBe(10);
+    });
+
+    it("rejects impulse_interval_minutes below 5", () => {
+      const tomlContent = `
+${baseTomlContent}
+[subconscious]
+enabled = false
+impulse_interval_minutes = 3
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      expect(() => loadConfig(tempPath)).toThrow();
+    });
+
+    it("rejects impulse_interval_minutes above 120", () => {
+      const tomlContent = `
+${baseTomlContent}
+[subconscious]
+enabled = false
+impulse_interval_minutes = 125
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      expect(() => loadConfig(tempPath)).toThrow();
+    });
+  });
+});

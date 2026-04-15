@@ -10,6 +10,8 @@ export {
   buildSystemPrompt,
   buildMessages,
   estimateTokens,
+  estimateOverheadTokens,
   shouldCompress,
+  truncateOldest,
 } from './context.ts';
 export { createSchedulingContextProvider } from './scheduling-context.ts';

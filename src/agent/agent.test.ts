@@ -427,6 +427,152 @@ describe('Agent loop', () => {
     expect(typeof response).toBe('string');
   });
 
+  it('AC3.1: agent never sends oversized request to model', async () => {
+    // Integration test verifying the pre-flight guard prevents oversized requests
+    // Create agent with existing large history, then process new message
+
+    const capturedRequests: Array<ModelRequest> = [];
+
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        capturedRequests.push(request);
+        return {
+          content: [{ type: 'text', text: 'Response' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    // Create a persistence provider and pre-populate it with large messages
+    const mockPersistence = createMockPersistenceProvider();
+    const convId = 'test-conv-ac3-1';
+
+    // Pre-insert large messages into the mock persistence
+    const largeText = 'x'.repeat(20000); // ~5000 tokens
+    await mockPersistence.query(
+      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+      [convId, 'user', largeText],
+    );
+    await mockPersistence.query(
+      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+      [convId, 'assistant', largeText],
+    );
+    await mockPersistence.query(
+      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+      [convId, 'user', largeText],
+    );
+
+    const configWithSmallBudget = {
+      ...config,
+      model_max_tokens: 2000, // Small budget to force pre-flight guard
+      max_tokens: 100,
+      context_budget: 0.8,
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: configWithSmallBudget,
+    };
+
+    const agent = createAgent(deps, convId);
+    await agent.processMessage('New message');
+
+    // Verify request was sent to model
+    expect(capturedRequests.length).toBeGreaterThan(0);
+
+    // Verify the request passed to model never exceeds the budget
+    const request = capturedRequests[0]!;
+    const estimatedTokens = request.messages.reduce(
+      (sum, m) => sum + Math.ceil((typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).length / 4),
+      0,
+    );
+
+    const overheadTokens = (request.system ? Math.ceil(request.system.length / 4) : 0) +
+      (request.tools ? Math.ceil(JSON.stringify(request.tools).length / 4) : 0) +
+      (configWithSmallBudget.max_tokens ?? 100);
+
+    const totalTokens = estimatedTokens + overheadTokens;
+    expect(totalTokens).toBeLessThanOrEqual(configWithSmallBudget.model_max_tokens ?? 200000);
+  });
+
+  it('AC3.5: warning logged when pre-flight guard fires', async () => {
+    // Integration test verifying console.warn is called when pre-flight guard truncates
+    const capturedWarnings: string[] = [];
+    const originalWarn = console.warn;
+
+    console.warn = (...args: unknown[]) => {
+      capturedWarnings.push(String(args[0]));
+    };
+
+    try {
+      const largeText = 'x'.repeat(20000); // ~5000 tokens
+      const mockModel: ModelProvider = {
+        async complete(): Promise<ModelResponse> {
+          return {
+            content: [{ type: 'text', text: 'Response' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 100, output_tokens: 50 },
+          };
+        },
+        async *stream() {
+          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+        },
+      } as unknown as ModelProvider;
+
+      // Create persistence with pre-populated large messages
+      const mockPersistence = createMockPersistenceProvider();
+      const convId = 'test-conv-ac3-5';
+
+      // Pre-insert large messages
+      await mockPersistence.query(
+        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+        [convId, 'user', largeText],
+      );
+      await mockPersistence.query(
+        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+        [convId, 'assistant', largeText],
+      );
+      await mockPersistence.query(
+        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+        [convId, 'user', largeText],
+      );
+
+      const configWithSmallBudget = {
+        ...config,
+        model_max_tokens: 2000,
+        max_tokens: 100,
+        context_budget: 0.8,
+      };
+
+      const deps: AgentDependencies = {
+        model: mockModel,
+        memory: mockMemory,
+        registry: mockRegistry,
+        runtime: mockRuntime,
+        persistence: mockPersistence,
+        config: configWithSmallBudget,
+      };
+
+      const agent = createAgent(deps, convId);
+      await agent.processMessage('New message');
+
+      // Verify that console.warn was called with a message containing "pre-flight guard"
+      const guardWarnings = capturedWarnings.filter((msg) => msg.includes('pre-flight guard'));
+      expect(guardWarnings.length).toBeGreaterThan(0);
+      expect(guardWarnings[0]!).toMatch(/pre-flight guard/);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   it('handles multi-round tool calling', async () => {
     const toolUseResponse: ModelResponse = {
       content: [

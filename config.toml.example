@@ -60,6 +60,10 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # keyword_bonus = 1.5
 # important_keywords = ["error", "fail", "bug", "fix", "decision", "agreed", "constraint", "requirement"]
 # content_length_weight = 1.0
+#
+# # Context overflow guard settings
+# compaction_timeout = 120000       # Timeout in ms for summarisation LLM calls (default: 120000)
+# compaction_max_retries = 2        # Number of retries with halved chunk size on timeout (default: 2)
 
 # Ollama summarization (local models):
 # [summarization]
@@ -69,6 +73,8 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # chunk_size = 20
 # keep_recent = 5
 # max_summary_tokens = 1024
+# compaction_timeout = 120000
+# compaction_max_retries = 2
 
 # Bluesky integration. Requires handle, app_password, and did when enabled.
 # For production, use environment variables: BLUESKY_HANDLE, BLUESKY_APP_PASSWORD

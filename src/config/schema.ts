@@ -46,6 +46,7 @@ const DatabaseConfigSchema = z.object({
 
 const RuntimeConfigSchema = z.object({
   working_dir: z.string().default("./workspace"),
+  unrestricted: z.boolean().default(false),
   allowed_hosts: z.array(z.string()).default([]),
   allowed_read_paths: z.array(z.string()).default([]),
   allowed_write_paths: z.array(z.string()).default([]),
@@ -111,6 +112,8 @@ const SummarizationConfigSchema = z.object({
     "requirement",
   ]),
   content_length_weight: z.number().nonnegative().default(1.0),
+  compaction_timeout: z.number().int().positive().default(120000),
+  compaction_max_retries: z.number().int().nonnegative().default(2),
 });
 
 const WebConfigSchema = z.object({
@@ -190,6 +193,27 @@ const ActivityConfigSchema = z
     }
   });
 
+const SubconsciousConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    inner_conversation_id: z.string().optional(),
+    impulse_interval_minutes: z.number().min(5).max(120).default(20),
+    max_tool_rounds: z.number().min(1).max(20).default(5),
+    engagement_half_life_days: z.number().min(1).max(90).default(7),
+    max_active_interests: z.number().min(1).max(50).default(10),
+    introspection_offset_minutes: z.number().min(1).max(30).default(3),
+    introspection_lookback_hours: z.number().min(1).max(72).default(24),
+  })
+  .superRefine((data, ctx) => {
+    if (data.enabled && !data.inner_conversation_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "inner_conversation_id is required when subconscious is enabled",
+        path: ["inner_conversation_id"],
+      });
+    }
+  });
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -203,6 +227,7 @@ const AppConfigSchema = z.object({
   email: EmailConfigSchema.optional(),
   activity: ActivityConfigSchema.optional(),
   mcp: McpConfigSchema.default({}),
+  subconscious: SubconsciousConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -219,5 +244,6 @@ export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
 export type McpConfig = z.infer<typeof McpConfigSchema>;
+export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema };

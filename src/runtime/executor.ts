@@ -2,10 +2,10 @@
 
 /**
  * Deno code executor with IPC bridge and controlled permissions.
- * Spawns Deno subprocesses to execute code in a controlled sandbox environment.
+ * Spawns Deno subprocesses to execute code in a sandbox environment.
  * Manages:
  * - Size validation (code and output)
- * - Permission flags for network, filesystem, environment access
+ * - Permission flags for network, filesystem, environment access (or --allow-all when unrestricted)
  * - Timeout enforcement
  * - IPC communication with the Deno subprocess
  * - Tool dispatch bridging between Deno code and host tools
@@ -130,46 +130,47 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
         // Build permission flags
         const permissionFlags: Array<string> = [];
 
-        // Network permission with allowed hosts
-        // When bluesky credentials are present, the PDS host must also be permitted.
-        // The AT Protocol redirects write operations to the user's PDS, which is a
-        // dynamically assigned host (e.g. bankera.us-west.host.bsky.network).
-        const extraHosts: Array<string> = [];
-        if (context?.bluesky?.pdsUrl) {
-          try {
-            const pdsHostname = new URL(context.bluesky.pdsUrl).hostname;
-            if (pdsHostname && !config.allowed_hosts.includes(pdsHostname)) {
-              extraHosts.push(pdsHostname);
+        if (config.unrestricted) {
+          permissionFlags.push('--allow-all');
+        } else {
+          // Network permission with allowed hosts
+          // When bluesky credentials are present, the PDS host must also be permitted.
+          const extraHosts: Array<string> = [];
+          if (context?.bluesky?.pdsUrl) {
+            try {
+              const pdsHostname = new URL(context.bluesky.pdsUrl).hostname;
+              if (pdsHostname && !config.allowed_hosts.includes(pdsHostname)) {
+                extraHosts.push(pdsHostname);
+              }
+            } catch {
+              // Invalid URL — skip
             }
-          } catch {
-            // Invalid URL — skip
           }
-        }
 
-        const allHosts = [...config.allowed_hosts, ...extraHosts];
-        if (allHosts.length > 0) {
-          permissionFlags.push(`--allow-net=${allHosts.join(',')}`);
-        } else {
-          permissionFlags.push('--deny-net');
-        }
+          const allHosts = [...config.allowed_hosts, ...extraHosts];
+          if (allHosts.length > 0) {
+            permissionFlags.push(`--allow-net=${allHosts.join(',')}`);
+          } else {
+            permissionFlags.push('--deny-net');
+          }
 
-        // Filesystem permissions: working_dir always readable/writable + extras
-        // Resolve paths from project root, not subprocess cwd
-        const resolvedReadPaths = config.allowed_read_paths.map(p => resolve(p));
-        const resolvedWritePaths = config.allowed_write_paths.map(p => resolve(p));
-        const readPaths = [config.working_dir, ...resolvedReadPaths, ...resolvedWritePaths];
-        const writePaths = [config.working_dir, ...resolvedWritePaths];
-        permissionFlags.push(`--allow-read=${readPaths.join(',')}`);
-        permissionFlags.push(`--allow-write=${writePaths.join(',')}`);
+          // Filesystem permissions: working_dir always readable/writable + extras
+          const resolvedReadPaths = config.allowed_read_paths.map(p => resolve(p));
+          const resolvedWritePaths = config.allowed_write_paths.map(p => resolve(p));
+          const readPaths = [config.working_dir, ...resolvedReadPaths, ...resolvedWritePaths];
+          const writePaths = [config.working_dir, ...resolvedWritePaths];
+          permissionFlags.push(`--allow-read=${readPaths.join(',')}`);
+          permissionFlags.push(`--allow-write=${writePaths.join(',')}`);
 
-        // Subprocess permissions: allowlist if configured, deny otherwise
-        if (config.allowed_run.length > 0) {
-          permissionFlags.push(`--allow-run=${config.allowed_run.join(',')}`);
-        } else {
-          permissionFlags.push('--deny-run');
+          // Subprocess permissions: allowlist if configured, deny otherwise
+          if (config.allowed_run.length > 0) {
+            permissionFlags.push(`--allow-run=${config.allowed_run.join(',')}`);
+          } else {
+            permissionFlags.push('--deny-run');
+          }
+          permissionFlags.push('--deny-env');
+          permissionFlags.push('--deny-ffi');
         }
-        permissionFlags.push('--deny-env');
-        permissionFlags.push('--deny-ffi');
 
         // Spawn Deno subprocess
         const proc = Bun.spawn(['deno', 'run', ...permissionFlags, scriptPath], {

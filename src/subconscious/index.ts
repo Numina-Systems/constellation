@@ -24,3 +24,5 @@ export { createContinuationBudget } from './continuation-budget.ts';
 export type { ContinuationBudget, ContinuationBudgetConfig } from './continuation-budget.ts';
 export { createContinuationJudge } from './continuation-judge.ts';
 export type { ContinuationJudgeDeps } from './continuation-judge.ts';
+export { runContinuationLoop } from './continuation-loop.ts';
+export type { ContinuationLoopDeps } from './continuation-loop.ts';

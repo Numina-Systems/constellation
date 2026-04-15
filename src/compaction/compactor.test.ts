@@ -2145,6 +2145,18 @@ describe('compaction pipeline integration', () => {
 
     // Should have succeeded eventually
     expect(result.history.length).toBeLessThan(messages.length);
+
+    // AC2.2 verification: message counts should decrease across retry attempts
+    // proving chunk sizes were actually halved
+    expect(capturedRequests.length).toBeGreaterThan(1);
+
+    const firstRequestMessageCount = capturedRequests[0]!.messages.length;
+    const secondRequestMessageCount = capturedRequests[1]!.messages.length;
+    const thirdRequestMessageCount = capturedRequests[2]!.messages.length;
+
+    // Each retry should have fewer messages (chunk size halved)
+    expect(secondRequestMessageCount).toBeLessThan(firstRequestMessageCount);
+    expect(thirdRequestMessageCount).toBeLessThanOrEqual(secondRequestMessageCount);
   });
 
   // AC2.3: Chunk size never goes below minimum floor (2 messages)

@@ -1,6 +1,6 @@
 # Subconscious
 
-Last verified: 2026-04-14
+Last verified: 2026-04-15
 
 ## Purpose
 Autonomous curiosity system that gives the agent an inner life of interests, curiosity threads, and self-directed exploration. Runs on a separate conversation with periodic impulse events that prompt reflection, idea generation, and tool-assisted exploration. Engagement scores decay over time to surface genuinely sustained interests.
@@ -8,7 +8,7 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 ## Contracts
 - **Exposes**: 
   - Interest system: `InterestRegistry` port interface, `createInterestRegistry(db)`, `buildImpulseEvent(context)`, `buildImpulseCron(intervalMinutes)`, `buildMorningAgendaEvent(context)`, `buildWrapUpEvent(context)`, `createImpulseAssembler(deps)`, `createSubconsciousContextProvider(registry, owner)`, domain types (`Interest`, `CuriosityThread`, `ExplorationLogEntry`, `InterestRegistryConfig`, `ImpulseContext`, `ImpulseAssembler`)
-  - Continuation system: `ContinuationJudge` port interface, `ContinuationDecision`, `ContinuationJudgeContext` types, `buildContinuationPrompt(context)`, `parseContinuationResponse(text)` pure functions, `createContinuationBudget(config)`, `ContinuationBudget`, `ContinuationBudgetConfig` types, `createContinuationJudge(deps)`, `ContinuationJudgeDeps` type
+  - Continuation system: `ContinuationJudge` port interface, `ContinuationDecision`, `ContinuationJudgeContext` types, `buildContinuationPrompt(context)`, `parseContinuationResponse(text)` pure functions, `createContinuationBudget(config)`, `ContinuationBudget`, `ContinuationBudgetConfig` types, `createContinuationJudge(deps)`, `ContinuationJudgeDeps` type, `runContinuationLoop(deps, initialResponse, roundStart)`, `ContinuationLoopDeps` type
 - **Guarantees**:
   - `InterestRegistry` CRUD operations are owner-scoped (multi-agent safe)
   - `applyEngagementDecay` uses exponential half-life decay on all active interests
@@ -21,11 +21,12 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
   - `parseContinuationResponse` returns `shouldContinue: false` for any malformed input (never throws)
   - `ContinuationBudget` enforces both per-event and per-cycle limits independently
   - `ContinuationJudge` adapter returns `shouldContinue: false` on any model error (graceful degradation)
+  - `runContinuationLoop` catches all errors internally (never breaks normal impulse/introspection flow)
 - **Expects**: PostgreSQL with migration `009_subconscious_schema.sql` applied. `PersistenceProvider` injected for registry. `TraceStore` and `MemoryManager` injected for impulse assembler.
 
 ## Dependencies
 - **Uses**: `src/persistence/` (PersistenceProvider for SQL), `src/reflexion/` (TraceStore for impulse context), `src/memory/` (MemoryManager for recent memories in impulse context), `src/scheduled-context.ts` (formatTraceSummary for impulse prompts), `src/agent/types.ts` (ExternalEvent, ContextProvider)
-- **Used by**: `src/tool/builtin/subconscious.ts` (tools consume InterestRegistry), `src/index.ts` (composition root wires registry, assembler, scheduler, context provider, and separate agent instance)
+- **Used by**: `src/tool/builtin/subconscious.ts` (tools consume InterestRegistry), `src/index.ts` (composition root wires registry, assembler, scheduler, context provider, continuation budget/judge, and separate agent instance)
 - **Boundary**: Domain types and impulse builders are Functional Core. Registry adapter, impulse assembler, and context provider are Imperative Shell.
 
 ## Key Decisions
@@ -49,4 +50,5 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 - `continuation.ts` -- Continuation decision types, prompt builder, response parser (Functional Core)
 - `continuation-budget.ts` -- In-memory per-event/per-cycle budget counter (Imperative Shell)
 - `continuation-judge.ts` -- LLM-backed continuation judge adapter using ModelProvider (Imperative Shell)
+- `continuation-loop.ts` -- Orchestrates judge+budget into a while-loop for impulse/introspection events (Imperative Shell)
 - `index.ts` -- Barrel export

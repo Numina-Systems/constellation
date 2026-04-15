@@ -712,8 +712,6 @@ async function main(): Promise<void> {
     clipFirst: config.summarization?.clip_first ?? 2,
     clipLast: config.summarization?.clip_last ?? 2,
     prompt: config.summarization?.prompt ?? null,
-    timeout: config.summarization?.compaction_timeout ?? 120000,
-    maxRetries: config.summarization?.compaction_max_retries ?? 2,
     scoring: config.summarization ? {
       roleWeightSystem: config.summarization.role_weight_system,
       roleWeightUser: config.summarization.role_weight_user,
@@ -725,6 +723,8 @@ async function main(): Promise<void> {
       importantKeywords: config.summarization.important_keywords,
       contentLengthWeight: config.summarization.content_length_weight,
     } : undefined,
+    timeout: config.summarization?.compaction_timeout ?? 120000,
+    maxRetries: config.summarization?.compaction_max_retries ?? 2,
   };
 
   const compactor = createCompactor({

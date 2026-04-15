@@ -1363,12 +1363,13 @@ describe("createOllamaAdapter - timeout support", () => {
     });
 
     // Set server to delay response longer than timeout
+    // Use 300ms delay with 100ms timeout to ensure reliable timeout firing
     requestDelay = 300;
 
     const request: ModelRequest = {
       model: "llama3.1",
       max_tokens: 100,
-      timeout: 50, // 50ms timeout, server delays 300ms
+      timeout: 100, // 100ms timeout, server delays 300ms
       messages: [
         {
           role: "user",
@@ -1397,12 +1398,13 @@ describe("createOllamaAdapter - timeout support", () => {
     });
 
     // Set server to delay response longer than timeout
+    // Use 300ms delay with 100ms timeout to ensure reliable timeout firing
     requestDelay = 300;
 
     const request: ModelRequest = {
       model: "llama3.1",
       max_tokens: 100,
-      timeout: 50, // 50ms timeout, server delays 300ms
+      timeout: 100, // 100ms timeout, server delays 300ms
       messages: [
         {
           role: "user",
@@ -1427,12 +1429,3 @@ describe("createOllamaAdapter - timeout support", () => {
     }
   });
 });
-
-describe("isRetryableOllamaError - TimeoutError support", () => {
-  it("should return true for DOMException with name TimeoutError", () => {
-    const error = new DOMException("The operation timed out", "TimeoutError");
-
-    expect(isRetryableOllamaError(error)).toBe(true);
-  });
-});
-

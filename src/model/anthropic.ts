@@ -242,7 +242,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
               system: systemParam,
               tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
               temperature: request.temperature,
-              messages: nonSystemMessages.map(normalizeMessage),
+              messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
             },
             ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
           );

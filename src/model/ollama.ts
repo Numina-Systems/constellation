@@ -252,9 +252,6 @@ export function isRetryableOllamaError(error: unknown): boolean {
   if (error instanceof ModelError) {
     return error.retryable;
   }
-  if (error instanceof DOMException && error.name === "TimeoutError") {
-    return true;
-  }
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
     if (

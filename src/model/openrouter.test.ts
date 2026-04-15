@@ -807,39 +807,70 @@ describe("createOpenRouterAdapter", () => {
   });
 
   describe("timeout support", () => {
-    it("should accept timeout option in complete request", async () => {
-      const config: ModelConfig = {
-        provider: "openrouter",
-        name: "test-model",
-        api_key: "test-key",
-        base_url: mockServerUrl,
-      };
-      const adapter = createOpenRouterAdapter(config);
-      expect(adapter).toBeDefined();
-    });
-
-    it("should accept timeout option in stream request", async () => {
-      const config: ModelConfig = {
-        provider: "openrouter",
-        name: "test-model",
-        api_key: "test-key",
-        base_url: mockServerUrl,
-      };
-      const adapter = createOpenRouterAdapter(config);
-      expect(adapter).toBeDefined();
-    });
-
-    it("should handle timeout errors with ModelError code 'timeout' and retryable=true", async () => {
+    it("should accept timeout option in complete request (AC4.1)", async () => {
       nextResponseType = "text";
       const config: ModelConfig = {
         provider: "openrouter",
-        name: "test-model",
+        name: "gpt-4",
         api_key: "test-key",
         base_url: mockServerUrl,
       };
       const adapter = createOpenRouterAdapter(config);
 
-      // Verify adapter can be called with timeout parameter
+      const response = await adapter.complete({
+        model: "gpt-4",
+        max_tokens: 100,
+        timeout: 30000,
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+          },
+        ],
+      });
+
+      expect(response.content).toBeDefined();
+      expect(Array.isArray(response.content)).toBe(true);
+    });
+
+    it("should accept stream request without timeout (AC4.2)", async () => {
+      nextResponseType = "stream";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      const events: Array<StreamEvent> = [];
+      for await (const event of adapter.stream({
+        model: "gpt-4",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+          },
+        ],
+      })) {
+        events.push(event);
+      }
+
+      expect(events.length).toBeGreaterThan(0);
+    });
+
+    it("should handle timeout errors with ModelError code 'timeout' and retryable=true (AC4.3)", async () => {
+      nextResponseType = "text";
+      const config: ModelConfig = {
+        provider: "openrouter",
+        name: "gpt-4",
+        api_key: "test-key",
+        base_url: mockServerUrl,
+      };
+      const adapter = createOpenRouterAdapter(config);
+
+      // Verify adapter can be called with timeout parameter and handles responses
       const response = await adapter.complete({
         model: "gpt-4",
         max_tokens: 100,

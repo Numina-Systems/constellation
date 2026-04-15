@@ -1,9 +1,10 @@
 // pattern: Functional Core
 
 import { describe, test, expect } from 'bun:test';
-import { buildSystemPrompt } from './context.ts';
+import { buildSystemPrompt, shouldCompress, estimateOverheadTokens } from './context.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ContextProvider, ConversationMessage } from './types.ts';
+import type { ToolDefinition } from '../tool/types.ts';
 
 describe('buildSystemPrompt', () => {
   /**
@@ -89,8 +90,6 @@ describe('buildSystemPrompt', () => {
 });
 
 describe('shouldCompress', () => {
-  const { shouldCompress } = require('./context.ts');
-
   test('context-overflow-guard.AC1.3: message tokens within budget + overhead returns false', () => {
     // Budget: 100 tokens, overhead: 20 tokens, available: 80 tokens
     // Message: 50 tokens (under 80)
@@ -202,8 +201,6 @@ describe('shouldCompress', () => {
 });
 
 describe('estimateOverheadTokens', () => {
-  const { estimateOverheadTokens } = require('./context.ts');
-
   test('with system prompt, tools, and maxOutputTokens', () => {
     const systemPrompt = 'System'.repeat(50); // 300 chars = 75 tokens
     const tools = [
@@ -228,7 +225,7 @@ describe('estimateOverheadTokens', () => {
 
   test('with empty tools array returns system prompt and maxOutputTokens', () => {
     const systemPrompt = 'Short';
-    const tools: Array<Record<string, unknown>> = [];
+    const tools: ReadonlyArray<ToolDefinition> = [];
     const maxOutputTokens = 300;
 
     const result = estimateOverheadTokens(systemPrompt, tools, maxOutputTokens);

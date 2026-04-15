@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-04-14
+Last verified: 2026-04-15
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 

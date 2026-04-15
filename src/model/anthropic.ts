@@ -20,6 +20,9 @@ function isRetryableError(error: unknown): boolean {
   if (error instanceof Anthropic.RateLimitError) {
     return true;
   }
+  if (error instanceof Anthropic.APIConnectionTimeoutError) {
+    return true;
+  }
   if (error instanceof Error && error.message.includes("timeout")) {
     return true;
   }
@@ -174,14 +177,17 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           const systemParam = buildAnthropicSystemParam(request.system, request.messages);
           const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
 
-          const stream = client.messages.stream({
-            model: request.model,
-            max_tokens: request.max_tokens,
-            system: systemParam,
-            tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
-            temperature: request.temperature,
-            messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
-          });
+          const stream = client.messages.stream(
+            {
+              model: request.model,
+              max_tokens: request.max_tokens,
+              system: systemParam,
+              tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
+              temperature: request.temperature,
+              messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
+            },
+            ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+          );
           return await stream.finalMessage();
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
@@ -189,6 +195,13 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
               "auth",
               false,
               error.message || "authentication failed"
+            );
+          }
+          if (error instanceof Anthropic.APIConnectionTimeoutError) {
+            throw new ModelError(
+              "timeout",
+              true,
+              error.message || "request timed out"
             );
           }
           if (error instanceof Anthropic.RateLimitError) {
@@ -222,20 +235,30 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           const systemParam = buildAnthropicSystemParam(request.system, request.messages);
           const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
 
-          return await client.messages.stream({
-            model: request.model,
-            max_tokens: request.max_tokens,
-            system: systemParam,
-            tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
-            temperature: request.temperature,
-            messages: nonSystemMessages.map(normalizeMessage),
-          });
+          return await client.messages.stream(
+            {
+              model: request.model,
+              max_tokens: request.max_tokens,
+              system: systemParam,
+              tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
+              temperature: request.temperature,
+              messages: nonSystemMessages.map(normalizeMessage),
+            },
+            ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+          );
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(
               "auth",
               false,
               error.message || "authentication failed"
+            );
+          }
+          if (error instanceof Anthropic.APIConnectionTimeoutError) {
+            throw new ModelError(
+              "timeout",
+              true,
+              error.message || "request timed out"
             );
           }
           if (error instanceof Anthropic.RateLimitError) {

@@ -89,7 +89,7 @@ describe('buildSystemPrompt', () => {
 });
 
 describe('shouldCompress', () => {
-  const { shouldCompress, estimateTokens } = require('./context.ts');
+  const { shouldCompress } = require('./context.ts');
 
   test('context-overflow-guard.AC1.3: message tokens within budget + overhead returns false', () => {
     // Budget: 100 tokens, overhead: 20 tokens, available: 80 tokens
@@ -212,7 +212,7 @@ describe('estimateOverheadTokens', () => {
     ];
     const maxOutputTokens = 1000;
 
-    const toolsJson = JSON.stringify(tools); // 113 chars = 29 tokens
+    // JSON.stringify(tools) = 113 chars = 29 tokens
     const expectedOverhead = 75 + 29 + 1000;
 
     const result = estimateOverheadTokens(systemPrompt, tools, maxOutputTokens);

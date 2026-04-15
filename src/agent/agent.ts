@@ -8,7 +8,7 @@
 
 // UUID generation is built-in to Bun via crypto
 import { toSql } from 'pgvector/utils';
-import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
+import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens } from './context.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
@@ -108,7 +108,11 @@ export function createAgent(
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
-    if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens)) {
+    const toolDefinitions = deps.registry.getDefinitions();
+    const preliminarySystemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+    const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, toolDefinitions, maxTokens);
+
+    if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
       const result = await deps.compactor.compress(history, id);
       history = Array.from(result.history);
     }

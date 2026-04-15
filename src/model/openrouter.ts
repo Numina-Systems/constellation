@@ -213,7 +213,12 @@ export function createOpenRouterAdapter(
 
         const choice = response.choices?.[0];
         if (!choice) {
-          throw new Error("No choices in response");
+          const raw = JSON.stringify(response).slice(0, 500);
+          throw new ModelError(
+            "api_error",
+            true,
+            `no choices in response (model=${request.model}): ${raw}`
+          );
         }
 
         const usage = response.usage ?? {

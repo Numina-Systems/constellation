@@ -1138,7 +1138,7 @@ describe("createOpenRouterAdapter", () => {
           max_tokens: 100,
           messages: [{ role: "user", content: "Hello" }],
         }),
-      ).rejects.toThrow("No choices in response");
+      ).rejects.toThrow("no choices in response");
     });
   });
 });

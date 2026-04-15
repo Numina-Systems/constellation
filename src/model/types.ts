@@ -45,6 +45,7 @@ export type ModelRequest = {
   model: string;
   max_tokens: number;
   temperature?: number;
+  timeout?: number;
 };
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";

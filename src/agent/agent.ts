@@ -8,7 +8,7 @@
 
 // UUID generation is built-in to Bun via crypto
 import { toSql } from 'pgvector/utils';
-import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens } from './context.ts';
+import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
@@ -145,9 +145,25 @@ export function createAgent(
 
       const messages = await buildMessages(history, deps.memory);
 
+      // Pre-flight guard: truncate if estimated request exceeds model limit
+      const toolDefinitions = deps.registry.getDefinitions();
+      const requestOverhead = estimateOverheadTokens(systemPrompt, toolDefinitions, maxTokens);
+      const messageTokens = messages.reduce(
+        (sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
+        0,
+      );
+
+      let finalMessages = messages;
+      if (messageTokens + requestOverhead > modelMaxTokens) {
+        console.warn(
+          `pre-flight guard: estimated ${messageTokens + requestOverhead} tokens exceeds limit ${modelMaxTokens}, truncating oldest messages`,
+        );
+        finalMessages = truncateOldest(messages, modelMaxTokens, requestOverhead);
+      }
+
       // Call the model with current context
       const modelRequest = {
-        messages,
+        messages: finalMessages,
         system: systemPrompt,
         tools: deps.registry.toModelTools(),
         model: modelName,

@@ -78,6 +78,7 @@ describe('DenoExecutor Integration Tests', () => {
     // Setup config
     config = {
       working_dir: testWorkdir,
+      unrestricted: false,
       allowed_hosts: ['example.com', 'localhost:8000'],
       allowed_read_paths: [],
       allowed_write_paths: [],
@@ -168,6 +169,39 @@ try {
     expect(result.output.toLowerCase()).toMatch(/error|denied|not allowed/);
   });
 
+  it('AC3.5: denies subprocess spawning', async () => {
+    const code = `
+try {
+  const command = new Deno.Command("ls", { args: [] });
+  const process = command.spawn();
+  output("unexpected success");
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+    const result = await executor.execute(code, '');
+
+    expect(result.success).toBe(true);
+    expect(result.output.toLowerCase()).toMatch(/permission|denied|run/);
+  });
+
+  it('AC3.6: denies environment variable access', async () => {
+    const code = `
+try {
+  const path = Deno.env.get("PATH");
+  output("got: " + String(path));
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+    const result = await executor.execute(code, '');
+
+    expect(result.success).toBe(true);
+    expect(result.output.toLowerCase()).toMatch(/permission|denied|env/);
+  });
+
   it('AC3.3: allows reading from working directory', async () => {
     const code = `
 const content = await Deno.readTextFile("./testfile.txt");
@@ -236,41 +270,7 @@ output("done");
     expect(result.output).toContain('done');
   });
 
-  it('AC3.5: denies subprocess spawning', async () => {
-    const code = `
-try {
-  const command = new Deno.Command("ls", { args: [] });
-  const process = command.spawn();
-  output("unexpected success");
-} catch (e) {
-  output("error: " + String(e));
-}
-`;
-
-    const result = await executor.execute(code, '');
-
-    expect(result.success).toBe(true);
-    expect(result.output.toLowerCase()).toMatch(/permission|denied|run/);
-  });
-
-  it('AC3.6: denies environment variable access', async () => {
-    const code = `
-try {
-  const path = Deno.env.get("PATH");
-  output("got: " + String(path));
-} catch (e) {
-  output("error: " + String(e));
-}
-`;
-
-    const result = await executor.execute(code, '');
-
-    expect(result.success).toBe(true);
-    // Deno denies env access with a permission error in output
-    expect(result.output.toLowerCase()).toMatch(/permission|denied|env/);
-  });
-
-  it('AC3.7: enforces execution timeout', async () => {
+it('AC3.7: enforces execution timeout', async () => {
     const shortConfig = {
       ...config,
       code_timeout: 1000, // 1 second timeout
@@ -380,7 +380,6 @@ output("via output");
     const result = await executor.execute(code, '');
 
     expect(result.success).toBe(true);
-    // output should be captured
     expect(result.output).toContain('via output');
   });
 
@@ -403,7 +402,6 @@ try {
     const readPathConfig = {
       ...config,
       allowed_read_paths: [resolve(process.cwd(), 'src')],
-      allowed_run: [] as string[],
     };
     const readExecutor = createDenoExecutor(readPathConfig, createMockRegistry());
 
@@ -429,7 +427,6 @@ try {
   it('allows spawning executables listed in allowed_run', async () => {
     const runConfig = {
       ...config,
-      allowed_read_paths: [] as string[],
       allowed_run: ['echo'],
     };
     const runExecutor = createDenoExecutor(runConfig, createMockRegistry());
@@ -453,7 +450,6 @@ try {
   it('denies unlisted executables when allowed_run is set', async () => {
     const runConfig = {
       ...config,
-      allowed_read_paths: [] as string[],
       allowed_run: ['echo'],
     };
     const runExecutor = createDenoExecutor(runConfig, createMockRegistry());
@@ -511,11 +507,6 @@ output("result: " + JSON.stringify(result));
       },
     };
 
-    // example.com is already in allowed_hosts from the test config,
-    // so fetching it should not be denied.
-    // The real value is that a PDS host NOT in allowed_hosts gets added.
-    // We test with a host that IS in allowed_hosts to verify the dedup path,
-    // then separately verify a non-listed host would work.
     const code = `
 try {
   const response = await fetch("http://example.com", { method: "HEAD" });
@@ -555,7 +546,6 @@ output("wrote: " + content);
       expect(result.success).toBe(true);
       expect(result.output).toContain('wrote: hello from sandbox');
 
-      // Verify file was actually created on the host filesystem
       const fs = await import('fs');
       expect(fs.existsSync(resolve(extraWriteDir, 'subdir', 'test.txt'))).toBe(true);
       const fileContent = fs.readFileSync(resolve(extraWriteDir, 'subdir', 'test.txt'), 'utf-8');
@@ -570,7 +560,6 @@ output("wrote: " + content);
     mkdirSync(forbiddenDir, { recursive: true });
 
     try {
-      // Config has no allowed_write_paths including forbiddenDir
       const code = `
 try {
   await Deno.writeTextFile("${forbiddenDir.replace(/\\/g, '\\\\')}/nope.txt", "should fail");
@@ -594,14 +583,12 @@ try {
     mkdirSync(writeOnlyDir, { recursive: true });
 
     try {
-      // Write a file from host side, then read it from sandbox
       const fs = await import('fs');
       fs.writeFileSync(resolve(writeOnlyDir, 'preexisting.txt'), 'already here');
 
       const writeConfig = {
         ...config,
         allowed_write_paths: [writeOnlyDir],
-        // NOT adding to allowed_read_paths — should auto-include
       };
       const writeExecutor = createDenoExecutor(writeConfig, createMockRegistry());
 
@@ -617,6 +604,53 @@ output("read: " + content);
     } finally {
       rmSync(writeOnlyDir, { recursive: true, force: true });
     }
+  });
+
+  describe('unrestricted mode', () => {
+    it('grants all permissions when unrestricted is true', async () => {
+      const unrestrictedConfig = {
+        ...config,
+        unrestricted: true,
+      };
+      const unrestrictedExecutor = createDenoExecutor(unrestrictedConfig, createMockRegistry());
+
+      const code = `
+try {
+  const path = Deno.env.get("PATH");
+  output("env: " + (path ? "accessible" : "empty"));
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+      const result = await unrestrictedExecutor.execute(code, '');
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('env: accessible');
+    });
+
+    it('allows subprocess spawning when unrestricted is true', async () => {
+      const unrestrictedConfig = {
+        ...config,
+        unrestricted: true,
+      };
+      const unrestrictedExecutor = createDenoExecutor(unrestrictedConfig, createMockRegistry());
+
+      const code = `
+try {
+  const command = new Deno.Command("echo", { args: ["unrestricted-test"] });
+  const { stdout } = await command.output();
+  output("ran: " + new TextDecoder().decode(stdout).trim());
+} catch (e) {
+  output("error: " + String(e));
+}
+`;
+
+      const result = await unrestrictedExecutor.execute(code, '');
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('ran: unrestricted-test');
+    });
   });
 
   describe('generateCredentialConstants', () => {

@@ -14,6 +14,7 @@ import { DEFAULT_SCORING_CONFIG } from './types.js';
 import {
   splitHistory,
   chunkMessages,
+  chunkMessagesByTokenBudget,
   buildClipArchive,
   estimateTokens,
   createCompactor,
@@ -2430,5 +2431,236 @@ describe('compaction pipeline integration', () => {
     expect(result.history).toEqual(messages);
     expect(result.messagesCompressed).toBe(0);
     expect(result.batchesCreated).toBe(0);
+  });
+});
+
+describe('chunkMessagesByTokenBudget', () => {
+  it('groups messages so each chunk stays within token budget', () => {
+    // Each message has 400 chars = ~100 tokens
+    const messages = Array.from({ length: 5 }, (_, i) =>
+      createMessage(String(i), 'user', 'a'.repeat(400), i * 100),
+    );
+
+    // Budget of 250 tokens should fit 2 messages per chunk (200 tokens), not 3 (300)
+    const chunks = chunkMessagesByTokenBudget(messages, 250);
+    expect(chunks.length).toBe(3);
+    expect(chunks[0]?.length).toBe(2);
+    expect(chunks[1]?.length).toBe(2);
+    expect(chunks[2]?.length).toBe(1);
+  });
+
+  it('returns empty array for empty input', () => {
+    const chunks = chunkMessagesByTokenBudget([], 1000);
+    expect(chunks.length).toBe(0);
+  });
+
+  it('puts a single oversized message in its own chunk', () => {
+    const messages = [
+      createMessage('1', 'user', 'a'.repeat(4000), 0), // ~1000 tokens
+      createMessage('2', 'user', 'b'.repeat(400), 100), // ~100 tokens
+    ];
+
+    const chunks = chunkMessagesByTokenBudget(messages, 500);
+    expect(chunks.length).toBe(2);
+    expect(chunks[0]?.length).toBe(1);
+    expect(chunks[0]?.[0]?.id).toBe('1');
+    expect(chunks[1]?.length).toBe(1);
+    expect(chunks[1]?.[0]?.id).toBe('2');
+  });
+
+  it('fits all messages in one chunk when total is under budget', () => {
+    const messages = [
+      createMessage('1', 'user', 'hello', 0),
+      createMessage('2', 'assistant', 'world', 100),
+    ];
+
+    const chunks = chunkMessagesByTokenBudget(messages, 10000);
+    expect(chunks.length).toBe(1);
+    expect(chunks[0]?.length).toBe(2);
+  });
+
+  it('handles messages of varying sizes correctly', () => {
+    const messages = [
+      createMessage('1', 'user', 'a'.repeat(200), 0),      // ~50 tokens
+      createMessage('2', 'assistant', 'b'.repeat(200), 100), // ~50 tokens
+      createMessage('3', 'user', 'c'.repeat(2000), 200),     // ~500 tokens
+      createMessage('4', 'assistant', 'd'.repeat(200), 300), // ~50 tokens
+    ];
+
+    // Budget of 150 tokens: msg1+msg2 fit (100), msg3 alone (500 > 150 but goes in own chunk), msg4 alone (50)
+    const chunks = chunkMessagesByTokenBudget(messages, 150);
+    expect(chunks.length).toBe(3);
+    expect(chunks[0]?.length).toBe(2); // msg1 + msg2
+    expect(chunks[1]?.length).toBe(1); // msg3 (oversized, own chunk)
+    expect(chunks[2]?.length).toBe(1); // msg4
+  });
+});
+
+describe('circuit breaker', () => {
+  it('stops attempting compaction after maxConsecutiveFailures', async () => {
+    let callCount = 0;
+    const failingModel: ModelProvider = {
+      async complete(): Promise<ModelResponse> {
+        callCount++;
+        throw new ModelError('timeout', true, 'request timed out');
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const { mockMemory } = createResummarizeTestContext();
+    const mockPersistence = createMockPersistenceProvider();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 2,
+      maxSummaryTokens: 1024,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+      timeout: 1000,
+      maxRetries: 0, // No retries — fail fast for testing
+      maxConsecutiveFailures: 2,
+    };
+
+    const compactor = createCompactor({
+      model: failingModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', `msg${i}`, i * 100),
+    );
+
+    // First failure
+    const result1 = await compactor.compress(messages, 'test-conv');
+    expect(result1.failed).toBe(true);
+    expect(compactor.consecutiveFailures).toBe(1);
+
+    // Second failure — trips circuit breaker
+    const result2 = await compactor.compress(messages, 'test-conv');
+    expect(result2.failed).toBe(true);
+    expect(compactor.consecutiveFailures).toBe(2);
+
+    // Third call — circuit breaker skips, no model call
+    const callCountBefore = callCount;
+    const result3 = await compactor.compress(messages, 'test-conv');
+    expect(result3.failed).toBe(true);
+    expect(callCount).toBe(callCountBefore); // no new model calls
+    expect(compactor.consecutiveFailures).toBe(2);
+  });
+
+  it('resets consecutive failures on successful compaction', async () => {
+    let shouldFail = true;
+    const toggleModel: ModelProvider = {
+      async complete(): Promise<ModelResponse> {
+        if (shouldFail) {
+          throw new ModelError('timeout', true, 'request timed out');
+        }
+        return {
+          content: [{ type: 'text', text: 'Summary of conversation' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const { mockMemory } = createResummarizeTestContext();
+    const mockPersistence = createMockPersistenceProvider();
+
+    const config = {
+      chunkSize: 5,
+      keepRecent: 2,
+      maxSummaryTokens: 1024,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+      timeout: 1000,
+      maxRetries: 0,
+      maxConsecutiveFailures: 3,
+    };
+
+    const compactor = createCompactor({
+      model: toggleModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', `msg${i}`, i * 100),
+    );
+
+    // Fail once
+    await compactor.compress(messages, 'test-conv');
+    expect(compactor.consecutiveFailures).toBe(1);
+
+    // Succeed — should reset
+    shouldFail = false;
+    const result = await compactor.compress(messages, 'test-conv');
+    expect(result.failed).toBeUndefined();
+    expect(compactor.consecutiveFailures).toBe(0);
+  });
+});
+
+describe('token-budget chunking in compress()', () => {
+  it('uses token-budget chunking when maxChunkTokens is configured', async () => {
+    const calls: Array<ModelRequest> = [];
+    const mockModel: ModelProvider = {
+      async complete(request: ModelRequest): Promise<ModelResponse> {
+        calls.push(request);
+        return {
+          content: [{ type: 'text', text: `Summary ${calls.length}` }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const { mockMemory } = createResummarizeTestContext();
+    const mockPersistence = createMockPersistenceProvider();
+
+    // Each message is 400 chars = ~100 tokens
+    // maxChunkTokens of 250 means ~2 messages per chunk
+    // 8 compressible messages (10 total - 2 keepRecent) = 4 chunks
+    const config = {
+      chunkSize: 20, // large — should be overridden by maxChunkTokens
+      keepRecent: 2,
+      maxSummaryTokens: 1024,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+      maxChunkTokens: 250,
+    };
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'a'.repeat(400), i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    // With maxChunkTokens=250 and ~100 tokens per message, should get ~4 chunks from 8 messages
+    // (2 messages per chunk). Each chunk gets a summarize call.
+    expect(calls.length).toBe(4);
+    expect(result.messagesCompressed).toBe(8);
   });
 });

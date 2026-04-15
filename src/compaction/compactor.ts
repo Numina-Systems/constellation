@@ -288,6 +288,45 @@ export function chunkMessages(
 }
 
 /**
+ * Break messages into chunks bounded by a token budget.
+ * Each chunk's estimated token total stays at or below maxTokens.
+ * If a single message exceeds maxTokens, it gets its own chunk
+ * (the summarizer's retry-with-halving handles oversized single messages).
+ * Falls back to message-count chunking when no token budget is configured.
+ */
+export function chunkMessagesByTokenBudget(
+  messages: ReadonlyArray<ConversationMessage>,
+  maxTokens: number,
+): ReadonlyArray<ReadonlyArray<ConversationMessage>> {
+  if (messages.length === 0) {
+    return [];
+  }
+
+  const chunks: Array<ReadonlyArray<ConversationMessage>> = [];
+  let currentChunk: Array<ConversationMessage> = [];
+  let currentTokens = 0;
+
+  for (const msg of messages) {
+    const msgTokens = estimateTokens(msg.content);
+
+    if (currentChunk.length > 0 && currentTokens + msgTokens > maxTokens) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentTokens = 0;
+    }
+
+    currentChunk.push(msg);
+    currentTokens += msgTokens;
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+/**
  * Estimate tokens using the heuristic: 1 token ≈ 4 characters.
  */
 export function estimateTokens(text: string): number {
@@ -522,10 +561,14 @@ export async function resummarizeBatches(options: ResummarizeBatchesOptions): Pr
   );
 }
 
+const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
+
 export function createCompactor(
   options: CreateCompactorOptions,
 ): Compactor {
   const { model, memory, persistence, config, modelName } = options;
+  const maxConsecutiveFailures = config.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES;
+  let consecutiveFailures = 0;
 
   async function summarizeChunk(
     chunk: ReadonlyArray<ConversationMessage>,
@@ -583,14 +626,20 @@ export function createCompactor(
     const maxRetries = config.maxRetries ?? 2;
     const backoffBase = config.backoffBaseMs ?? INITIAL_BACKOFF_MS;
     let chunkSize = currentChunkSize;
+    let tokenBudget = config.maxChunkTokens;
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        // Re-chunk with current size if we've reduced it
-        const subChunks = attempt === 0
-          ? [messages]
-          : chunkMessages(messages, chunkSize);
+        // Re-chunk with reduced budget/size if we've retried
+        let subChunks: ReadonlyArray<ReadonlyArray<ConversationMessage>>;
+        if (attempt === 0) {
+          subChunks = [messages];
+        } else if (tokenBudget) {
+          subChunks = chunkMessagesByTokenBudget(messages, tokenBudget);
+        } else {
+          subChunks = chunkMessages(messages, chunkSize);
+        }
 
         let summary = existingSummary;
         for (const subChunk of subChunks) {
@@ -610,8 +659,11 @@ export function createCompactor(
           throw error;
         }
 
-        // Halve chunk size, respect floor
+        // Halve chunk size / token budget, respect floors
         chunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(chunkSize / 2));
+        if (tokenBudget) {
+          tokenBudget = Math.max(1000, Math.floor(tokenBudget / 2));
+        }
 
         // Exponential backoff (skip on last attempt)
         if (attempt < maxRetries) {
@@ -628,6 +680,24 @@ export function createCompactor(
     history: ReadonlyArray<ConversationMessage>,
     conversationId: string,
   ): Promise<CompactionResult> {
+    // Circuit breaker: skip compaction after too many consecutive failures
+    if (consecutiveFailures >= maxConsecutiveFailures) {
+      console.warn(
+        `compaction circuit breaker: skipping after ${consecutiveFailures} consecutive failures`,
+      );
+      const tokenEstimate = estimateTokens(
+        history.map((m) => m.content).join(''),
+      );
+      return {
+        history,
+        batchesCreated: 0,
+        messagesCompressed: 0,
+        tokensEstimateBefore: tokenEstimate,
+        tokensEstimateAfter: tokenEstimate,
+        failed: true,
+      };
+    }
+
     try {
       // 1. Split history
       const { toCompress, toKeep, priorSummary } = splitHistory(
@@ -654,8 +724,10 @@ export function createCompactor(
       // 3. Get system prompt for summarization
       const systemPrompt = config.prompt;
 
-      // 4. Chunk messages
-      const chunks = chunkMessages(toCompress, config.chunkSize);
+      // 4. Chunk messages (prefer token-budget chunking when configured)
+      const chunks = config.maxChunkTokens
+        ? chunkMessagesByTokenBudget(toCompress, config.maxChunkTokens)
+        : chunkMessages(toCompress, config.chunkSize);
 
       // 5. Summarize each chunk (fold-in pattern)
       const batches: Array<SummaryBatch> = [];
@@ -753,7 +825,8 @@ export function createCompactor(
         compressedHistory.map((m) => m.content).join(''),
       );
 
-      // 14. Return result
+      // 14. Reset circuit breaker on success and return result
+      consecutiveFailures = 0;
       return {
         history: compressedHistory,
         batchesCreated: batches.length,
@@ -762,9 +835,18 @@ export function createCompactor(
         tokensEstimateAfter: tokensAfter,
       };
     } catch (error) {
-      // Error handling: return original history unchanged
-      // TODO: Replace console.error with injected logger for proper observability
-      console.error('compaction pipeline failed', { conversationId, error: String(error) });
+      consecutiveFailures++;
+      console.error('compaction pipeline failed', {
+        conversationId,
+        error: String(error),
+        consecutiveFailures,
+        maxConsecutiveFailures,
+      });
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        console.warn(
+          `compaction circuit breaker tripped after ${consecutiveFailures} consecutive failures — skipping future attempts`,
+        );
+      }
       const tokenEstimate = estimateTokens(
         history.map((m) => m.content).join(''),
       );
@@ -774,9 +856,15 @@ export function createCompactor(
         messagesCompressed: 0,
         tokensEstimateBefore: tokenEstimate,
         tokensEstimateAfter: tokenEstimate,
+        failed: true,
       };
     }
   }
 
-  return { compress };
+  return {
+    compress,
+    get consecutiveFailures() {
+      return consecutiveFailures;
+    },
+  };
 }

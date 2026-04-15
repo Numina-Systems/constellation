@@ -22,6 +22,7 @@ export type CompactionResult = {
   readonly messagesCompressed: number;
   readonly tokensEstimateBefore: number;
   readonly tokensEstimateAfter: number;
+  readonly failed?: boolean;
 };
 
 export type ImportanceScoringConfig = {
@@ -59,6 +60,8 @@ export type CompactionConfig = {
   readonly timeout?: number;
   readonly maxRetries?: number;
   readonly backoffBaseMs?: number;
+  readonly maxChunkTokens?: number;
+  readonly maxConsecutiveFailures?: number;
 };
 
 export type Compactor = {
@@ -66,4 +69,5 @@ export type Compactor = {
     history: ReadonlyArray<ConversationMessage>,
     conversationId: string,
   ): Promise<CompactionResult>;
+  readonly consecutiveFailures: number;
 };

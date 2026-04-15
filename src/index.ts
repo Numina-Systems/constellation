@@ -805,6 +805,8 @@ async function main(): Promise<void> {
     } : undefined,
     timeout: config.summarization?.compaction_timeout ?? 120000,
     maxRetries: config.summarization?.compaction_max_retries ?? 2,
+    maxChunkTokens: config.summarization?.max_chunk_tokens,
+    maxConsecutiveFailures: config.summarization?.max_consecutive_failures ?? 3,
   };
 
   const compactor = createCompactor({

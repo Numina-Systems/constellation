@@ -344,6 +344,7 @@ describe('Agent loop', () => {
       const calls: Array<{ history: ReadonlyArray<ConversationMessage>; conversationId: string }> = [];
       return {
         calls,
+        consecutiveFailures: 0,
         async compress(history, conversationId) {
           calls.push({ history: [...history], conversationId });
           return result;
@@ -731,6 +732,7 @@ describe('Agent loop', () => {
   describe('AC5: compact_context tool dispatch', () => {
     function createMockCompactor(result: CompactionResult): Compactor {
       return {
+        consecutiveFailures: 0,
         async compress() {
           return result;
         },

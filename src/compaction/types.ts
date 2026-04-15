@@ -56,6 +56,9 @@ export type CompactionConfig = {
   readonly clipLast: number;
   readonly prompt: string | null;
   readonly scoring?: ImportanceScoringConfig;
+  readonly timeout?: number;
+  readonly maxRetries?: number;
+  readonly backoffBaseMs?: number;
 };
 
 export type Compactor = {

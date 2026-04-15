@@ -1,9 +1,10 @@
-// pattern: Imperative Shell
+// pattern: Mixed (pre-existing) — pure functions (shouldCompress, truncateOldest, estimateOverheadTokens, estimateTokens) coexist with I/O functions (buildSystemPrompt, buildMessages) for co-location convenience. Pure functions are independently testable without mocks.
 
 /**
  * Context building utilities for the agent loop.
  * Handles conversion of persisted conversation history to model-ready messages,
  * system prompt generation from memory, and context budget estimation.
+ * Includes truncateOldest pure function for pre-flight context guard.
  */
 
 import type { Message, ContentBlock, ToolUseBlock } from '../model/types.ts';
@@ -123,23 +124,191 @@ export function estimateTokens(text: string): number {
 }
 
 /**
+ * Estimate overhead tokens from system prompt, tool definitions, and output reservation.
+ * Used to calculate available context budget for messages.
+ * Accepts any tool format (converted via toModelTools()) since estimation just JSON.stringifies.
+ */
+export function estimateOverheadTokens(
+  systemPrompt: string | undefined,
+  tools: ReadonlyArray<unknown> | undefined,
+  maxOutputTokens: number,
+): number {
+  let overhead = maxOutputTokens;
+
+  if (systemPrompt) {
+    overhead += estimateTokens(systemPrompt);
+  }
+
+  if (tools && tools.length > 0) {
+    overhead += estimateTokens(JSON.stringify(tools));
+  }
+
+  return overhead;
+}
+
+/**
  * Check if conversation history exceeds context budget.
- * Returns true if estimated tokens exceed budget * modelMaxTokens.
+ * Returns true if estimated tokens (including overhead) exceed budget * modelMaxTokens.
+ * The overheadTokens parameter accounts for system prompt, tool definitions, and output reservation.
  */
 export function shouldCompress(
   history: ReadonlyArray<ConversationMessage>,
   budget: number,
   modelMaxTokens: number,
+  overheadTokens: number = 0,
 ): boolean {
   const budgetInTokens = budget * modelMaxTokens;
+  const availableForMessages = budgetInTokens - overheadTokens;
+
+  if (availableForMessages <= 0) {
+    return true;
+  }
+
   let totalTokens = 0;
 
   for (const msg of history) {
     totalTokens += estimateTokens(msg.content);
-    if (totalTokens > budgetInTokens) {
+    if (totalTokens > availableForMessages) {
       return true;
     }
   }
 
   return false;
+}
+
+/**
+ * Pre-flight guard: truncate oldest non-protected messages when estimated request
+ * exceeds modelMaxTokens after accounting for overhead.
+ *
+ * Pure function. Strategy:
+ * 1. Protect leading system messages (contiguous system-role messages at the start)
+ * 2. Protect the most recent user message (if any exists)
+ * 3. Calculate available token budget: modelMaxTokens - overheadTokens
+ * 4. Drop oldest non-protected messages first until the total fits
+ *
+ * AC3.2: Preserves leading system messages (clip-archive summaries)
+ * AC3.3: Preserves the most recent user message
+ * AC3.4: Drops oldest non-system messages first
+ * AC3.6: Never truncates below minimum viable context (leading system + latest user, if user exists)
+ */
+export function truncateOldest(
+  messages: ReadonlyArray<Message>,
+  modelMaxTokens: number,
+  overheadTokens: number,
+): Array<Message> {
+  const availableTokens = modelMaxTokens - overheadTokens;
+
+  if (availableTokens <= 0) {
+    return extractMinimumContext(messages);
+  }
+
+  // Estimate current total
+  const currentTokens = messages.reduce(
+    (sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
+    0,
+  );
+
+  if (currentTokens <= availableTokens) {
+    return Array.from(messages);
+  }
+
+  // Identify protected messages
+  // 1. Leading system messages (clip-archive summaries)
+  let leadingSystemCount = 0;
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      leadingSystemCount++;
+    } else {
+      break;
+    }
+  }
+
+  // 2. Most recent user message index
+  let lastUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      lastUserIndex = i;
+      break;
+    }
+  }
+
+  // Build result: keep protected, drop from oldest non-protected
+  const leading = messages.slice(0, leadingSystemCount);
+  const lastUser = lastUserIndex >= 0 ? [messages[lastUserIndex]!] : [];
+
+  // Droppable messages: everything between leading system and end, except the last user message
+  const droppable: Array<{ index: number; msg: Message }> = [];
+  for (let i = leadingSystemCount; i < messages.length; i++) {
+    if (i !== lastUserIndex) {
+      droppable.push({ index: i, msg: messages[i]! });
+    }
+  }
+
+  // Calculate tokens for protected messages
+  const protectedTokens = [...leading, ...lastUser].reduce(
+    (sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
+    0,
+  );
+
+  // If protected messages already exceed budget, return minimum viable context
+  if (protectedTokens > availableTokens) {
+    return extractMinimumContext(messages);
+  }
+
+  let droppableBudget = availableTokens - protectedTokens;
+
+  // Drop oldest droppable messages until remaining fit within budget.
+  // Calculate total droppable tokens first, then drop from oldest until we're under budget.
+  let droppableTokens = 0;
+  const droppableWithTokens = droppable.map((d) => {
+    const tokens = estimateTokens(
+      typeof d.msg.content === 'string' ? d.msg.content : JSON.stringify(d.msg.content),
+    );
+    droppableTokens += tokens;
+    return { ...d, tokens };
+  });
+
+  // Drop from oldest (front) until remaining droppable tokens fit
+  let tokensDropped = 0;
+  let dropCount = 0;
+  for (const d of droppableWithTokens) {
+    if (droppableTokens - tokensDropped <= droppableBudget) {
+      break;
+    }
+    tokensDropped += d.tokens;
+    dropCount++;
+  }
+
+  const kept = droppableWithTokens.slice(dropCount);
+
+  // Reconstruct in original order: leading system + surviving droppable + last user
+  const result = [...leading, ...kept.map((k) => k.msg), ...lastUser];
+  return result;
+}
+
+/**
+ * Extract minimum viable context: leading system messages + most recent user message.
+ * Used when token budget is extremely constrained.
+ */
+function extractMinimumContext(messages: ReadonlyArray<Message>): Array<Message> {
+  const result: Array<Message> = [];
+
+  // Keep leading system messages
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      result.push(msg);
+    } else {
+      break;
+    }
+  }
+
+  // Keep last user message
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      result.push(messages[i]!);
+      break;
+    }
+  }
+
+  return result;
 }

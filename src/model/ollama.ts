@@ -459,19 +459,27 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
         async () => {
           const ollamaRequest = buildOllamaRequest(request, false);
 
-          const response = await fetch(`${baseUrl}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(ollamaRequest),
-          });
+          try {
+            const response = await fetch(`${baseUrl}/api/chat`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(ollamaRequest),
+              ...(request.timeout != null ? { signal: AbortSignal.timeout(request.timeout) } : {}),
+            });
 
-          if (!response.ok) {
-            const body = await response.text();
-            throw classifyHttpError(response.status, body);
+            if (!response.ok) {
+              const body = await response.text();
+              throw classifyHttpError(response.status, body);
+            }
+
+            const data = (await response.json()) as OllamaChatResponse;
+            return normalizeResponse(data);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "TimeoutError") {
+              throw new ModelError("timeout", true, "request timed out");
+            }
+            throw error;
           }
-
-          const data = (await response.json()) as OllamaChatResponse;
-          return normalizeResponse(data);
         },
         isRetryableOllamaError
       );
@@ -482,18 +490,26 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
 
       const response = await callWithRetry(
         async () => {
-          const res = await fetch(`${baseUrl}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(ollamaRequest),
-          });
+          try {
+            const res = await fetch(`${baseUrl}/api/chat`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(ollamaRequest),
+              ...(request.timeout != null ? { signal: AbortSignal.timeout(request.timeout) } : {}),
+            });
 
-          if (!res.ok) {
-            const body = await res.text();
-            throw classifyHttpError(res.status, body);
+            if (!res.ok) {
+              const body = await res.text();
+              throw classifyHttpError(res.status, body);
+            }
+
+            return res;
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "TimeoutError") {
+              throw new ModelError("timeout", true, "request timed out");
+            }
+            throw error;
           }
-
-          return res;
         },
         isRetryableOllamaError
       );

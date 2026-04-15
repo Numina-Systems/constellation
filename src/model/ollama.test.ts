@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import {
   normalizeToolDefinitions,
   normalizeMessages,
@@ -1264,3 +1264,168 @@ describe("ollama-adapter.AC6.2: Summarization provider creation", () => {
   });
 });
 
+// context-overflow-guard.AC4.1, AC4.2, AC4.3: Timeout support with AbortSignal.timeout()
+describe("createOllamaAdapter - timeout support", () => {
+  let mockServerUrl = "";
+  let mockServer: ReturnType<typeof Bun.serve> | null = null;
+  let requestDelay = 0; // ms to delay response
+
+  beforeAll(async () => {
+    mockServer = Bun.serve({
+      port: 0,
+      async fetch() {
+        // Simulate delay if configured
+        if (requestDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, requestDelay));
+        }
+
+        // Return valid Ollama response
+        return new Response(
+          JSON.stringify({
+            model: "llama3.1",
+            message: {
+              role: "assistant",
+              content: "Test response",
+            },
+            done: true,
+            done_reason: "stop",
+            prompt_eval_count: 10,
+            eval_count: 5,
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      },
+    });
+
+    mockServerUrl = `http://localhost:${mockServer.port}`;
+  });
+
+  afterAll(() => {
+    mockServer?.stop();
+  });
+
+  it("should pass timeout to fetch when provided (AC4.1)", async () => {
+    const provider = createOllamaAdapter({
+      provider: "ollama",
+      name: "llama3.1",
+      base_url: mockServerUrl,
+    });
+
+    const request: ModelRequest = {
+      model: "llama3.1",
+      max_tokens: 100,
+      timeout: 5000,
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+    };
+
+    // This test verifies that the adapter accepts timeout and doesn't reject it
+    const response = await provider.complete(request);
+    expect(response.content).toBeDefined();
+    expect(response.content.length).toBeGreaterThan(0);
+  });
+
+  it("should work without timeout (AC4.2)", async () => {
+    const provider = createOllamaAdapter({
+      provider: "ollama",
+      name: "llama3.1",
+      base_url: mockServerUrl,
+    });
+
+    const request: ModelRequest = {
+      model: "llama3.1",
+      max_tokens: 100,
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+    };
+
+    const response = await provider.complete(request);
+    expect(response.content).toBeDefined();
+    expect(response.content.length).toBeGreaterThan(0);
+  });
+
+  it("should timeout when request exceeds timeout (AC4.3)", async () => {
+    const provider = createOllamaAdapter({
+      provider: "ollama",
+      name: "llama3.1",
+      base_url: mockServerUrl,
+    });
+
+    // Set server to delay response longer than timeout
+    // Use 300ms delay with 100ms timeout to ensure reliable timeout firing
+    requestDelay = 300;
+
+    const request: ModelRequest = {
+      model: "llama3.1",
+      max_tokens: 100,
+      timeout: 100, // 100ms timeout, server delays 300ms
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+    };
+
+    try {
+      await provider.complete(request);
+      expect(true).toBe(false); // Should not reach here
+    } catch (error) {
+      expect(error).toBeInstanceOf(ModelError);
+      expect((error as ModelError).code).toBe("timeout");
+      expect((error as ModelError).retryable).toBe(true);
+    } finally {
+      requestDelay = 0; // Reset
+    }
+  });
+
+  it("should timeout in streaming when request exceeds timeout (AC4.3 streaming)", async () => {
+    const provider = createOllamaAdapter({
+      provider: "ollama",
+      name: "llama3.1",
+      base_url: mockServerUrl,
+    });
+
+    // Set server to delay response longer than timeout
+    // Use 300ms delay with 100ms timeout to ensure reliable timeout firing
+    requestDelay = 300;
+
+    const request: ModelRequest = {
+      model: "llama3.1",
+      max_tokens: 100,
+      timeout: 100, // 100ms timeout, server delays 300ms
+      messages: [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ],
+    };
+
+    try {
+      // Collect all stream events to trigger the fetch
+      const events: Array<StreamEvent> = [];
+      for await (const event of provider.stream(request)) {
+        events.push(event);
+      }
+      expect(true).toBe(false); // Should not reach here
+    } catch (error) {
+      expect(error).toBeInstanceOf(ModelError);
+      expect((error as ModelError).code).toBe("timeout");
+      expect((error as ModelError).retryable).toBe(true);
+    } finally {
+      requestDelay = 0; // Reset
+    }
+  });
+});

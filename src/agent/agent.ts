@@ -8,7 +8,7 @@
 
 // UUID generation is built-in to Bun via crypto
 import { toSql } from 'pgvector/utils';
-import { buildSystemPrompt, buildMessages, shouldCompress } from './context.ts';
+import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
@@ -108,7 +108,10 @@ export function createAgent(
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
-    if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens)) {
+    const preliminarySystemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+    const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, deps.registry.toModelTools(), maxTokens);
+
+    if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
       const result = await deps.compactor.compress(history, id);
       history = Array.from(result.history);
     }
@@ -141,11 +144,27 @@ export function createAgent(
 
       const messages = await buildMessages(history, deps.memory);
 
+      // Pre-flight guard: truncate if estimated request exceeds model limit
+      const modelTools = deps.registry.toModelTools();
+      const requestOverhead = estimateOverheadTokens(systemPrompt, modelTools, maxTokens);
+      const messageTokens = messages.reduce(
+        (sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
+        0,
+      );
+
+      let finalMessages = messages;
+      if (messageTokens + requestOverhead > modelMaxTokens) {
+        console.warn(
+          `pre-flight guard: estimated ${messageTokens + requestOverhead} tokens exceeds limit ${modelMaxTokens}, truncating oldest messages`,
+        );
+        finalMessages = truncateOldest(messages, modelMaxTokens, requestOverhead);
+      }
+
       // Call the model with current context
       const modelRequest = {
-        messages,
+        messages: finalMessages,
         system: systemPrompt,
-        tools: deps.registry.toModelTools(),
+        tools: modelTools,
         model: modelName,
         max_tokens: maxTokens,
       };

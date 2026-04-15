@@ -729,6 +729,8 @@ async function main(): Promise<void> {
       importantKeywords: config.summarization.important_keywords,
       contentLengthWeight: config.summarization.content_length_weight,
     } : undefined,
+    timeout: config.summarization?.compaction_timeout ?? 120000,
+    maxRetries: config.summarization?.compaction_max_retries ?? 2,
   };
 
   const compactor = createCompactor({

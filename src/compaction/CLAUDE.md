@@ -1,12 +1,12 @@
 # Compaction
 
-Last verified: 2026-03-01
+Last verified: 2026-04-15
 
 ## Purpose
 Compresses conversation history to stay within context budget. Replaces old messages with LLM-generated summaries archived to memory, producing a "clip-archive" system message that preserves earliest and most recent context while keeping the middle searchable via memory.
 
 ## Contracts
-- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`), `createCompactor(options)`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, `ImportanceScoringConfig`, `DEFAULT_SCORING_CONFIG`, `scoreMessage()`, prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
+- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`), `createCompactor(options)`, `SummaryBatch`, `CompactionResult`, `CompactionConfig` (includes optional `timeout`, `maxRetries`, `backoffBaseMs`), `ImportanceScoringConfig`, `DEFAULT_SCORING_CONFIG`, `scoreMessage()`, prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
 - **Guarantees**:
   - `compress` never throws; pipeline failures return original history unchanged
   - Summary batches are archived to memory (archival tier) with metadata headers before messages are deleted
@@ -15,6 +15,8 @@ Compresses conversation history to stay within context budget. Replaces old mess
   - Messages to be compressed are sorted by importance (lowest-scored first) using configurable heuristic scoring
   - Messages with identical importance scores maintain chronological order (stable sort)
   - Token estimation uses heuristic (1 token ~ 4 chars)
+  - Summarisation calls use `ModelRequest.timeout` when `CompactionConfig.timeout` is set
+  - On timeout, retry loop halves chunk size (floor: 2 messages) with exponential backoff, up to `maxRetries` attempts
 - **Expects**: `ModelProvider` for LLM summarization, `MemoryManager` for archival writes/reads, `PersistenceProvider` for message deletion, valid `CompactionConfig`
 
 ## Dependencies
@@ -28,6 +30,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
 - Clip-archive over full replay: Only earliest + most recent batches injected into context; middle omitted but searchable
 - Metadata headers in archival content: `[depth:N|start:ISO|end:ISO|count:M]` prefix enables batch reconstruction without extra DB columns
 - Graceful degradation: Pipeline errors return original history, never corrupt conversation state
+- Retry with chunk halving: On timeout, halve the chunk size and retry; smaller chunks are more likely to complete within the timeout window
 
 ## Invariants
 - Archived batch labels follow `compaction-batch-{conversationId}-{endTime.toISOString()}` format

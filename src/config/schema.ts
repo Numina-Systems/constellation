@@ -111,6 +111,8 @@ const SummarizationConfigSchema = z.object({
     "requirement",
   ]),
   content_length_weight: z.number().nonnegative().default(1.0),
+  compaction_timeout: z.number().int().positive().default(120000),
+  compaction_max_retries: z.number().int().nonnegative().default(2),
 });
 
 const WebConfigSchema = z.object({

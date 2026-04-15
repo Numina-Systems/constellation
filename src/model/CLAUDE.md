@@ -1,13 +1,13 @@
 # Model
 
-Last verified: 2026-04-05
+Last verified: 2026-04-15
 
 ## Purpose
 Abstracts LLM providers behind a unified `ModelProvider` port so the agent loop is provider-agnostic. Normalizes Anthropic and OpenAI-compatible APIs into a shared message/content-block format.
 
 ## Contracts
 - **Exposes**: `ModelProvider` interface (`complete`, `stream`), `createModelProvider(config)`, `createAnthropicAdapter`, `createOpenAICompatAdapter`, `createOllamaAdapter`, all message/content-block types, `ModelError`, `buildAnthropicSystemParam`
-- **Guarantees**: All adapters normalize responses to the same `ModelResponse` format with `ContentBlock` discriminated union. `Message.role` supports `"user" | "assistant" | "system"`. Anthropic adapter extracts system-role messages from the messages array into the Anthropic `system` API parameter. OpenAI-compat adapter passes system-role messages through as native OpenAI system messages. Ollama adapter passes system-role messages through as native system messages. `ModelError` carries `retryable` flag. Retry wrapper provides exponential backoff for retryable errors.
+- **Guarantees**: All adapters normalize responses to the same `ModelResponse` format with `ContentBlock` discriminated union. `Message.role` supports `"user" | "assistant" | "system"`. Anthropic adapter extracts system-role messages from the messages array into the Anthropic `system` API parameter. OpenAI-compat adapter passes system-role messages through as native OpenAI system messages. Ollama adapter passes system-role messages through as native system messages. `ModelError` carries `retryable` flag. Retry wrapper provides exponential backoff for retryable errors. Optional `timeout` on `ModelRequest` applies an `AbortSignal` to the HTTP request; timeout errors produce `ModelError` with `code: 'timeout'` and `retryable: true`.
 - **Expects**: Valid API key for Anthropic/OpenAI providers. Model name must be valid for the provider. Ollama does not require API key authentication.
 
 ## Dependencies

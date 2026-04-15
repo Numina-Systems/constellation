@@ -1150,6 +1150,9 @@ async function main(): Promise<void> {
           await am.transitionTo('sleeping');
           console.log('[activity] transitioned to sleeping mode');
         } else if (task.name === 'transition-to-wake') {
+          // Reset continuation budget for new wake cycle
+          continuationBudget?.resetCycle();
+
           // Dispatch morning agenda to subconscious before queue drain
           if (subconsciousAgent && impulseAssembler) {
             try {

@@ -82,20 +82,25 @@ export function parseContinuationResponse(text: string): ContinuationDecision {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parsed: any = JSON.parse(jsonStr);
+    const parsed: unknown = JSON.parse(jsonStr);
 
-    // Validate required fields
-    if (typeof parsed.continue !== 'boolean' || typeof parsed.reason !== 'string') {
+    // Type narrowing: check if parsed is an object and has the required fields
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>)['continue'] !== 'boolean' ||
+      typeof (parsed as Record<string, unknown>)['reason'] !== 'string'
+    ) {
       return {
         shouldContinue: false,
         reason: 'Failed to parse continuation response',
       };
     }
 
+    const record = parsed as Record<string, unknown>;
     return {
-      shouldContinue: parsed.continue,
-      reason: parsed.reason,
+      shouldContinue: record['continue'] as boolean,
+      reason: record['reason'] as string,
     };
   } catch {
     return {

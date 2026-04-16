@@ -16,6 +16,7 @@ import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider, shouldSkipReview } from '@/reflexion';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
 import { createSchedulingContextProvider } from '@/agent/scheduling-context';
+import { createContinuationBudget } from '@/subconscious';
 import { Cron } from 'croner';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { Interface as ReadlineInterface } from 'readline';
@@ -1062,5 +1063,39 @@ describe('composition root wiring: source instructions (AC4.2, AC4.3)', () => {
     // from the registry's event queue to the main agent.
     // This is a thin assertion but confirms export exists in the composition root.
     expect(typeof processEventQueue).toBe('function');
+  });
+});
+
+// ============================================================================
+// AC5.2 (shared budget):
+// Verify a single ContinuationBudget instance tracks both impulse and introspection
+// continuations, proving budget is shared across event types per cycle
+// ============================================================================
+
+describe('composition root wiring: impulse continuation shared budget (AC5.2)', () => {
+  it('single ContinuationBudget instance tracks both impulse and introspection continuations', () => {
+    const budget = createContinuationBudget({
+      maxPerEvent: 2,
+      maxPerCycle: 3,
+    });
+
+    // Initial state: can continue
+    expect(budget.canContinue()).toBe(true);
+
+    // Simulate impulse continuation round 1: spend once
+    budget.spend();
+    expect(budget.canContinue()).toBe(true); // Still have cycleRemaining: 2, eventRemaining: 1
+
+    // Reset event (after impulse event completes, before introspection event starts)
+    budget.resetEvent();
+    expect(budget.canContinue()).toBe(true); // eventRemaining reset to 2, cycleRemaining still 2
+
+    // Simulate introspection continuation round 1: spend once
+    budget.spend();
+    expect(budget.canContinue()).toBe(true); // Still have cycleRemaining: 1, eventRemaining: 1
+
+    // Spend again (simulating another round)
+    budget.spend();
+    expect(budget.canContinue()).toBe(false); // cycleRemaining: 0, now canContinue is false
   });
 });

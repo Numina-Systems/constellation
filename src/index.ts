@@ -50,6 +50,9 @@ import {
   createIntrospectionAssembler,
   buildIntrospectionCron,
   createIntrospectionContextProvider,
+  createContinuationBudget,
+  createContinuationJudge,
+  runContinuationLoop,
 } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
@@ -960,6 +963,23 @@ async function main(): Promise<void> {
       })
     : undefined;
 
+  // Continuation budget and judge — undefined when subconscious is disabled.
+  // Fallback defaults match Zod schema defaults, covering the case where
+  // config.subconscious is entirely absent (section omitted from TOML).
+  const continuationBudget = subconsciousAgent
+    ? createContinuationBudget({
+        maxPerEvent: config.subconscious?.max_continuations_per_event ?? 2,
+        maxPerCycle: config.subconscious?.max_continuations_per_cycle ?? 10,
+      })
+    : undefined;
+
+  const continuationJudge = subconsciousAgent
+    ? createContinuationJudge({
+        model,
+        modelName: config.model.name,
+      })
+    : undefined;
+
   // Step 3: Create shared external event queue and processing loop (for all DataSource events)
   const externalEventQueue = createEventQueue(50);
   let externalProcessing = false;
@@ -1053,12 +1073,33 @@ async function main(): Promise<void> {
           console.log('[review-gate] skipping review-predictions: no agent-initiated traces since last window');
           return;
         }
+
+        continuationBudget?.resetEvent();
+        const roundStart = new Date();
+        const event = await buildReviewEvent(task, traceRecorder, AGENT_OWNER);
+        const responseText = await agent.processEvent(event);
+
+        // Introspection continuation loop (shared budget with impulse — AC5.2)
+        if (continuationBudget && continuationJudge) {
+          await runContinuationLoop(
+            {
+              judge: continuationJudge,
+              budget: continuationBudget,
+              queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
+              queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
+              assembleEvent: () => buildReviewEvent(task, traceRecorder, AGENT_OWNER),
+              processEvent: (e) => agent.processEvent(e),
+              eventType: 'introspection',
+              // No onHousekeeping — engagement decay is impulse-specific
+            },
+            responseText,
+            roundStart,
+          );
+        }
+        return;
       }
 
-      const event =
-        task.name === 'review-predictions'
-          ? await buildReviewEvent(task, traceRecorder, AGENT_OWNER)
-          : await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
+      const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
 
       schedulerEventQueue.push(event);
       processSchedulerEvent().catch((error) => {
@@ -1140,9 +1181,29 @@ async function main(): Promise<void> {
       } else if (task.name === 'subconscious-impulse' && subconsciousAgent && impulseAssembler) {
         (async () => {
           try {
+            continuationBudget?.resetEvent();
+            const roundStart = new Date();
             const event = await impulseAssembler.assembleImpulse();
-            await subconsciousAgent.processEvent(event);
+            const responseText = await subconsciousAgent.processEvent(event);
             await runPostImpulseHousekeeping();
+
+            // Continuation loop (best-effort, errors don't break normal flow)
+            if (continuationBudget && continuationJudge) {
+              await runContinuationLoop(
+                {
+                  judge: continuationJudge,
+                  budget: continuationBudget,
+                  queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
+                  queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
+                  assembleEvent: () => impulseAssembler.assembleImpulse(),
+                  processEvent: (e) => subconsciousAgent.processEvent(e),
+                  onHousekeeping: runPostImpulseHousekeeping,
+                  eventType: 'impulse',
+                },
+                responseText,
+                roundStart,
+              );
+            }
           } catch (error) {
             console.error('impulse event processing error:', error);
           }
@@ -1194,6 +1255,9 @@ async function main(): Promise<void> {
           await am.transitionTo('sleeping');
           console.log('[activity] transitioned to sleeping mode');
         } else if (task.name === 'transition-to-wake') {
+          // Reset continuation budget for new wake cycle
+          continuationBudget?.resetCycle();
+
           // Dispatch morning agenda to subconscious before queue drain
           if (subconsciousAgent && impulseAssembler) {
             try {

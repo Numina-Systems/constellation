@@ -205,6 +205,8 @@ const SubconsciousConfigSchema = z
     max_active_interests: z.number().min(1).max(50).default(10),
     introspection_offset_minutes: z.number().min(1).max(30).default(3),
     introspection_lookback_hours: z.number().min(1).max(72).default(24),
+    max_continuations_per_event: z.number().min(0).max(10).default(2),
+    max_continuations_per_cycle: z.number().min(0).max(50).default(10),
   })
   .superRefine((data, ctx) => {
     if (data.enabled && !data.inner_conversation_id) {

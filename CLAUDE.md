@@ -41,7 +41,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/scheduler/` -- PostgreSQL-backed cron scheduler with owner isolation (agent-owned vs system-owned tasks)
 - `src/activity/` -- Circadian sleep/wake cycle with event queuing, sleep tasks, and activity-aware dispatch
 - `src/scheduled-context.ts` -- Pure function: formats operation traces into compact `[Recent Activity]` summaries for scheduled task events
-- `src/subconscious/` -- Interest registry, curiosity threads, engagement decay, exploration logging, introspection loop (PostgreSQL-backed)
+- `src/subconscious/` -- Interest registry, curiosity threads, engagement decay, exploration logging, introspection loop, impulse continuation (LLM-judged multi-round follow-up for impulse and introspection events) (PostgreSQL-backed)
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider), DataSource registry factory, and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)

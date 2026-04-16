@@ -1,12 +1,15 @@
 # Subconscious
 
-Last verified: 2026-04-14
+Last verified: 2026-04-15
 
 ## Purpose
 Autonomous curiosity system that gives the agent an inner life of interests, curiosity threads, and self-directed exploration. Runs on a separate conversation with periodic impulse events that prompt reflection, idea generation, and tool-assisted exploration. Engagement scores decay over time to surface genuinely sustained interests. An introspection loop periodically reviews recent conversation and observations, formalizing worthy ones into tracked interests while maintaining an unformalised digest.
 
 ## Contracts
-- **Exposes**: `InterestRegistry` port interface, `createInterestRegistry(db)`, `buildImpulseEvent(context)`, `buildImpulseCron(intervalMinutes)`, `buildMorningAgendaEvent(context)`, `buildWrapUpEvent(context)`, `createImpulseAssembler(deps)`, `createSubconsciousContextProvider(registry, owner)`, `buildIntrospectionEvent(context)`, `buildIntrospectionCron(impulseInterval, offset)`, `createIntrospectionAssembler(deps)`, `createIntrospectionContextProvider(memoryStore, owner)`, domain types (`Interest`, `CuriosityThread`, `ExplorationLogEntry`, `InterestRegistryConfig`, `ImpulseContext`, `ImpulseAssembler`, `IntrospectionContext`, `IntrospectionAssembler`)
+- **Exposes**: 
+  - Interest system: `InterestRegistry` port interface, `createInterestRegistry(db)`, `buildImpulseEvent(context)`, `buildImpulseCron(intervalMinutes)`, `buildMorningAgendaEvent(context)`, `buildWrapUpEvent(context)`, `createImpulseAssembler(deps)`, `createSubconsciousContextProvider(registry, owner)`, domain types (`Interest`, `CuriosityThread`, `ExplorationLogEntry`, `InterestRegistryConfig`, `ImpulseContext`, `ImpulseAssembler`)
+  - Introspection system: `buildIntrospectionEvent(context)`, `buildIntrospectionCron(impulseInterval, offset)`, `createIntrospectionAssembler(deps)`, `createIntrospectionContextProvider(memoryStore, owner)`, domain types (`IntrospectionContext`, `IntrospectionAssembler`)
+  - Continuation system: `ContinuationJudge` port interface, `ContinuationDecision`, `ContinuationJudgeContext` types, `buildContinuationPrompt(context)`, `parseContinuationResponse(text)` pure functions, `createContinuationBudget(config)`, `ContinuationBudget`, `ContinuationBudgetConfig` types, `createContinuationJudge(deps)`, `ContinuationJudgeDeps` type, `runContinuationLoop(deps, initialResponse, roundStart)`, `ContinuationLoopDeps` type
 - **Guarantees**:
   - `InterestRegistry` CRUD operations are owner-scoped (multi-agent safe)
   - `applyEngagementDecay` uses exponential half-life decay on all active interests
@@ -17,11 +20,16 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
   - Introspection builders (`buildIntrospectionEvent`, `buildIntrospectionCron`) are pure functions; assembler gathers messages/interests/digest context
   - Introspection context provider caches `introspection-digest` memory block with 2-minute TTL, surfaces as `[Unformalised Observations]`
   - Subconscious context provider caches results with 2-minute TTL, returns `undefined` when no activity exists
+  - `buildContinuationPrompt` and `parseContinuationResponse` are pure functions (Functional Core)
+  - `parseContinuationResponse` returns `shouldContinue: false` for any malformed input (never throws)
+  - `ContinuationBudget` enforces both per-event and per-cycle limits independently
+  - `ContinuationJudge` adapter returns `shouldContinue: false` on any model error (graceful degradation)
+  - `runContinuationLoop` catches all errors internally (never breaks normal impulse/introspection flow)
 - **Expects**: PostgreSQL with migration `009_subconscious_schema.sql` applied. `PersistenceProvider` injected for registry. `TraceStore` and `MemoryManager` injected for impulse assembler. `MemoryStore` injected for introspection assembler and context provider.
 
 ## Dependencies
 - **Uses**: `src/persistence/` (PersistenceProvider for SQL), `src/reflexion/` (TraceStore for impulse context), `src/memory/` (MemoryManager for recent memories in impulse context, MemoryStore for introspection digest), `src/scheduled-context.ts` (formatTraceSummary for impulse prompts), `src/agent/types.ts` (ExternalEvent, ContextProvider)
-- **Used by**: `src/tool/builtin/subconscious.ts` (tools consume InterestRegistry), `src/index.ts` (composition root wires registry, assembler, scheduler, context provider, and separate agent instance)
+- **Used by**: `src/tool/builtin/subconscious.ts` (tools consume InterestRegistry), `src/index.ts` (composition root wires registry, assembler, scheduler, context provider, continuation budget/judge, and separate agent instance)
 - **Boundary**: Domain types and impulse builders are Functional Core. Registry adapter, impulse assembler, and context provider are Imperative Shell.
 
 ## Key Decisions
@@ -47,4 +55,8 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 - `introspection.ts` -- Pure introspection event/cron builders and `IntrospectionContext` type (Functional Core)
 - `introspection-assembler.ts` -- Gathers messages/interests/digest, delegates to `buildIntrospectionEvent` (Imperative Shell)
 - `introspection-context.ts` -- Cached context provider injecting `[Unformalised Observations]` from introspection-digest (Imperative Shell)
+- `continuation.ts` -- Continuation decision types, prompt builder, response parser (Functional Core)
+- `continuation-budget.ts` -- In-memory per-event/per-cycle budget counter (Imperative Shell)
+- `continuation-judge.ts` -- LLM-backed continuation judge adapter using ModelProvider (Imperative Shell)
+- `continuation-loop.ts` -- Orchestrates judge+budget into a while-loop for impulse/introspection events (Imperative Shell)
 - `index.ts` -- Barrel export

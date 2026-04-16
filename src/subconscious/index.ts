@@ -25,3 +25,12 @@ export { createIntrospectionAssembler } from './introspection-assembler.ts';
 export type { IntrospectionAssembler } from './introspection-assembler.ts';
 export { createSubconsciousContextProvider } from './context.ts';
 export { createIntrospectionContextProvider } from './introspection-context.ts';
+
+export { buildContinuationPrompt, parseContinuationResponse } from './continuation.ts';
+export type { ContinuationDecision, ContinuationJudgeContext, ContinuationJudge } from './continuation.ts';
+export { createContinuationBudget } from './continuation-budget.ts';
+export type { ContinuationBudget, ContinuationBudgetConfig } from './continuation-budget.ts';
+export { createContinuationJudge } from './continuation-judge.ts';
+export type { ContinuationJudgeDeps } from './continuation-judge.ts';
+export { runContinuationLoop } from './continuation-loop.ts';
+export type { ContinuationLoopDeps } from './continuation-loop.ts';

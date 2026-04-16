@@ -22,6 +22,9 @@ function isRetryableError(error: unknown): boolean {
   if (error instanceof OpenAI.RateLimitError) {
     return true;
   }
+  if (error instanceof OpenAI.APIConnectionTimeoutError) {
+    return true;
+  }
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
     if (message.includes("timeout") || message.includes("econnrefused")) {
@@ -57,19 +60,29 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
 
           messages.push(...normalizeMessages(request.messages));
 
-          return await client.chat.completions.create({
-            model: request.model,
-            max_tokens: request.max_tokens,
-            tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
-            temperature: request.temperature,
-            messages,
-          });
+          return await client.chat.completions.create(
+            {
+              model: request.model,
+              max_tokens: request.max_tokens,
+              tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
+              temperature: request.temperature,
+              messages,
+            },
+            ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+          );
         } catch (error) {
           if (error instanceof OpenAI.AuthenticationError) {
             throw new ModelError(
               "auth",
               false,
               error.message || "authentication failed"
+            );
+          }
+          if (error instanceof OpenAI.APIConnectionTimeoutError) {
+            throw new ModelError(
+              "timeout",
+              true,
+              error.message || "request timed out"
             );
           }
           if (error instanceof OpenAI.RateLimitError) {
@@ -92,7 +105,12 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
 
       const choice = response.choices?.[0];
       if (!choice) {
-        throw new Error("No choices in response");
+        const raw = JSON.stringify(response).slice(0, 500);
+        throw new ModelError(
+          "api_error",
+          true,
+          `no choices in response (model=${request.model}): ${raw}`
+        );
       }
 
       const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
@@ -124,20 +142,30 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
 
           messages.push(...normalizeMessages(request.messages));
 
-          return await client.chat.completions.create({
-            model: request.model,
-            max_tokens: request.max_tokens,
-            tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
-            temperature: request.temperature,
-            messages,
-            stream: true,
-          });
+          return await client.chat.completions.create(
+            {
+              model: request.model,
+              max_tokens: request.max_tokens,
+              tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
+              temperature: request.temperature,
+              messages,
+              stream: true,
+            },
+            ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+          );
         } catch (error) {
           if (error instanceof OpenAI.AuthenticationError) {
             throw new ModelError(
               "auth",
               false,
               error.message || "authentication failed"
+            );
+          }
+          if (error instanceof OpenAI.APIConnectionTimeoutError) {
+            throw new ModelError(
+              "timeout",
+              true,
+              error.message || "request timed out"
             );
           }
           if (error instanceof OpenAI.RateLimitError) {

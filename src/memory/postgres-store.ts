@@ -187,6 +187,25 @@ export function createPostgresMemoryStore(
     return parseMemoryBlock(rows[0]!);
   }
 
+  async function updateBlockTier(
+    id: string,
+    tier: MemoryTier,
+  ): Promise<MemoryBlock> {
+    const rows = await persistence.query<MemoryBlockRow>(
+      `UPDATE memory_blocks
+       SET tier = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [tier, id],
+    );
+
+    if (rows.length === 0) {
+      throw new Error(`block not found: ${id}`);
+    }
+
+    return parseMemoryBlock(rows[0]!);
+  }
+
   async function deleteBlock(id: string): Promise<void> {
     await persistence.query('DELETE FROM memory_blocks WHERE id = $1', [id]);
   }
@@ -301,6 +320,7 @@ export function createPostgresMemoryStore(
     getBlockByLabel,
     createBlock,
     updateBlock,
+    updateBlockTier,
     deleteBlock,
     searchByEmbedding,
     logEvent,

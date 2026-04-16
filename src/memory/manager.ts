@@ -11,6 +11,7 @@ import type { MemoryStore } from './store.ts';
 import type {
   MemoryBlock,
   MemorySearchResult,
+  MemoryStats,
   MemoryTier,
   MemoryWriteResult,
   PendingMutation,
@@ -36,6 +37,8 @@ export interface MemoryManager {
   ): Promise<MemoryWriteResult>;
   list(tier?: MemoryTier): Promise<Array<MemoryBlock>>;
   deleteBlock(id: string): Promise<void>;
+  moveBlock(id: string, targetTier: MemoryTier): Promise<MemoryBlock>;
+  getStats(tier?: MemoryTier): Promise<MemoryStats>;
 
   // Mutation management
   getPendingMutations(): Promise<Array<PendingMutation>>;
@@ -200,6 +203,58 @@ export function createMemoryManager(
     await store.deleteBlock(id);
   }
 
+  async function moveBlock(
+    id: string,
+    targetTier: MemoryTier,
+  ): Promise<MemoryBlock> {
+    const block = await store.getBlock(id);
+    if (!block) {
+      throw new Error(`block not found: ${id}`);
+    }
+
+    if (block.tier === targetTier) {
+      return block;
+    }
+
+    if (block.permission === 'readonly') {
+      throw new Error('cannot move a read-only block');
+    }
+
+    const movedBlock = await store.updateBlockTier(id, targetTier);
+
+    await store.logEvent({
+      block_id: id,
+      event_type: 'archive',
+      old_content: block.tier,
+      new_content: targetTier,
+    });
+
+    return movedBlock;
+  }
+
+  async function getStats(tier?: MemoryTier): Promise<MemoryStats> {
+    const tiers: Array<MemoryTier> = tier
+      ? [tier]
+      : ['core', 'working', 'archival'];
+
+    let totalBlocks = 0;
+    let totalBytes = 0;
+
+    for (const t of tiers) {
+      const blocks = await store.getBlocksByTier(owner, t);
+      totalBlocks += blocks.length;
+      for (const block of blocks) {
+        totalBytes += new TextEncoder().encode(block.content).byteLength;
+      }
+    }
+
+    return {
+      tier: tier ?? 'all',
+      block_count: totalBlocks,
+      total_bytes: totalBytes,
+    };
+  }
+
   async function getPendingMutations(): Promise<Array<PendingMutation>> {
     return store.getPendingMutations(owner);
   }
@@ -273,6 +328,8 @@ export function createMemoryManager(
     write,
     list,
     deleteBlock,
+    moveBlock,
+    getStats,
     getPendingMutations,
     approveMutation,
     rejectMutation,

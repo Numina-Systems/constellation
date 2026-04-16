@@ -60,6 +60,12 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # keyword_bonus = 1.5
 # important_keywords = ["error", "fail", "bug", "fix", "decision", "agreed", "constraint", "requirement"]
 # content_length_weight = 1.0
+#
+# # Context overflow guard settings
+# compaction_timeout = 120000       # Timeout in ms for summarisation LLM calls (default: 120000)
+# compaction_max_retries = 2        # Number of retries with halved chunk size on timeout (default: 2)
+# max_chunk_tokens = 100000         # Token budget per chunk (optional; when set, overrides chunk_size with token-based splitting)
+# max_consecutive_failures = 3      # Circuit breaker: skip compaction after N consecutive failures (default: 3)
 
 # Ollama summarization (local models):
 # [summarization]
@@ -69,6 +75,8 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # chunk_size = 20
 # keep_recent = 5
 # max_summary_tokens = 1024
+# compaction_timeout = 120000
+# compaction_max_retries = 2
 
 # Bluesky integration. Requires handle, app_password, and did when enabled.
 # For production, use environment variables: BLUESKY_HANDLE, BLUESKY_APP_PASSWORD
@@ -117,3 +125,23 @@ jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
 # fetch_timeout = 30000
 # max_fetch_size = 1048576
 # cache_ttl = 300000
+
+# --- MCP Server Integration ---
+# Connect to external MCP servers for additional tools and prompts.
+# [mcp]
+# enabled = true
+#
+# [mcp.servers.filesystem]
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+#
+# [mcp.servers.github]
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+#
+# [mcp.servers.remote-tools]
+# transport = "http"
+# url = "http://localhost:3001/mcp"

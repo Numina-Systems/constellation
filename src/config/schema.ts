@@ -1,6 +1,7 @@
 // pattern: Functional Core
 import { z } from "zod";
 import { Cron } from "croner";
+import { McpConfigSchema } from "@/mcp/schema.ts";
 
 const AgentConfigSchema = z.object({
   max_tool_rounds: z.number().int().positive().default(20),
@@ -111,6 +112,10 @@ const SummarizationConfigSchema = z.object({
     "requirement",
   ]),
   content_length_weight: z.number().nonnegative().default(1.0),
+  compaction_timeout: z.number().int().positive().default(120000),
+  compaction_max_retries: z.number().int().nonnegative().default(2),
+  max_chunk_tokens: z.number().int().positive().optional(),
+  max_consecutive_failures: z.number().int().positive().default(3),
 });
 
 const WebConfigSchema = z.object({
@@ -198,6 +203,8 @@ const SubconsciousConfigSchema = z
     max_tool_rounds: z.number().min(1).max(20).default(5),
     engagement_half_life_days: z.number().min(1).max(90).default(7),
     max_active_interests: z.number().min(1).max(50).default(10),
+    introspection_offset_minutes: z.number().min(1).max(30).default(3),
+    introspection_lookback_hours: z.number().min(1).max(72).default(24),
     max_continuations_per_event: z.number().min(0).max(10).default(2),
     max_continuations_per_cycle: z.number().min(0).max(50).default(10),
   })
@@ -223,6 +230,7 @@ const AppConfigSchema = z.object({
   skills: SkillConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
   activity: ActivityConfigSchema.optional(),
+  mcp: McpConfigSchema.default({}),
   subconscious: SubconsciousConfigSchema.optional(),
 });
 
@@ -239,6 +247,7 @@ export type WebConfig = z.infer<typeof WebConfigSchema>;
 export type SkillConfig = z.infer<typeof SkillConfigSchema>;
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
+export type McpConfig = z.infer<typeof McpConfigSchema>;
 export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, SubconsciousConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema };

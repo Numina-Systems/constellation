@@ -1,6 +1,6 @@
 # Extensions
 
-Last verified: 2026-03-07
+Last verified: 2026-04-05
 
 ## Purpose
 Defines extension point interfaces and hosts concrete implementations. Extension interfaces are contracts that plugins implement to extend the agent's capabilities.
@@ -24,6 +24,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 ## Implementations
 - **Bluesky** (`bluesky/`): First DataSource implementation. See `bluesky/CLAUDE.md`.
 - **Scheduler** (`../scheduler/`): PostgreSQL-backed Scheduler implementation. See `src/scheduler/CLAUDE.md`.
+- **MCP** (`../mcp/`): First ToolProvider implementation. Bridges MCP server tools with namespaced names. See `src/mcp/CLAUDE.md`.
 - **DataSource Registry** (`data-source-registry.ts`): Routes all registered sources through unified event handling with activity awareness.
 
 ## Key Files

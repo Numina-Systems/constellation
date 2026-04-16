@@ -7,6 +7,7 @@ export type {
   MemoryEvent,
   PendingMutation,
   MemorySearchResult,
+  MemoryStats,
   MemoryWriteResult,
 } from './types.ts';
 

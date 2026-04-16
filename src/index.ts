@@ -47,6 +47,9 @@ import {
   createImpulseAssembler,
   buildImpulseCron,
   createSubconsciousContextProvider,
+  createIntrospectionAssembler,
+  buildIntrospectionCron,
+  createIntrospectionContextProvider,
   createContinuationBudget,
   createContinuationJudge,
   runContinuationLoop,
@@ -83,10 +86,12 @@ import type { TraceStore } from '@/reflexion';
 import type { ContextProvider } from '@/agent/types';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
+import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
+import type { McpClient } from '@/mcp';
 
 const AGENT_OWNER = 'spirit';
 
-export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse'] as const;
+export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse', 'subconscious-introspection'] as const;
 
 type InteractionLoopDeps = {
   agent: Agent;
@@ -239,6 +244,7 @@ export function createShutdownHandler(
   dataSourceRegistry?: DataSourceRegistry | null,
   scheduler?: { stop(): void } | null,
   activityManager?: ActivityManager | null,
+  mcpClients?: ReadonlyArray<McpClient>,
 ): () => Promise<void> {
   let shuttingDown = false;
   return async (): Promise<void> => {
@@ -260,6 +266,19 @@ export function createShutdownHandler(
     if (activityManager) {
       const finalState = await activityManager.getState();
       console.log(`[activity] shutdown state: ${finalState.mode}, queued: ${finalState.queuedEventCount}`);
+    }
+    // Disconnect MCP servers
+    if (mcpClients && mcpClients.length > 0) {
+      await Promise.allSettled(
+        mcpClients.map(async (client) => {
+          try {
+            await client.disconnect();
+          } catch (error) {
+            console.error(`[mcp:${client.serverName}] error disconnecting:`, error);
+          }
+        }),
+      );
+      console.log(`[mcp] ${mcpClients.length} server(s) disconnected`);
     }
     await performShutdown(rl, persistence);
     process.exit(0);
@@ -573,6 +592,9 @@ async function main(): Promise<void> {
   // Create subconscious context provider
   const subconsciousContextProvider = createSubconsciousContextProvider(interestRegistry, AGENT_OWNER);
 
+  // Create introspection context provider
+  const introspectionContextProvider = createIntrospectionContextProvider(memoryStore, AGENT_OWNER);
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -667,6 +689,64 @@ async function main(): Promise<void> {
     console.log(`skills loaded (${skillRegistry.getAll().length} skills)`);
   }
 
+  // --- MCP servers ---
+  const mcpClients: Array<McpClient> = [];
+  const mcpFailedServers: Array<{name: string; error: string}> = [];
+
+  if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
+    console.log(`[mcp] connecting to ${Object.keys(config.mcp.servers).length} server(s)...`);
+
+    for (const [serverName, rawServerConfig] of Object.entries(config.mcp.servers)) {
+      try {
+        // Resolve env vars in config values
+        const serverConfig = resolveServerConfigEnv(rawServerConfig, process.env);
+
+        // Create and connect client
+        const client = createMcpClient(serverName, serverConfig);
+        await client.connect();
+        mcpClients.push(client);
+
+        // Discover and register tools
+        const provider = createMcpToolProvider(client);
+        const toolDefs = await provider.discover();
+        for (const def of toolDefs) {
+          registry.register({
+            definition: def,
+            handler: async (params) => provider.execute(def.name, params),
+          });
+        }
+        console.log(`[mcp:${serverName}] registered ${toolDefs.length} tool(s)`);
+
+        // Convert prompts to skills and inject
+        if (skillRegistry) {
+          const skills = await mcpPromptsToSkills(client);
+          if (skills.length > 0) {
+            await skillRegistry.injectSkills(skills);
+            console.log(`[mcp:${serverName}] injected ${skills.length} skill(s)`);
+          }
+        }
+
+        // Collect server instructions for context provider
+        const instructions = await client.getInstructions();
+        if (instructions) {
+          contextProviders.push(createMcpInstructionsProvider(serverName, instructions));
+        }
+
+      } catch (error) {
+        // AC6.3, AC6.4: Failed connection doesn't block startup
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[mcp:${serverName}] failed to connect: ${errorMsg}`);
+        console.error(`[mcp] continuing without ${serverName}`);
+        mcpFailedServers.push({name: serverName, error: errorMsg});
+      }
+    }
+
+    // Format and log summary using testable helper
+    const connectedNames = mcpClients.map(c => c.serverName);
+    const summary = formatMcpStartupSummary(connectedNames, mcpFailedServers);
+    console.log(`[mcp] ${summary}`);
+  }
+
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
   let blueskySource: BlueskyDataSource | null = null;
   let blueskyConnected = false;
@@ -726,6 +806,10 @@ async function main(): Promise<void> {
       importantKeywords: config.summarization.important_keywords,
       contentLengthWeight: config.summarization.content_length_weight,
     } : undefined,
+    timeout: config.summarization?.compaction_timeout ?? 120000,
+    maxRetries: config.summarization?.compaction_max_retries ?? 2,
+    maxChunkTokens: config.summarization?.max_chunk_tokens,
+    maxConsecutiveFailures: config.summarization?.max_consecutive_failures ?? 3,
   };
 
   const compactor = createCompactor({
@@ -815,7 +899,7 @@ async function main(): Promise<void> {
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider, subconsciousContextProvider],
+    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider, subconsciousContextProvider, introspectionContextProvider],
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
   }, mainConversationId);
@@ -828,6 +912,7 @@ async function main(): Promise<void> {
       ['subconscious:impulse', 'You are the subconscious mind — an autonomous inner process that explores interests, reflects on experiences, and builds knowledge independently. You are not responding to a human. Act on your own curiosity.'],
       ['subconscious:morning-agenda', 'You are the subconscious mind reviewing your interests at the start of a new day. Plan what to explore.'],
       ['subconscious:wrap-up', 'You are the subconscious mind reflecting on the day. Consolidate what you learned and prepare for tomorrow.'],
+      ['subconscious:introspection', 'You are the subconscious mind reviewing your recent observations. Decide which are worth formalizing into tracked interests or curiosity threads, and write the rest into your digest for later reflection. Be selective — not every observation needs to become an interest.'],
     ]);
 
     subconsciousAgent = createAgent({
@@ -848,7 +933,7 @@ async function main(): Promise<void> {
       compactor,
       traceRecorder,
       owner: AGENT_OWNER,
-      contextProviders: [...contextProviders, predictionContextProvider],
+      contextProviders: [...contextProviders, predictionContextProvider, introspectionContextProvider],
       skills: skillRegistry,
       sourceInstructions: subconsciousSourceInstructions,
     }, config.subconscious.inner_conversation_id);
@@ -866,10 +951,21 @@ async function main(): Promise<void> {
       })
     : undefined;
 
+  // Create introspection assembler if subconscious is enabled
+  const introspectionAssembler = subconsciousAgent && config.subconscious?.inner_conversation_id
+    ? createIntrospectionAssembler({
+        persistence,
+        interestRegistry,
+        memoryStore,
+        owner: AGENT_OWNER,
+        subconsciousConversationId: config.subconscious.inner_conversation_id,
+        lookbackHours: config.subconscious?.introspection_lookback_hours ?? 24,
+      })
+    : undefined;
+
   // Continuation budget and judge — undefined when subconscious is disabled.
   // Fallback defaults match Zod schema defaults, covering the case where
   // config.subconscious is entirely absent (section omitted from TOML).
-  // Used in runContinuationLoop calls in impulse and introspection handlers (Tasks 5-6).
   const continuationBudget = subconsciousAgent
     ? createContinuationBudget({
         maxPerEvent: config.subconscious?.max_continuations_per_event ?? 2,
@@ -1114,6 +1210,17 @@ async function main(): Promise<void> {
         })().catch((error) => {
           console.error('impulse task error:', error);
         });
+      } else if (task.name === 'subconscious-introspection' && subconsciousAgent && introspectionAssembler) {
+        (async () => {
+          try {
+            const event = await introspectionAssembler.assembleIntrospection();
+            await subconsciousAgent.processEvent(event);
+          } catch (error) {
+            console.error('introspection event processing error:', error);
+          }
+        })().catch((error) => {
+          console.error('introspection task error:', error);
+        });
       } else {
         handleSystemSchedulerTask(task);
       }
@@ -1228,6 +1335,30 @@ async function main(): Promise<void> {
     }
   }
 
+  // Register introspection task if subconscious is enabled and not already scheduled
+  if (subconsciousAgent && introspectionAssembler && config.subconscious?.impulse_interval_minutes) {
+    const impulseMinutes = config.subconscious.impulse_interval_minutes;
+    const offsetMinutes = config.subconscious.introspection_offset_minutes ?? 3;
+    const introspectionCron = buildIntrospectionCron(impulseMinutes, offsetMinutes);
+
+    const existingIntrospectionTasks = await persistence.query<{ id: string }>(
+      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+      ['system', 'subconscious-introspection'],
+    );
+
+    if (existingIntrospectionTasks.length === 0) {
+      await systemScheduler.schedule({
+        id: crypto.randomUUID(),
+        name: 'subconscious-introspection',
+        schedule: introspectionCron,
+        payload: { taskType: 'introspection' },
+      });
+      console.log(`introspection task scheduled (cron: ${introspectionCron}, offset: ${offsetMinutes}m from impulse)`);
+    } else {
+      console.log('introspection task already scheduled');
+    }
+  }
+
   // Start both schedulers
   agentScheduler.start();
   systemScheduler.start();
@@ -1284,7 +1415,7 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager);
+  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager, mcpClients);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

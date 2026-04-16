@@ -14,9 +14,17 @@ export type {
 export { createInterestRegistry } from './persistence.ts';
 export { buildImpulseEvent, buildImpulseCron } from './impulse.ts';
 export type { ImpulseContext } from './impulse.ts';
+export {
+  buildIntrospectionEvent,
+  buildIntrospectionCron,
+} from './introspection.ts';
+export type { IntrospectionContext } from './introspection.ts';
 export { createImpulseAssembler } from './impulse-assembler.ts';
 export type { ImpulseAssembler } from './impulse-assembler.ts';
+export { createIntrospectionAssembler } from './introspection-assembler.ts';
+export type { IntrospectionAssembler } from './introspection-assembler.ts';
 export { createSubconsciousContextProvider } from './context.ts';
+export { createIntrospectionContextProvider } from './introspection-context.ts';
 
 export { buildContinuationPrompt, parseContinuationResponse } from './continuation.ts';
 export type { ContinuationDecision, ContinuationJudgeContext, ContinuationJudge } from './continuation.ts';

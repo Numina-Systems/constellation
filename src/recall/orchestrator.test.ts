@@ -153,6 +153,15 @@ describe('performRecall', () => {
     expect(mockSearchStore.search).toHaveBeenCalled();
   });
 
+  test('AC5.3: hybrid search mode is passed through to SearchStore for semantic queries', async () => {
+    await performRecall('this is a test message', deps);
+    expect(mockSearchStore.search).toHaveBeenCalled();
+    const searchCall = (mockSearchStore.search as any).mock.calls[0];
+    expect(searchCall).toBeDefined();
+    const searchParams = searchCall[0] as SearchParams;
+    expect(searchParams.mode).toBe('hybrid');
+  });
+
   test('returns null when search returns empty results', async () => {
     const emptySearchStore = {
       ...mockSearchStore,
@@ -187,8 +196,8 @@ describe('performRecall', () => {
 
   test('skips trace recording when traceRecorder is not provided', async () => {
     const noDeps = { ...deps, traceRecorder: undefined };
-    await performRecall('this is a test message', noDeps);
-    // No assertion needed; just verify it doesn't crash
-    expect(true).toBe(true);
+    const result = await performRecall('this is a test message', noDeps);
+    expect(result).not.toBeNull();
+    expect(mockTraceRecorder.record).not.toHaveBeenCalled();
   });
 });

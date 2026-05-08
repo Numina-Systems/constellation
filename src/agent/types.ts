@@ -15,6 +15,8 @@ import type { Compactor } from '../compaction/types.ts';
 import type { TraceRecorder } from '../reflexion/types.ts';
 import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
+import type { RecallContextState } from '../recall/index.js';
+import type { SearchStore } from '../search/store.js';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -24,6 +26,8 @@ export type AgentConfig = {
   max_tokens?: number; // Token limit per request (default: 24576)
   max_skills_per_turn?: number; // Maximum skills to include per turn (default: 3)
   skill_threshold?: number; // Minimum similarity threshold for skill inclusion (default: 0.3)
+  recall_enabled?: boolean;
+  recall_token_budget?: number;
 };
 
 export type ConversationMessage = {
@@ -61,6 +65,10 @@ export type AgentDependencies = {
   contextProviders?: ReadonlyArray<ContextProvider>;
   skills?: SkillRegistry;
   sourceInstructions?: ReadonlyMap<string, string>;
+  recallContextState?: RecallContextState;
+  searchStore?: SearchStore;
+  summarizationModel?: ModelProvider;
+  summarizationModelName?: string;
 };
 
 export type Agent = {

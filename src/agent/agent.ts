@@ -10,11 +10,22 @@
 import { toSql } from 'pgvector/utils';
 import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
 import { formatSkillsSection } from '../skill/context.ts';
+import { performRecall } from '../recall/index.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
+import type { RecallResult } from '../recall/index.js';
 
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
 const DEFAULT_MAX_TOKENS = 24576; // Default token limit per request
+
+/**
+ * Helper to get labels of core memory blocks.
+ * MemoryManager doesn't currently expose getCoreBlockLabels, so return empty array.
+ * This is a known limitation — core block deduplication would require a follow-up PR.
+ */
+function getCoreLabels(): ReadonlyArray<string> {
+  return [];
+}
 
 /**
  * Format an external event as a structured user message with metadata header.
@@ -120,11 +131,42 @@ export function createAgent(
     let roundCount = 0;
     const maxRounds = deps.config.max_tool_rounds;
 
+    // Recall state — cache result across tool rounds
+    let cachedRecallResult: RecallResult | null = null;
+    let recallExecuted = false;
+
     while (roundCount < maxRounds) {
       roundCount++;
 
       // Build fresh context for each round
       let systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+
+      // Recall step — fires once per turn, cached across tool rounds
+      if (!recallExecuted && deps.config.recall_enabled && deps.recallContextState) {
+        recallExecuted = true;
+        try {
+          cachedRecallResult = await performRecall(userMessage, {
+            searchStore: deps.searchStore!,
+            embedding: deps.embedding ?? null,
+            model: deps.summarizationModel ?? null,
+            modelName: deps.summarizationModelName ?? null,
+            tokenBudget: deps.config.recall_token_budget ?? 4096,
+            traceRecorder: deps.traceRecorder,
+            owner: deps.owner,
+            conversationId: id,
+            coreLabels: getCoreLabels(),
+          });
+        } catch (error) {
+          console.warn('recall: pipeline failed, continuing without recall', error);
+          cachedRecallResult = null;
+        }
+        deps.recallContextState.setResult(cachedRecallResult);
+        // Rebuild system prompt with recall context now set
+        systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+      } else if (recallExecuted && deps.recallContextState) {
+        // Subsequent rounds: result already cached, just ensure state is set
+        deps.recallContextState.setResult(cachedRecallResult);
+      }
 
       // Retrieve and append relevant skills
       if (deps.skills) {

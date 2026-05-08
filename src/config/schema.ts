@@ -11,6 +11,8 @@ const AgentConfigSchema = z.object({
   max_tool_calls_per_exec: z.number().int().positive().default(25),
   context_budget: z.number().min(0).max(1).default(0.8),
   max_context_tokens: z.number().int().positive().default(200000),
+  recall_enabled: z.boolean().default(false),
+  recall_token_budget: z.number().int().positive().default(4096),
 });
 
 const OpenRouterConfigSchema = z.object({

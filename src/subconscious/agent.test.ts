@@ -66,6 +66,8 @@ function createTestRuntime(registry: ReturnType<typeof createToolRegistry>) {
       context_budget: 100000,
       max_context_tokens: 200000,
       max_tool_calls_per_exec: 25,
+      recall_enabled: false,
+      recall_token_budget: 4096,
     },
     registry,
   );

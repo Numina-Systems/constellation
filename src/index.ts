@@ -595,6 +595,7 @@ async function main(): Promise<void> {
 
   // Create recall context provider
   const recallContextProvider = createRecallContextProvider();
+  const subconsciousRecallContextProvider = createRecallContextProvider();
 
   if (config.web) {
     const searchChain = createSearchChain(config.web);
@@ -949,10 +950,10 @@ async function main(): Promise<void> {
       compactor,
       traceRecorder,
       owner: AGENT_OWNER,
-      contextProviders: [...contextProviders, recallContextProvider, predictionContextProvider, introspectionContextProvider],
+      contextProviders: [...contextProviders, subconsciousRecallContextProvider, predictionContextProvider, introspectionContextProvider],
       skills: skillRegistry,
       sourceInstructions: subconsciousSourceInstructions,
-      recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+      recallContextState: config.agent.recall_enabled ? subconsciousRecallContextProvider : undefined,
       searchStore: searchStore,
       summarizationModel: summarizationModel,
       summarizationModelName: config.summarization?.name,

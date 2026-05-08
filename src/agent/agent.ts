@@ -14,6 +14,7 @@ import { performRecall } from '../recall/index.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
+import type { MemoryManager } from '../memory/manager.ts';
 
 const DEFAULT_MODEL_NAME = 'claude-3-sonnet-20250219';
 const DEFAULT_MAX_TOKENS = 24576; // Default token limit per request
@@ -23,7 +24,7 @@ const DEFAULT_MAX_TOKENS = 24576; // Default token limit per request
  * MemoryManager doesn't currently expose getCoreBlockLabels, so return empty array.
  * This is a known limitation — core block deduplication would require a follow-up PR.
  */
-function getCoreLabels(): ReadonlyArray<string> {
+function getCoreLabels(_memory: MemoryManager): ReadonlyArray<string> {
   return [];
 }
 
@@ -142,11 +143,11 @@ export function createAgent(
       let systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
 
       // Recall step — fires once per turn, cached across tool rounds
-      if (!recallExecuted && deps.config.recall_enabled && deps.recallContextState) {
+      if (!recallExecuted && deps.config.recall_enabled && deps.recallContextState && deps.searchStore) {
         recallExecuted = true;
         try {
           cachedRecallResult = await performRecall(userMessage, {
-            searchStore: deps.searchStore!,
+            searchStore: deps.searchStore,
             embedding: deps.embedding ?? null,
             model: deps.summarizationModel ?? null,
             modelName: deps.summarizationModelName ?? null,
@@ -154,7 +155,7 @@ export function createAgent(
             traceRecorder: deps.traceRecorder,
             owner: deps.owner,
             conversationId: id,
-            coreLabels: getCoreLabels(),
+            coreLabels: getCoreLabels(deps.memory),
           });
         } catch (error) {
           console.warn('recall: pipeline failed, continuing without recall', error);

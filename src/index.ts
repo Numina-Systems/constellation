@@ -85,6 +85,7 @@ import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
+import { createRecallContextProvider } from '@/recall/index.js';
 
 const AGENT_OWNER = 'spirit';
 
@@ -592,6 +593,9 @@ async function main(): Promise<void> {
   // Create introspection context provider
   const introspectionContextProvider = createIntrospectionContextProvider(memoryStore, AGENT_OWNER);
 
+  // Create recall context provider
+  const recallContextProvider = createRecallContextProvider();
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -891,14 +895,27 @@ async function main(): Promise<void> {
       model_name: config.model.name,
       max_skills_per_turn: config.skills?.max_per_turn,
       skill_threshold: config.skills?.similarity_threshold,
+      recall_enabled: config.agent.recall_enabled,
+      recall_token_budget: config.agent.recall_token_budget,
     },
     getExecutionContext,
     compactor,
     traceRecorder,
     owner: AGENT_OWNER,
-    contextProviders: [...contextProviders, predictionContextProvider, schedulingContextProvider, subconsciousContextProvider, introspectionContextProvider],
+    contextProviders: [
+      ...contextProviders,
+      recallContextProvider,
+      predictionContextProvider,
+      schedulingContextProvider,
+      subconsciousContextProvider,
+      introspectionContextProvider,
+    ],
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
+    recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+    searchStore: searchStore,
+    summarizationModel: summarizationModel,
+    summarizationModelName: config.summarization?.name,
   }, mainConversationId);
 
   // Create subconscious agent if enabled
@@ -926,13 +943,19 @@ async function main(): Promise<void> {
         model_name: config.model.name,
         max_skills_per_turn: config.skills?.max_per_turn,
         skill_threshold: config.skills?.similarity_threshold,
+        recall_enabled: config.agent.recall_enabled,
+        recall_token_budget: config.agent.recall_token_budget,
       },
       compactor,
       traceRecorder,
       owner: AGENT_OWNER,
-      contextProviders: [...contextProviders, predictionContextProvider, introspectionContextProvider],
+      contextProviders: [...contextProviders, recallContextProvider, predictionContextProvider, introspectionContextProvider],
       skills: skillRegistry,
       sourceInstructions: subconsciousSourceInstructions,
+      recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+      searchStore: searchStore,
+      summarizationModel: summarizationModel,
+      summarizationModelName: config.summarization?.name,
     }, config.subconscious.inner_conversation_id);
 
     console.log(`subconscious agent enabled (conversation: ${config.subconscious.inner_conversation_id})`);

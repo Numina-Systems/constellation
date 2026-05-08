@@ -1,8 +1,7 @@
-// pattern: Functional Core
-
 import { describe, it, expect } from 'bun:test';
 import type { ModelProvider, ModelRequest, ModelResponse } from '@/model/types.js';
-import { parseDecompositionResponse, decomposeMessage } from './decompose.js';
+import { parseDecompositionResponse } from './decompose.js';
+import { decomposeMessage } from './decomposer.js';
 
 /**
  * Mock ModelProvider factory for testing.
@@ -180,16 +179,28 @@ describe('parseDecompositionResponse', () => {
       expect(result.entities).toEqual([]);
     });
 
-    it('handles arrays with empty strings', () => {
+    it('filters out empty strings from arrays', () => {
       const json = JSON.stringify({
-        queries: [''],
+        queries: ['valid query', ''],
+        entities: ['ValidEntity', ''],
+      });
+
+      const result = parseDecompositionResponse(json);
+
+      expect(result.queries).toEqual(['valid query']);
+      expect(result.entities).toEqual(['ValidEntity']);
+    });
+
+    it('returns empty arrays if all strings are empty', () => {
+      const json = JSON.stringify({
+        queries: ['', ''],
         entities: [''],
       });
 
       const result = parseDecompositionResponse(json);
 
-      expect(result.queries).toEqual(['']);
-      expect(result.entities).toEqual(['']);
+      expect(result.queries).toEqual([]);
+      expect(result.entities).toEqual([]);
     });
 
     it('ignores extra fields in JSON', () => {

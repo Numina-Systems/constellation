@@ -23,7 +23,7 @@ export function formatRecallSection(result: RecallResult): string {
   let output = '## Recalled Context\n\n';
 
   for (const fragment of result.fragments) {
-    output += `### ${fragment.label} | ${fragment.domain}\n`;
+    output += `### [${fragment.label} | ${fragment.domain}]\n`;
     output += fragment.content;
     output += '\n\n';
   }

@@ -46,7 +46,7 @@ describe('formatRecallSection', () => {
 
     const output = formatRecallSection(result);
 
-    expect(output).toContain('### personality | memory');
+    expect(output).toContain('### [personality | memory]');
     expect(output).toContain('This is the content of the fragment...');
   });
 
@@ -105,8 +105,8 @@ describe('formatRecallSection', () => {
 
     const output = formatRecallSection(result);
 
-    expect(output).toContain('### personality | memory');
-    expect(output).toContain('### 2024-01-15 conversation | conversations');
+    expect(output).toContain('### [personality | memory]');
+    expect(output).toContain('### [2024-01-15 conversation | conversations]');
     expect(output).toContain('First fragment content');
     expect(output).toContain('Second fragment content');
   });
@@ -131,9 +131,10 @@ describe('formatRecallSection', () => {
 
     const output = formatRecallSection(result);
 
-    // Should include label and domain, tier should be incorporated appropriately
-    expect(output).toContain('important memory');
-    expect(output).toContain('memory');
+    // Should include label and domain in bracketed header
+    expect(output).toContain('### [important memory | memory]');
+    // Tier is intentionally excluded from output
+    expect(output).not.toContain('tier-1');
   });
 
   test('renders fragments from memory domain correctly', () => {

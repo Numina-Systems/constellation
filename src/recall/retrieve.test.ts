@@ -121,7 +121,7 @@ describe('retrieveContext', () => {
   });
 
   test('AC3.1: includes memory domain results with different tiers', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'core-1',
         domain: 'memory',
@@ -169,7 +169,7 @@ describe('retrieveContext', () => {
   });
 
   test('AC3.2: includes conversation domain results', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'msg-1',
         domain: 'conversations',
@@ -198,7 +198,7 @@ describe('retrieveContext', () => {
   });
 
   test('AC3.3: filters out results matching coreLabels', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'personality',
         domain: 'memory',
@@ -237,7 +237,7 @@ describe('retrieveContext', () => {
 
   test('AC4.1: total tokens stay within budget', async () => {
     // Mock estimateTokens to return predictable values
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'long-1',
         domain: 'memory',
@@ -290,7 +290,7 @@ describe('retrieveContext', () => {
   });
 
   test('AC4.2: truncates fragment content when it exceeds remaining budget', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'doc-1',
         domain: 'memory',
@@ -340,7 +340,7 @@ describe('retrieveContext', () => {
   });
 
   test('tracks source as semantic for query results', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'doc-1',
         domain: 'memory',
@@ -371,7 +371,7 @@ describe('retrieveContext', () => {
   });
 
   test('tracks source as entity for entity results', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'doc-1',
         domain: 'memory',
@@ -433,7 +433,7 @@ describe('retrieveContext', () => {
   });
 
   test('correctly maps SearchResult to RecallFragment', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'test-id-123',
         domain: 'memory',
@@ -468,7 +468,7 @@ describe('retrieveContext', () => {
   });
 
   test('handles null label by mapping to unknown', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'doc-1',
         domain: 'memory',
@@ -557,7 +557,7 @@ describe('retrieveContext', () => {
   });
 
   test('sorts fragments by score descending', async () => {
-    const results: SearchResult[] = [
+    const results: Array<SearchResult> = [
       {
         id: 'doc-1',
         domain: 'memory',

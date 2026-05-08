@@ -30,7 +30,7 @@ export async function retrieveContext(options: RetrieveOptions): Promise<RecallR
   }
 
   // Prepare all search calls
-  const searchPromises: Array<Promise<TaggedResult[]>> = [];
+  const searchPromises: Array<Promise<Array<TaggedResult>>> = [];
 
   // AC2.1: Semantic queries (mode: hybrid, limit: 5)
   for (const query of decomposition.queries) {
@@ -102,7 +102,7 @@ export async function retrieveContext(options: RetrieveOptions): Promise<RecallR
   const filtered = sortedResults.filter((result) => !coreLabelsSet.has(result.metadata.label ?? ''));
 
   // AC4: Apply token budget with truncation support
-  const fragments: RecallFragment[] = [];
+  const fragments: Array<RecallFragment> = [];
   let remainingBudget = tokenBudget;
 
   for (const result of filtered) {

@@ -3,3 +3,5 @@
 export type { DecompositionResult, RecallFragment, RecallResult } from './types.js';
 export { parseDecompositionResponse } from './decompose.js';
 export { decomposeMessage } from './decomposer.js';
+export { retrieveContext } from './retrieve.js';
+export type { RetrieveOptions } from './retrieve.js';

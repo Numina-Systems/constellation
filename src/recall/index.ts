@@ -7,3 +7,5 @@ export { retrieveContext } from './retrieve.js';
 export type { RetrieveOptions } from './retrieve.js';
 export { performRecall } from './orchestrator.js';
 export type { RecallDeps } from './orchestrator.js';
+export { createRecallContextProvider, formatRecallSection } from './context.js';
+export type { RecallContextState } from './context.js';

@@ -93,6 +93,8 @@ import { createCheckpointStore } from '@/persistence/checkpoint-store.ts';
 import { performCheckpoint, type CheckpointDependencies } from '@/agent/checkpoint-create.ts';
 import { restoreFromCheckpoint, type RestorationDependencies, type RestorationResult } from '@/agent/checkpoint-restore.ts';
 import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
+import { createLoopDetector } from '@/loop-detection/index.js';
+import type { LoopDetectionConfig } from '@/loop-detection/types.js';
 
 const AGENT_OWNER = 'spirit';
 
@@ -1107,6 +1109,24 @@ async function main(): Promise<void> {
   const checkpointTool = createCheckpointTool(checkpointDeps, () => agentStateRef.current);
   registry.register(checkpointTool);
 
+  // Create loop detector if enabled
+  const loopDetectionConfig: LoopDetectionConfig = {
+    enabled: config.loop_detection.enabled,
+    windowSize: config.loop_detection.window_size,
+    similarityThreshold: config.loop_detection.similarity_threshold,
+    consecutiveTrigger: config.loop_detection.consecutive_trigger,
+    action: config.loop_detection.action,
+  };
+
+  const loopDetector = loopDetectionConfig.enabled
+    ? createLoopDetector({
+        config: loopDetectionConfig,
+        traceRecorder,
+        owner: AGENT_OWNER,
+        conversationId: mainConversationId,
+      })
+    : undefined;
+
   // Step 2: Create agent with source instructions and classified providers
   const agent = createAgent({
     model,
@@ -1151,6 +1171,7 @@ async function main(): Promise<void> {
     summarizationModelName: config.summarization?.name,
     checkpointFn,
     checkpointStateRef: agentStateRef,
+    loopDetector,
   }, mainConversationId);
 
   // Create subconscious agent if enabled

@@ -18,6 +18,7 @@ import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { RecallContextState } from '../recall/index.js';
 import type { SearchStore } from '../search/store.js';
 import type { CheckpointTrigger, CheckpointAgentState } from './checkpoint-types.ts';
+import type { LoopDetector } from '@/loop-detection/types.js';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -86,6 +87,7 @@ export type AgentDependencies = {
   summarizationModelName?: string;
   checkpointFn?: (trigger: CheckpointTrigger) => Promise<string | null>;
   checkpointStateRef?: { current: CheckpointAgentState };
+  loopDetector?: LoopDetector;
 };
 
 export type Agent = {

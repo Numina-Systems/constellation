@@ -37,7 +37,8 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
 - `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
-- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording, session checkpointing
+- `src/loop-detection/` -- Output loop circuit breaker (bigram-based Jaccard similarity over sliding window, configurable actions: warn/redirect/halt)
+- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording, session checkpointing, output loop detection
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/recall/` -- Reflexive recall pipeline (query decomposition, multi-domain retrieval, context injection)

@@ -219,6 +219,14 @@ const SubconsciousConfigSchema = z
     }
   });
 
+const ShellConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  shell: z.string().default(process.env['SHELL'] ?? '/bin/bash'),
+  command_timeout: z.number().int().positive().default(30_000),
+  idle_timeout: z.number().int().positive().default(600_000),
+  max_output_bytes: z.number().int().positive().default(65_536),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -233,6 +241,7 @@ const AppConfigSchema = z.object({
   activity: ActivityConfigSchema.optional(),
   mcp: McpConfigSchema.default({}),
   subconscious: SubconsciousConfigSchema.optional(),
+  shell: ShellConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -250,5 +259,6 @@ export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
 export type McpConfig = z.infer<typeof McpConfigSchema>;
 export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
+export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema, ShellConfigSchema };

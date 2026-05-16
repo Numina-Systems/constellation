@@ -80,7 +80,7 @@ import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
-import type { ContextProvider } from '@/agent/types';
+import type { ContextProvider, ClassifiedProvider } from '@/agent/types';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
@@ -881,7 +881,100 @@ async function main(): Promise<void> {
     }
   }
 
-  // Step 2: Create agent with source instructions
+  // Step 2: Build classified providers array for snapshot routing (Phase 4)
+  const classifiedProviders: Array<ClassifiedProvider> = [];
+
+  // Rate limit context provider
+  if (model instanceof Object && 'getStatus' in model && typeof (model as any).getStatus === 'function') {
+    const rateLimitProvider = contextProviders.find(p => {
+      try {
+        return p() !== undefined && String(p()).includes('rate limit');
+      } catch {
+        return false;
+      }
+    });
+    if (rateLimitProvider) {
+      classifiedProviders.push({
+        name: 'rate-limit',
+        provider: rateLimitProvider,
+        classification: 'dynamic',
+      });
+    }
+  }
+
+  // MCP instructions providers
+  for (const client of mcpClients) {
+    const mcpProvider = contextProviders.find(p => {
+      try {
+        const result = p();
+        return result !== undefined && result.includes(`[MCP: ${client.serverName}]`);
+      } catch {
+        return false;
+      }
+    });
+    if (mcpProvider) {
+      classifiedProviders.push({
+        name: `mcp-${client.serverName}`,
+        provider: mcpProvider,
+        classification: 'dynamic',
+      });
+    }
+  }
+
+  // Activity context provider
+  if (activityManager) {
+    const activityProvider = contextProviders.find(p => {
+      try {
+        return p() !== undefined && String(p()).includes('sleep') || String(p()).includes('awake');
+      } catch {
+        return false;
+      }
+    });
+    if (activityProvider) {
+      classifiedProviders.push({
+        name: 'activity',
+        provider: activityProvider,
+        classification: 'dynamic',
+      });
+    }
+  }
+
+  // Recall context provider
+  classifiedProviders.push({
+    name: 'recall',
+    provider: recallContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Prediction context provider
+  classifiedProviders.push({
+    name: 'prediction',
+    provider: predictionContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Scheduling context provider
+  classifiedProviders.push({
+    name: 'scheduling',
+    provider: schedulingContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Subconscious context provider
+  classifiedProviders.push({
+    name: 'subconscious',
+    provider: subconsciousContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Introspection context provider
+  classifiedProviders.push({
+    name: 'introspection',
+    provider: introspectionContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Step 2: Create agent with source instructions and classified providers
   const agent = createAgent({
     model,
     memory,
@@ -911,6 +1004,7 @@ async function main(): Promise<void> {
       subconsciousContextProvider,
       introspectionContextProvider,
     ],
+    classifiedProviders,
     skills: skillRegistry,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
     recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
@@ -929,6 +1023,13 @@ async function main(): Promise<void> {
       ['subconscious:wrap-up', 'You are the subconscious mind reflecting on the day. Consolidate what you learned and prepare for tomorrow.'],
       ['subconscious:introspection', 'You are the subconscious mind reviewing your recent observations. Decide which are worth formalizing into tracked interests or curiosity threads, and write the rest into your digest for later reflection. Be selective — not every observation needs to become an interest.'],
     ]);
+
+    // Build classified providers for subconscious agent (subset of main agent)
+    const subconsciousClassifiedProviders: Array<ClassifiedProvider> = [
+      {name: 'recall', provider: subconsciousRecallContextProvider, classification: 'dynamic'},
+      {name: 'prediction', provider: predictionContextProvider, classification: 'dynamic'},
+      {name: 'introspection', provider: introspectionContextProvider, classification: 'dynamic'},
+    ];
 
     subconsciousAgent = createAgent({
       model,
@@ -951,6 +1052,7 @@ async function main(): Promise<void> {
       traceRecorder,
       owner: AGENT_OWNER,
       contextProviders: [...contextProviders, subconsciousRecallContextProvider, predictionContextProvider, introspectionContextProvider],
+      classifiedProviders: subconsciousClassifiedProviders,
       skills: skillRegistry,
       sourceInstructions: subconsciousSourceInstructions,
       recallContextState: config.agent.recall_enabled ? subconsciousRecallContextProvider : undefined,

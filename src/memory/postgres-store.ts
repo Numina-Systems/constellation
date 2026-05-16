@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { toSql } from 'pgvector/utils';
 import type { PersistenceProvider } from '../persistence/types.ts';
+import { MemoryError } from '@/errors/index.js';
 import type { MemoryStore } from './store.ts';
 import type {
   MemoryBlock,
@@ -180,7 +181,12 @@ export function createPostgresMemoryStore(
     );
 
     if (rows.length === 0) {
-      throw new Error(`block not found: ${id}`);
+      throw new MemoryError(
+        'BLOCK_NOT_FOUND',
+        `Block not found: ${id}`,
+        { blockId: id },
+        { suggestion: 'Verify the block ID exists before updating' },
+      );
     }
 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -200,14 +206,31 @@ export function createPostgresMemoryStore(
     );
 
     if (rows.length === 0) {
-      throw new Error(`block not found: ${id}`);
+      throw new MemoryError(
+        'BLOCK_NOT_FOUND',
+        `Block not found: ${id}`,
+        { blockId: id, targetTier: tier },
+        { suggestion: 'Verify the block ID exists before changing tier' },
+      );
     }
 
     return parseMemoryBlock(rows[0]!);
   }
 
   async function deleteBlock(id: string): Promise<void> {
-    await persistence.query('DELETE FROM memory_blocks WHERE id = $1', [id]);
+    const result = await persistence.query<MemoryBlockRow>(
+      'DELETE FROM memory_blocks WHERE id = $1 RETURNING id',
+      [id],
+    );
+
+    if (result.length === 0) {
+      throw new MemoryError(
+        'BLOCK_NOT_FOUND',
+        `Block not found: ${id}`,
+        { blockId: id },
+        { suggestion: 'Verify the block ID exists before deleting' },
+      );
+    }
   }
 
   async function searchByEmbedding(
@@ -307,7 +330,12 @@ export function createPostgresMemoryStore(
     );
 
     if (rows.length === 0) {
-      throw new Error(`mutation not found: ${id}`);
+      throw new MemoryError(
+        'MUTATION_NOT_FOUND',
+        `Mutation not found: ${id}`,
+        { mutationId: id },
+        { suggestion: 'Verify the mutation ID exists before resolving' },
+      );
     }
 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion

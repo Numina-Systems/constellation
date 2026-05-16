@@ -2104,8 +2104,15 @@ describe('Cache Diagnostics Integration', () => {
       },
     };
 
-    // Mock memory that changes system prompt on turn 2
-    let turnCallCount = 0;
+    // Mock memory that changes system prompt based on externally-controlled turn index.
+    // This is the same pattern used in AC4.1: we manually track which turn we're in
+    // and return different prompts accordingly.
+    const systemPrompts = [
+      'System prompt v1',
+      'System prompt v2 - different!',
+    ];
+    let currentTurnIndex = 0; // Manually incremented after each processMessage
+
     const mockMemoryWithTurnChanges: MemoryManager = {
       async getCoreBlocks() {
         return [];
@@ -2114,9 +2121,9 @@ describe('Cache Diagnostics Integration', () => {
         return [];
       },
       async buildSystemPrompt() {
-        // Return different prompts to trigger cache bust on turn 2
-        turnCallCount++;
-        return turnCallCount === 1 ? 'System prompt v1' : 'System prompt v2 - different!';
+        // Return the prompt for the current turn
+        const idx = Math.min(currentTurnIndex, systemPrompts.length - 1);
+        return systemPrompts[idx]!;
       },
       async read() {
         return [];
@@ -2184,23 +2191,26 @@ describe('Cache Diagnostics Integration', () => {
 
     const agent = createAgent(deps);
 
-    // First turn
+    // First turn establishes baseline
     await agent.processMessage('First message');
-    turnCallCount = 0; // Reset to make second turn trigger change
+    currentTurnIndex++;
 
-    // Second turn
+    // Second turn — system prompt has changed, should trigger cache bust trace
     await agent.processMessage('Second message');
 
     // Find cache_diagnostics traces
     const cacheDiagnosticsTraces = recordedTraces.filter((t) => t.toolName === 'cache_diagnostics');
 
-    // If any cache_diagnostics traces exist, verify the turn field
+    // We expect at least one cache_diagnostics trace from the second turn when the system prompt changed.
+    // The first turn doesn't produce a trace since there's no previous snapshot to compare against.
+    expect(cacheDiagnosticsTraces.length).toBeGreaterThanOrEqual(1);
+
+    // Verify the turn field on each trace matches the actual turn number
     for (const trace of cacheDiagnosticsTraces) {
       expect(trace.input['turn']).toBeDefined();
-      // The turn field should be a number representing the turn in the agent loop
       expect(typeof trace.input['turn']).toBe('number');
-      // Turn should be >= 1 (minimum turn number)
-      expect(trace.input['turn']).toBeGreaterThanOrEqual(1);
+      // The cache bust should happen on turn 2 (after the system prompt changed)
+      expect(trace.input['turn']).toBe(2);
     }
   });
 });

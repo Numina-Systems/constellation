@@ -11,3 +11,4 @@ export type { WindowEntry, WindowCheckResult, ResponseWindow } from './window.js
 export { createResponseWindow } from './window.js';
 export type { CreateLoopDetectorOptions } from './detector.js';
 export { createLoopDetector } from './detector.js';
+export { stripQuotedContent } from './strip-quotes.js';

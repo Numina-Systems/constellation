@@ -16,6 +16,7 @@ import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
 import { isConstellationError, wrapError } from '@/errors/index.js';
 import { traceError } from '@/errors/trace.js';
+import { stripQuotedContent } from '@/loop-detection/strip-quotes.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
@@ -147,6 +148,9 @@ export function createAgent(
 
   async function processMessage(userMessage: string): Promise<string> {
     turnNumber++;
+
+    // Reset loop detector on new user message
+    deps.loopDetector?.reset();
 
     // Step 1: Persist user message
     await persistMessage({
@@ -331,6 +335,43 @@ export function createAgent(
       };
 
       const response = await deps.model.complete(modelRequest);
+
+      // Post-response loop detection check
+      if (deps.loopDetector) {
+        // For text responses, check the text content (stripped of quotes)
+        // For tool calls, check serialised tool name + arguments
+        const responseForDetection = response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens'
+          ? stripQuotedContent(response.content.find((block) => block.type === 'text')?.text ?? '')
+          : response.content
+            .filter((block) => block.type === 'tool_use')
+            .map((block) => `${(block as ToolUseBlock).name} ${JSON.stringify((block as ToolUseBlock).input)}`)
+            .join('\n');
+
+        const loopResult = deps.loopDetector.check(responseForDetection);
+
+        if (loopResult.triggered) {
+          if (loopResult.action === 'halt') {
+            // End the turn with an error message
+            return 'I appear to be stuck in a repetitive loop and cannot make progress. Please try rephrasing your request or providing additional context.';
+          }
+
+          // For warn/redirect, inject a system message before the next round
+          const warningMessage = 'Your recent responses appear repetitive. Try a different approach.';
+          const redirectHint = loopResult.action === 'redirect'
+            ? ' Consider using a different tool or strategy than what you have been attempting.'
+            : '';
+
+          // Inject as system context for next model call
+          // Implementation: append to conversation history as a system-injected message
+          history.push({
+            id: `system-${Date.now()}`,
+            conversation_id: id,
+            role: 'user',
+            content: `[System: ${warningMessage}${redirectHint}]`,
+            created_at: new Date(),
+          });
+        }
+      }
 
       // Step 6: Handle response based on stop_reason
       if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {

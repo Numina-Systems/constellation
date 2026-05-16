@@ -1241,26 +1241,10 @@ describe('cache-bust-detection.AC4: Trace Recording', () => {
 });
 
 describe('cache-bust-detection.AC5: Config Gating', () => {
-  describe('AC5.1 — Disabled config produces no overhead', () => {
-    test('when disabled, no diagnostics instance is created (zero overhead)', () => {
-      // This test verifies the agent loop behavior: config gating happens by
-      // conditionally creating the CacheDiagnostics instance.
-      // In unit tests, we verify that when not calling checkForCacheBust,
-      // no computation occurs. This is inherently true.
-      // The integration test in agent.test.ts verifies the actual gating logic.
-      const diagnosticsInstance = null; // simulating cache_diagnostics: false
-      expect(diagnosticsInstance).toBeNull();
-      // No hashing, no comparison, zero overhead
-    });
-
-    test('diagnostics instance when disabled is not invoked', () => {
-      // When cache_diagnostics = false, the agent loop skips creating the instance.
-      // This test documents the expected behavior.
-      const disabled = false;
-      const shouldCreate = disabled !== false;
-      expect(shouldCreate).toBe(false);
-    });
-  });
+  // AC5.1 (zero overhead when cache_diagnostics: false) is verified by the
+  // integration test in agent.test.ts, which confirms that tool hash computation
+  // does not run when cacheDiagnostics is null. Unit tests cannot verify the
+  // absence of computation, so we rely on the agent integration test for this AC.
 
   describe('AC5.2 — Enabled config works correctly', () => {
     test('diagnostics instance created when enabled returns functional object', () => {

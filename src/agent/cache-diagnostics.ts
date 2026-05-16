@@ -24,7 +24,7 @@ function hashContent(value: string): DimensionSnapshot {
   };
 }
 
-function serializeTools(
+export function serializeTools(
   tools: ReadonlyArray<{readonly name?: string; [key: string]: unknown}>,
 ): string {
   const sorted = Array.from(tools).sort((a, b) => {

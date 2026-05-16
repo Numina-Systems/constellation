@@ -11,7 +11,7 @@ import { toSql } from 'pgvector/utils';
 import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
 import { createSnapshotState } from './snapshot.ts';
 import { buildUserMessage } from './messages.ts';
-import { createCacheDiagnostics } from './cache-diagnostics.ts';
+import { createCacheDiagnostics, serializeTools } from './cache-diagnostics.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
@@ -266,20 +266,14 @@ export function createAgent(
         finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
       }
 
-      // Detect tool changes for cache diagnostics
-      const currentToolsSerialized = JSON.stringify(
-        Array.from(modelTools).sort((a: unknown, b: unknown) =>
-          ((a as { name?: string }).name ?? '').localeCompare(
-            (b as { name?: string }).name ?? '',
-          ),
-        ),
-      );
-      const currentToolsHash = BigInt(Bun.hash(currentToolsSerialized));
-      const toolsChangedThisTurn = previousToolsHash !== null && currentToolsHash !== previousToolsHash;
-      previousToolsHash = currentToolsHash;
-
       // Call cache diagnostics before model.complete()
       if (cacheDiagnostics) {
+        // Detect tool changes for cache diagnostics
+        const currentToolsSerialized = serializeTools(modelTools);
+        const currentToolsHash = BigInt(Bun.hash(currentToolsSerialized));
+        const toolsChangedThisTurn = previousToolsHash !== null && currentToolsHash !== previousToolsHash;
+        previousToolsHash = currentToolsHash;
+
         const cacheBustEvents = cacheDiagnostics.checkForCacheBust({
           systemPrompt,
           tools: modelTools,

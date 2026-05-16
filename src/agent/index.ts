@@ -35,3 +35,16 @@ export type {
   CheckForCacheBustOptions,
 } from './cache-diagnostics.ts';
 export { createCacheDiagnostics } from './cache-diagnostics.ts';
+export type {
+  SessionCheckpoint,
+  CheckpointTrigger,
+  AgentCheckpointState,
+  CheckpointWorkingMemory,
+  CheckpointPrediction,
+  CheckpointInterest,
+  CheckpointCompactionMeta,
+  CheckpointRecallCache,
+} from './checkpoint-types.ts';
+export { SessionCheckpointSchema, CHECKPOINT_VERSION } from './checkpoint-types.ts';
+export type { SerializeCheckpointOptions } from './checkpoint-serializer.ts';
+export { serializeCheckpoint, deserializeCheckpoint } from './checkpoint-serializer.ts';

@@ -4,14 +4,7 @@ import {
   deserializeCheckpoint,
   type SerializeCheckpointOptions,
 } from './checkpoint-serializer.ts';
-import type {
-  AgentCheckpointState,
-  CheckpointWorkingMemory,
-  CheckpointPrediction,
-  CheckpointInterest,
-  CheckpointCompactionMeta,
-  CheckpointRecallCache,
-} from './checkpoint-types.ts';
+import type { AgentCheckpointState } from './checkpoint-types.ts';
 
 function createTestState(overrides?: Partial<AgentCheckpointState>): AgentCheckpointState {
   return {

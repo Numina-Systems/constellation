@@ -1,12 +1,12 @@
 # Agent
 
-Last verified: 2026-05-07
+Last verified: 2026-05-15
 
 ## Purpose
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency, injects relevant skills into the system prompt per turn via optional `SkillRegistry` dependency, and optionally records operation traces for every tool dispatch via `TraceRecorder`.
 
 ## Contracts
-- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `ContextProvider` type, `createAgent(deps, conversationId?)`, `createSchedulingContextProvider(scheduleDids, watchedDids)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `estimateOverheadTokens`, `shouldCompress`, `truncateOldest`). AgentConfig includes optional `recall_enabled` and `recall_token_budget` fields. AgentDependencies includes optional `recallContextState`, `searchStore`, `summarizationModel`, and `summarizationModelName` fields.
+- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`), `ExternalEvent` type, `ContextProvider` type, `ProviderClassification` type (`'stable' | 'dynamic'`), `ClassifiedProvider` type, `createAgent(deps, conversationId?)`, `createSchedulingContextProvider(scheduleDids, watchedDids)`, context utilities (`buildSystemPrompt`, `buildMessages`, `estimateTokens`, `estimateOverheadTokens`, `shouldCompress`, `truncateOldest`). AgentConfig includes optional `recall_enabled` and `recall_token_budget` fields. AgentDependencies includes optional `recallContextState`, `searchStore`, `summarizationModel`, `summarizationModelName`, and `classifiedProviders` fields.
 - **Guarantees**:
   - Each message round persists user input, assistant response (including `reasoning_content` for thinking-mode models), and tool results to the `messages` table; user and assistant messages include generated embeddings (null on provider absence/error)
   - Tool dispatch loop runs up to `max_tool_rounds` before stopping
@@ -17,10 +17,11 @@ Implements the core agent loop: receives user messages, builds context from memo
   - The agent can also be triggered to compact via the `compact_context` tool call
   - Core memory blocks are always included in the system prompt
   - Working memory blocks are prepended to the message context
-  - Optional `contextProviders` are called during system prompt construction, and their output (if non-empty) is appended to the prompt
+  - System prompt is stable when tools and persona haven't changed (no dynamic context providers appended)
+  - Dynamic context providers are routed through snapshot state in user message attachments (Phase 4)
   - Relevant skills are injected into the system prompt per turn (requires `skills` in deps; uses `max_skills_per_turn` and `skill_threshold` config)
   - If `traceRecorder` is present, every tool dispatch (including execute_code and compact_context) is traced fire-and-forget with timing, success/failure, and output summary
-- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for dynamic system prompt sections, optional `skills` for per-turn skill injection, optional `traceRecorder` for operation tracing, optional `embedding` for message embedding generation, optional `owner` for trace identity, optional `sourceInstructions` map for per-source context injection, optional `recallContextState` and `searchStore` for reflexive recall, optional `summarizationModel` and `summarizationModelName` for recall summarization). Database connected with migrations applied.
+- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for backward compat (deprecated), optional `classifiedProviders` for phase 4 snapshot routing, optional `skills` for per-turn skill injection, optional `traceRecorder` for operation tracing, optional `embedding` for message embedding generation, optional `owner` for trace identity, optional `sourceInstructions` map for per-source context injection, optional `recallContextState` and `searchStore` for reflexive recall, optional `summarizationModel` and `summarizationModelName` for recall summarization). Database connected with migrations applied.
   - **Recall guarantee**: The recall step fires once per turn (cached across tool rounds) when `recall_enabled` config is true AND `recallContextState` dependency is provided. Requires `searchStore` to be present; returns gracefully if missing. The result is cached across tool rounds so the user message is only searched once per turn, and the system prompt is rebuilt with recalled context injected.
 
 ## Dependencies
@@ -40,7 +41,7 @@ Implements the core agent loop: receives user messages, builds context from memo
 - Compressed messages are archived to memory before deletion
 
 ## Key Files
-- `types.ts` -- `Agent`, `AgentConfig` (includes `max_skills_per_turn`, `skill_threshold`, optional `recall_enabled`, `recall_token_budget`), `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `embedding`, `owner`, `contextProviders`, `skills`, `sourceInstructions`, `recallContextState`, `searchStore`, `summarizationModel`, `summarizationModelName`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`
+- `types.ts` -- `Agent`, `AgentConfig` (includes `max_skills_per_turn`, `skill_threshold`, optional `recall_enabled`, `recall_token_budget`), `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `embedding`, `owner`, `contextProviders`, `classifiedProviders`, `skills`, `sourceInstructions`, `recallContextState`, `searchStore`, `summarizationModel`, `summarizationModelName`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`, `ProviderClassification`, `ClassifiedProvider`
 - `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression, skill injection, trace recording, external event formatting with per-source instructions)
-- `context.ts` -- System prompt building, message conversion, token estimation, overhead estimation, pre-flight truncation (`truncateOldest`), context provider integration
+- `context.ts` -- System prompt building (memory only, no dynamic providers), message conversion, token estimation, overhead estimation, pre-flight truncation (`truncateOldest`)
 - `scheduling-context.ts` -- Scheduling context provider (DID authority injection into system prompt)

@@ -1,12 +1,12 @@
-# Cache-Bust Detection Implementation Plan
+# Cache-Bust Detection Implementation Plan — Phase 1
 
-**Goal:** Implement the core hashing and comparison logic for cache-sensitive dimensions (system prompt, tool definitions, message prefix, beta headers).
+**Goal:** Implement core dimension hashing and comparison logic for cache-sensitive dimensions.
 
-**Architecture:** Functional Core module with a stateful `CacheDiagnostics` object that holds previous-turn dimension hashes. Uses `Bun.hash()` for fast non-cryptographic hashing. Message prefix comparison uses per-message hashing of the overlapping subsequence to avoid false positives from normal message appending.
+**Architecture:** Functional Core module using `Bun.hash()` for fast non-cryptographic hashing. Factory function `createCacheDiagnostics()` returns a stateful object that tracks previous turn hashes and detects changes. No I/O — pure in-memory state mutation.
 
-**Tech Stack:** Bun, TypeScript 5.7+
+**Tech Stack:** Bun (TypeScript), `Bun.hash()` for hashing
 
-**Scope:** Phase 1 of 3
+**Scope:** 3 phases from original design (phase 1 of 3)
 
 **Codebase verified:** 2026-05-15
 
@@ -32,18 +32,19 @@ This phase implements and tests:
 
 ---
 
-<!-- START_SUBCOMPONENT_A (tasks 1-2) -->
+<!-- START_SUBCOMPONENT_A (tasks 1-3) -->
+
 <!-- START_TASK_1 -->
 ### Task 1: Types and factory skeleton
 
-**Verifies:** None (type-only, compiler verifies)
+**Verifies:** None (type scaffolding)
 
 **Files:**
 - Create: `src/agent/cache-diagnostics.ts`
 
 **Implementation:**
 
-Create `src/agent/cache-diagnostics.ts` with the following types and factory skeleton:
+Create the module with type definitions and an empty factory function. Types defined in this file (not `types.ts`), following the pattern used by `src/agent/snapshot.ts` which defines `SnapshotMode`, `SnapshotResult`, `SnapshotState` locally.
 
 ```typescript
 // pattern: Functional Core
@@ -68,6 +69,17 @@ export type SuppressionFlags = {
   readonly isFirstTurn?: boolean;
 };
 
+type DimensionSnapshot = {
+  readonly hash: bigint;
+  readonly size: number;
+};
+
+type MessagePrefixState = {
+  readonly messageHashes: ReadonlyArray<bigint>;
+  readonly prefixLength: number;
+  readonly totalSize: number;
+};
+
 export type CacheDiagnostics = {
   checkForCacheBust(
     systemPrompt: string,
@@ -81,13 +93,31 @@ export type CacheDiagnostics = {
 };
 ```
 
-The factory function `createCacheDiagnostics()` should be declared but left as a stub that throws — Task 2 fills in the implementation.
+The factory skeleton (export as named export):
+
+```typescript
+export function createCacheDiagnostics(): CacheDiagnostics {
+  let previousHashes: Map<CacheDimension, DimensionSnapshot> | null = null;
+  let previousPrefixState: MessagePrefixState | null = null;
+
+  return {
+    checkForCacheBust(systemPrompt, tools, messages, betaHeaders, turn, flags) {
+      return [];
+    },
+    reset() {
+      previousHashes = null;
+      previousPrefixState = null;
+    },
+  };
+}
+```
 
 **Verification:**
 Run: `bun run build`
 Expected: Type-check passes with no errors
 
 **Commit:** `feat(agent): add cache-diagnostics types and factory skeleton`
+
 <!-- END_TASK_1 -->
 
 <!-- START_TASK_2 -->
@@ -97,132 +127,110 @@ Expected: Type-check passes with no errors
 
 **Files:**
 - Modify: `src/agent/cache-diagnostics.ts`
-- Create: `src/agent/cache-diagnostics.test.ts`
 
 **Implementation:**
 
-Implement `createCacheDiagnostics()` in `src/agent/cache-diagnostics.ts`. Internal state:
+Fill in the `checkForCacheBust` method with dimension hashing and comparison. Add these internal helpers above the factory function:
 
-```typescript
-type DimensionSnapshot = {
-  hash: bigint;
-  size: number;
-};
+**`hashContent(value: string): DimensionSnapshot`** — Hashes a string using `Bun.hash()` (returns `bigint` natively, same pattern as `src/agent/snapshot.ts:35-40`). Returns `{ hash: BigInt(Bun.hash(value)), size: value.length }`.
 
-type PrefixSnapshot = {
-  messageHashes: ReadonlyArray<bigint>;
-  totalSize: number;
-};
-```
+**`serializeTools(tools: ReadonlyArray<unknown>): string`** — Creates a stable serialization by sorting tools by `name` property before `JSON.stringify`. Use `Array.from(tools).sort(...)` to avoid mutating the input. Cast elements to `{ name?: string }` for the sort comparator.
 
-The factory holds two pieces of mutable state:
-- `previousDimensions: Map<CacheDimension, DimensionSnapshot> | null` — hashes for system_prompt, tool_definitions, beta_headers
-- `previousPrefix: PrefixSnapshot | null` — per-message hashes for the message prefix
+**`computeMessagePrefixState(messages: ReadonlyArray<unknown>): MessagePrefixState`** — Takes all messages except the last (the prefix). Hashes each message individually with `BigInt(Bun.hash(JSON.stringify(msg)))`. Returns `{ messageHashes, prefixLength, totalSize }` where `totalSize` is the sum of each serialized message's length.
 
-**Dimension hashing (internal helpers, not exported):**
+**`serializeBetaHeaders(headers: ReadonlyArray<string> | undefined): string`** — If undefined or empty, returns empty string. Otherwise sorts the array and joins with `,`.
 
-1. `hashSystemPrompt(content: string): DimensionSnapshot` — `Bun.hash(content)` returns bigint, size is `content.length`.
+**Comparison logic inside `checkForCacheBust`:**
 
-2. `hashToolDefinitions(tools: ReadonlyArray<unknown>): DimensionSnapshot` — Sort tools by the `name` property (cast each element to `{ name: string }` for sorting only). `JSON.stringify()` the sorted array. Hash the resulting string. Size is the stringified length.
+1. Compute current hashes for `system_prompt`, `tool_definitions`, `beta_headers` using the helpers above.
+2. Compute current `MessagePrefixState`.
+3. If `previousHashes` is null (first call): store all current state, return empty array.
+4. Otherwise, for each scalar dimension (`system_prompt`, `tool_definitions`, `beta_headers`):
+   - Compare current hash against previous hash.
+   - If different, create a `CacheBustEvent` with the dimension name, previous size, current size, and delta (`currentSize - previousSize`).
+5. For `message_prefix`:
+   - Get the overlap length: `Math.min(previousPrefixState.prefixLength, currentPrefixState.prefixLength)`.
+   - Compare message hashes for indices `0..overlap-1`.
+   - If any hash in the overlapping range differs, OR if `currentPrefixState.prefixLength < previousPrefixState.prefixLength` (messages were deleted), produce a `CacheBustEvent`.
+   - Merely appending new messages (current prefix longer, overlap matches) is NOT a cache bust.
+   - For the event's `previousSize`/`currentSize`, use the **full prefix `totalSize`** (not overlapping-only). `previousSize` is the previous prefix's total serialized size, `currentSize` is the current prefix's total serialized size. This matches the design's "approximate content delta size (character count difference)" language and correctly reflects the magnitude of change even for deletions.
+6. Collect all events into an array. Store current hashes/state. Return events.
 
-3. `hashMessagePrefix(messages: ReadonlyArray<unknown>): PrefixSnapshot` — The prefix is all messages except the last. For each message in the prefix, `JSON.stringify()` and hash individually. Store the array of per-message hashes. Size is the sum of all stringified message lengths.
+Note: Suppression flags are NOT applied in Phase 1. The `flags` parameter is accepted but ignored — suppression is Phase 2.
 
-4. `hashBetaHeaders(headers: ReadonlyArray<string> | undefined): DimensionSnapshot | null` — If undefined or empty, return null. Otherwise sort headers, join with `,`, hash. Size is the joined string length.
+**Verification:**
+Run: `bun run build`
+Expected: Type-check passes with no errors
 
-**Comparison logic inside `checkForCacheBust()`:**
+**Commit:** `feat(agent): implement dimension hashing and comparison in cache-diagnostics`
 
-For `system_prompt`, `tool_definitions`, `beta_headers`: compare the current `DimensionSnapshot.hash` against the stored one. If different, emit a `CacheBustEvent` with `previousSize` and `currentSize` from the snapshots, `delta = currentSize - previousSize`.
+<!-- END_TASK_2 -->
 
-For `message_prefix`: compare the overlapping subsequence. Let `prevLen` be the length of the previous prefix's `messageHashes` array. Compare each hash at indices `0..prevLen-1` against the current prefix's hashes at the same indices. If any hash differs, emit a `CacheBustEvent`. The `previousSize` is the previous prefix's `totalSize`, `currentSize` is the sum of stringified lengths for only the first `prevLen` messages of the current prefix (the overlapping portion). This avoids a false positive from appended messages.
+<!-- START_TASK_3 -->
+### Task 3: Unit tests for dimension hashing and change detection
 
-**Important:** If `previousDimensions` is null (first call), store all hashes and return an empty array — no events on first turn regardless of `isFirstTurn` flag. The `isFirstTurn` flag is for suppression logic in Phase 2 and is ignored in this phase.
+**Verifies:** cache-bust-detection.AC1.1, cache-bust-detection.AC1.2, cache-bust-detection.AC1.3, cache-bust-detection.AC1.4, cache-bust-detection.AC1.5, cache-bust-detection.AC2.1, cache-bust-detection.AC2.2, cache-bust-detection.AC2.3, cache-bust-detection.AC2.4, cache-bust-detection.AC2.5
 
-After comparison, update all stored hashes/snapshots with the current values.
-
-`reset()` sets both state variables to null.
+**Files:**
+- Create: `src/agent/cache-diagnostics.test.ts`
 
 **Testing:**
 
-Create `src/agent/cache-diagnostics.test.ts` with the following test cases:
+Follow project patterns from `src/agent/snapshot.test.ts` — organize by AC numbers in `describe` blocks. Use `bun:test` imports (`describe`, `test`, `expect`, `beforeEach`). Annotate file with `// pattern: Functional Core`.
 
-```
-describe('cache-diagnostics', () => {
-  describe('AC1: Dimension Snapshotting', () => {
-    // AC1.5: First call stores hashes, returns empty events
-    test('first call returns no events')
+Create a fresh `CacheDiagnostics` instance in `beforeEach` for test isolation. Use `SuppressionFlags` with all flags `undefined`/`false` for Phase 1 tests (suppression is Phase 2).
 
-    // AC1.1-AC1.4: Second identical call returns no events (hashes match)
-    test('identical inputs on second call return no events')
-  })
+Tests must verify each AC:
 
-  describe('AC2: Change Detection', () => {
-    // AC2.1: System prompt change
-    test('system prompt change produces event with dimension "system_prompt"')
+- **cache-bust-detection.AC1.1:** Call `checkForCacheBust` with a system prompt, then call again with same prompt — no event for `system_prompt`. Change the prompt — event IS produced.
+- **cache-bust-detection.AC1.2:** Same pattern for tools — identical tools (same content) produce no event, changed tools produce an event.
+- **cache-bust-detection.AC1.3:** Identical message prefix produces no event. Mutated prefix (edit existing message) produces an event. Merely appending a new message (prefix grows by one) does NOT produce an event.
+- **cache-bust-detection.AC1.4:** Identical beta headers produce no event, changed headers produce an event. Test with `undefined` beta headers.
+- **cache-bust-detection.AC1.5:** First call returns empty array regardless of input content.
+- **cache-bust-detection.AC2.1:** Event has `dimension: 'system_prompt'` when system prompt changes.
+- **cache-bust-detection.AC2.2:** Event has `dimension: 'tool_definitions'` when tools change.
+- **cache-bust-detection.AC2.3:** Event has `dimension: 'message_prefix'` when a message in the prefix is edited, reordered, or deleted.
+- **cache-bust-detection.AC2.4:** Event includes correct `previousSize`, `currentSize`, and `delta` reflecting character count differences.
+- **cache-bust-detection.AC2.5:** Change both system prompt and tools simultaneously — verify two separate events returned, one per dimension.
 
-    // AC2.2: Tool definition change
-    test('tool definition change produces event with dimension "tool_definitions"')
-
-    // AC2.3: Message prefix mutation
-    test('message prefix mutation produces event with dimension "message_prefix"')
-
-    // AC2.3 (negative): Appended messages do NOT trigger event
-    test('appended messages without prefix mutation produce no message_prefix event')
-
-    // AC2.4: Delta calculation
-    test('event includes correct previousSize, currentSize, and delta')
-
-    // AC2.5: Multiple changes
-    test('multiple dimension changes produce one event per dimension')
-
-    // Beta headers
-    test('beta header change produces event with dimension "beta_headers"')
-    test('undefined beta headers on both turns produce no event')
-  })
-
-  describe('reset', () => {
-    test('reset clears state so next call is treated as first')
-  })
-
-  describe('tool definition stability', () => {
-    // Tool ordering normalization
-    test('tools in different order but same content produce no event')
-  })
-})
-```
-
-Each test creates a `CacheDiagnostics` via `createCacheDiagnostics()`, calls `checkForCacheBust()` with known inputs, and asserts on the returned events. Use plain objects for tools and messages. Pass `{}` for suppression flags (no suppression in this phase).
+Additional edge case tests:
+- `reset()` clears state — after reset, next call behaves like first turn (no events).
+- Tool ordering stability — tools in different array order but same names produce no event (sorted before hashing).
+- Empty system prompt transitions (empty to non-empty, non-empty to empty).
+- Empty messages array (no prefix to compare).
+- Message deletion in prefix (prefix shrinks) produces event.
 
 **Verification:**
 Run: `bun test src/agent/cache-diagnostics.test.ts`
 Expected: All tests pass
 
-Run: `bun run build`
-Expected: Type-check passes
+**Commit:** `test(agent): add unit tests for cache-diagnostics dimension hashing and change detection`
 
-**Commit:** `feat(agent): implement dimension hashing and comparison for cache-bust detection`
-<!-- END_TASK_2 -->
+<!-- END_TASK_3 -->
+
 <!-- END_SUBCOMPONENT_A -->
 
-<!-- START_TASK_3 -->
-### Task 3: Barrel export update
+<!-- START_TASK_4 -->
+### Task 4: Add exports to agent module barrel
 
-**Verifies:** None (infrastructure)
+**Verifies:** None (module wiring)
 
 **Files:**
 - Modify: `src/agent/index.ts`
 
 **Implementation:**
 
-Add cache-diagnostics exports to the agent barrel:
+Add exports for the cache-diagnostics module to `src/agent/index.ts`, following the existing pattern which separates type exports from implementation exports (see existing lines like `export type { SnapshotMode, ... } from './snapshot.ts'` and `export { createSnapshotState } from './snapshot.ts'`):
 
 ```typescript
-export type { CacheDimension, CacheBustEvent, SuppressionFlags, CacheDiagnostics } from './cache-diagnostics.ts';
+export type { CacheDiagnostics, CacheDimension, CacheBustEvent, SuppressionFlags } from './cache-diagnostics.ts';
 export { createCacheDiagnostics } from './cache-diagnostics.ts';
 ```
 
 **Verification:**
 Run: `bun run build`
-Expected: Type-check passes
+Expected: Type-check passes with no errors
 
-**Commit:** `feat(agent): export cache-diagnostics from barrel`
-<!-- END_TASK_3 -->
+**Commit:** `feat(agent): export cache-diagnostics from agent module barrel`
+
+<!-- END_TASK_4 -->

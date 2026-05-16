@@ -1,12 +1,12 @@
-# Cache-Bust Detection Implementation Plan
+# Cache-Bust Detection Implementation Plan — Phase 2
 
 **Goal:** Add suppression logic so that expected cache busts (compaction, tool registration changes, first turn) do not produce false positive warnings.
 
-**Architecture:** Extends the existing `checkForCacheBust()` function with a suppression matrix that maps dimension/flag combinations to suppressed events. Suppressed changes still update stored hashes so subsequent turns compare against the post-change state. No new files — all changes are within the existing `cache-diagnostics.ts` module.
+**Architecture:** Extends the Functional Core `checkForCacheBust` method from Phase 1. Suppression is applied after change detection but before event emission. Suppressed changes still update stored hashes so the next unsuppressed turn compares against the post-change state.
 
-**Tech Stack:** Bun, TypeScript 5.7+
+**Tech Stack:** Bun (TypeScript)
 
-**Scope:** Phase 2 of 3
+**Scope:** 3 phases from original design (phase 2 of 3)
 
 **Codebase verified:** 2026-05-15
 
@@ -26,120 +26,92 @@ This phase implements and tests:
 ---
 
 <!-- START_SUBCOMPONENT_A (tasks 1-2) -->
-<!-- START_TASK_1 -->
-### Task 1: Suppression matrix
 
-**Verifies:** cache-bust-detection.AC3.1, cache-bust-detection.AC3.2, cache-bust-detection.AC3.3, cache-bust-detection.AC3.4
+<!-- START_TASK_1 -->
+### Task 1: Add suppression logic to checkForCacheBust
+
+**Verifies:** cache-bust-detection.AC3.1, cache-bust-detection.AC3.2, cache-bust-detection.AC3.3, cache-bust-detection.AC3.4, cache-bust-detection.AC3.5
 
 **Files:**
 - Modify: `src/agent/cache-diagnostics.ts`
 
 **Implementation:**
 
-Add an internal suppression matrix as a constant inside `cache-diagnostics.ts`:
+Modify the `checkForCacheBust` method to apply suppression flags after detecting changes but before adding events to the result array. The suppression matrix from the design plan:
+
+| Dimension | Suppressed when |
+|-----------|----------------|
+| `system_prompt` | `compactionOccurred` or `isFirstTurn` |
+| `tool_definitions` | `toolsChanged` or `isFirstTurn` |
+| `message_prefix` | `compactionOccurred` or `isFirstTurn` |
+| `beta_headers` | `isFirstTurn` |
+
+Add an internal helper function:
 
 ```typescript
-const SUPPRESSION_MATRIX: Record<CacheDimension, ReadonlyArray<keyof SuppressionFlags>> = {
-  system_prompt: ['compactionOccurred', 'isFirstTurn'],
-  tool_definitions: ['toolsChanged', 'isFirstTurn'],
-  message_prefix: ['compactionOccurred', 'isFirstTurn'],
-  beta_headers: ['isFirstTurn'],
-};
-```
+function isDimensionSuppressed(
+  dimension: CacheDimension,
+  flags: SuppressionFlags,
+): boolean {
+  if (flags.isFirstTurn) return true;
 
-Modify the comparison logic inside `checkForCacheBust()`. After computing events from hash comparison but before returning them, filter out any event whose dimension is suppressed by an active flag. The logic:
-
-```typescript
-function isSuppressed(dimension: CacheDimension, flags: SuppressionFlags): boolean {
-  const suppressors = SUPPRESSION_MATRIX[dimension];
-  return suppressors.some((flag) => flags[flag] === true);
+  switch (dimension) {
+    case 'system_prompt':
+    case 'message_prefix':
+      return flags.compactionOccurred === true;
+    case 'tool_definitions':
+      return flags.toolsChanged === true;
+    case 'beta_headers':
+      return false;
+  }
 }
 ```
 
-Events that are suppressed are dropped from the returned array but the stored hashes are still updated (this already happens because hash updates occur before filtering).
+In the comparison logic (Phase 1's Task 2), after detecting a change for a dimension, check `isDimensionSuppressed(dimension, flags)`. If suppressed, skip adding the event to the results array — but still update the stored hash to the new value (this is already the case since Phase 1 stores hashes unconditionally).
 
-**Important ordering within `checkForCacheBust()`:**
-1. Compute current hashes for all dimensions
-2. Compare current hashes against stored hashes, collecting raw events
-3. Update stored hashes with current values
-4. Filter raw events through suppression matrix
-5. Return unsuppressed events
-
-This ensures that suppressed changes still update the stored state (step 3 happens before step 4).
-
-**Note on `isFirstTurn`:** Phase 1 already returns no events when `previousDimensions` is null (first call). The `isFirstTurn` flag provides a second layer of suppression for cases where the caller explicitly signals first-turn status. Both mechanisms should coexist — if `previousDimensions` is null, no events are generated regardless of flags. If `previousDimensions` exists but `isFirstTurn` is true (edge case: caller miscounts turns), all events are still suppressed.
+Note: The `isFirstTurn` flag is distinct from the "first call" behaviour in Phase 1 (AC1.5). Phase 1 handles the case where `previousHashes` is null (no previous snapshot to compare against — inherently no events). The `isFirstTurn` flag is an explicit signal from the caller for additional safety. In practice, `isFirstTurn` will be `true` on the first call AND `previousHashes` will be null, so both paths agree. But the flag also handles edge cases like if `reset()` was called mid-conversation — the caller can signal `isFirstTurn: false` and a post-reset call would still produce no events (because `previousHashes` is null), while a subsequent call WOULD detect changes.
 
 **Verification:**
 Run: `bun run build`
-Expected: Type-check passes
+Expected: Type-check passes with no errors
 
-**Commit:** `feat(agent): add suppression matrix to cache-diagnostics`
+**Commit:** `feat(agent): add suppression logic to cache-diagnostics`
+
 <!-- END_TASK_1 -->
 
 <!-- START_TASK_2 -->
-### Task 2: Suppression tests
+### Task 2: Unit tests for suppression logic
 
 **Verifies:** cache-bust-detection.AC3.1, cache-bust-detection.AC3.2, cache-bust-detection.AC3.3, cache-bust-detection.AC3.4, cache-bust-detection.AC3.5
 
 **Files:**
 - Modify: `src/agent/cache-diagnostics.test.ts`
 
-**Implementation:**
+**Testing:**
 
-Add a new `describe('AC3: False Positive Suppression')` block to the existing test file. Each test calls `checkForCacheBust()` twice: first to establish baseline hashes, then with changed inputs and appropriate suppression flags.
+Add a new `describe('AC3: False Positive Suppression', ...)` block to the existing test file. Each test sets up a two-call sequence: first call establishes baseline hashes, second call changes content AND passes suppression flags.
 
-```
-describe('AC3: False Positive Suppression', () => {
-  // AC3.1: compactionOccurred suppresses message_prefix
-  test('compactionOccurred suppresses message_prefix events')
-  // Setup: call with messages [A, B, C], then call with modified messages [A', B', C']
-  //        and flags { compactionOccurred: true }
-  // Assert: no message_prefix event returned
+Tests must verify each AC:
 
-  // AC3.2: compactionOccurred suppresses system_prompt
-  test('compactionOccurred suppresses system_prompt events')
-  // Setup: call with system "v1", then call with system "v2"
-  //        and flags { compactionOccurred: true }
-  // Assert: no system_prompt event returned
+- **cache-bust-detection.AC3.1:** Call once to establish baseline. Second call changes messages (mutates prefix) with `{ compactionOccurred: true }`. Verify no `message_prefix` event is returned.
+- **cache-bust-detection.AC3.2:** Call once to establish baseline. Second call changes system prompt with `{ compactionOccurred: true }`. Verify no `system_prompt` event is returned.
+- **cache-bust-detection.AC3.3:** First call with `{ isFirstTurn: true }` — verify no events even though it's the very first call (redundant with AC1.5 but confirms flag path). Also test: establish baseline, then second call changes everything with `{ isFirstTurn: true }` — verify ALL dimensions suppressed.
+- **cache-bust-detection.AC3.4:** Call once to establish baseline. Second call changes tools with `{ toolsChanged: true }`. Verify no `tool_definitions` event is returned. Then call a third time with same tools but `{ toolsChanged: false }` — verify still no event (hashes match since they were updated during suppression).
+- **cache-bust-detection.AC3.5:** Call once to establish baseline. Second call with identical content (no actual change) but `{ compactionOccurred: true }`. Verify no events — no-op compaction produces no warnings.
 
-  // AC3.3: isFirstTurn suppresses all dimensions
-  test('isFirstTurn suppresses all events')
-  // Setup: call once to establish baseline, then call with all dimensions changed
-  //        and flags { isFirstTurn: true }
-  // Assert: empty events array
+Additional tests for suppression correctness:
 
-  // AC3.4: toolsChanged suppresses tool_definitions
-  test('toolsChanged suppresses tool_definitions events')
-  // Setup: call with tools [A, B], then call with tools [A, B, C]
-  //        and flags { toolsChanged: true }
-  // Assert: no tool_definitions event returned
-
-  // AC3.5: No-op compaction produces no warnings
-  test('compaction flag with unchanged messages produces no events')
-  // Setup: call with messages [A, B, C], then call with same messages
-  //        and flags { compactionOccurred: true }
-  // Assert: empty events array (no change detected, suppression irrelevant)
-
-  // Suppressed changes still update stored hashes
-  test('suppressed changes update stored hashes for subsequent turns')
-  // Setup:
-  //   1. call with system "v1" (baseline)
-  //   2. call with system "v2" and { compactionOccurred: true } (suppressed)
-  //   3. call with system "v2" and {} (no flags)
-  // Assert: third call returns no events (comparing v2 vs v2, not v1 vs v2)
-
-  // Partial suppression: only matching dimensions are suppressed
-  test('compactionOccurred does not suppress tool_definitions')
-  // Setup: call once, then change both system_prompt and tool_definitions
-  //        with flags { compactionOccurred: true }
-  // Assert: system_prompt suppressed, tool_definitions event still returned
-})
-```
+- **Hash update on suppression:** Establish baseline. Second call changes system prompt with `{ compactionOccurred: true }` (suppressed). Third call with same system prompt as second call, no flags — verify NO event (hashes were updated during suppression, so current matches stored).
+- **Hash update on suppression (inverse):** Establish baseline. Second call changes system prompt with `{ compactionOccurred: true }` (suppressed). Third call changes system prompt AGAIN, no flags — verify event IS produced (detects change from the suppressed-but-stored value).
+- **Selective suppression:** Establish baseline. Second call changes BOTH system prompt and tool definitions, with `{ compactionOccurred: true }`. Verify `system_prompt` is suppressed but `tool_definitions` event IS returned (compaction doesn't suppress tool changes).
+- **Beta headers not suppressed by compaction:** Establish baseline. Second call changes beta headers with `{ compactionOccurred: true }`. Verify `beta_headers` event IS returned (only `isFirstTurn` suppresses beta headers).
 
 **Verification:**
 Run: `bun test src/agent/cache-diagnostics.test.ts`
 Expected: All tests pass (both Phase 1 and Phase 2 tests)
 
-**Commit:** `test(agent): add suppression logic tests for cache-bust detection`
+**Commit:** `test(agent): add suppression logic tests for cache-diagnostics`
+
 <!-- END_TASK_2 -->
+
 <!-- END_SUBCOMPONENT_A -->

@@ -640,6 +640,296 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
   });
 });
 
+describe('cache-bust-detection.AC3: False Positive Suppression', () => {
+  let diagnostics = createCacheDiagnostics();
+
+  beforeEach(() => {
+    diagnostics = createCacheDiagnostics();
+  });
+
+  describe('AC3.1 — Message prefix suppression on compaction', () => {
+    test('compactionOccurred suppresses message_prefix event', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [],
+        messages: [{role: 'user', content: 'hello'}, {role: 'assistant', content: 'hi'}],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      const msg1Modified = {role: 'user', content: 'hello modified'};
+      const msg2 = {role: 'assistant', content: 'hi'};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [],
+        messages: [msg1Modified, msg2],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe('AC3.2 — System prompt suppression on compaction', () => {
+    test('compactionOccurred suppresses system_prompt event', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe('AC3.3 — isFirstTurn suppresses all dimensions', () => {
+    test('isFirstTurn flag suppresses all dimensions on first call', () => {
+      const flags: SuppressionFlags = {isFirstTurn: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool1'}],
+        messages: [{role: 'user', content: 'msg'}],
+        betaHeaders: ['header1'],
+        turn: 1,
+        flags,
+      });
+
+      expect(events.length).toBe(0);
+    });
+
+    test('isFirstTurn flag suppresses all dimensions even with real changes', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [{name: 'tool1'}],
+        messages: [{role: 'user', content: 'msg1'}, {role: 'assistant', content: 'resp'}],
+        betaHeaders: ['header1'],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {isFirstTurn: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [{name: 'tool2'}],
+        messages: [{role: 'user', content: 'msg1 modified'}, {role: 'assistant', content: 'resp'}],
+        betaHeaders: ['header2'],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe('AC3.4 — Tool definitions suppression on toolsChanged', () => {
+    test('toolsChanged suppresses tool_definitions event', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool1'}],
+        messages: [],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {toolsChanged: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool2'}],
+        messages: [],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(0);
+    });
+
+    test('third call with same tools and no flags produces no event (hashes updated during suppression)', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool1'}],
+        messages: [],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {toolsChanged: true};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool2'}],
+        messages: [],
+        turn: 2,
+        flags: flags2,
+      });
+
+      const flags3: SuppressionFlags = {};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool2'}],
+        messages: [],
+        turn: 3,
+        flags: flags3,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe('AC3.5 — No-op compaction produces no events', () => {
+    test('identical content with compactionOccurred flag produces no events', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool1'}],
+        messages: [{role: 'user', content: 'msg'}, {role: 'assistant', content: 'resp'}],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [{name: 'tool1'}],
+        messages: [{role: 'user', content: 'msg'}, {role: 'assistant', content: 'resp'}],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe('Additional suppression correctness tests', () => {
+    test('hash update on suppression — subsequent identical call produces no event', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags: flags2,
+      });
+
+      const flags3: SuppressionFlags = {};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [],
+        messages: [],
+        turn: 3,
+        flags: flags3,
+      });
+
+      expect(events.length).toBe(0);
+    });
+
+    test('hash update on suppression — subsequent different value produces event', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags: flags2,
+      });
+
+      const flags3: SuppressionFlags = {};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v3',
+        tools: [],
+        messages: [],
+        turn: 3,
+        flags: flags3,
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0]?.dimension).toBe('system_prompt');
+    });
+
+    test('selective suppression — system_prompt suppressed but tool_definitions not', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [{name: 'tool1'}],
+        messages: [],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [{name: 'tool2'}],
+        messages: [],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0]?.dimension).toBe('tool_definitions');
+    });
+
+    test('beta_headers not suppressed by compaction', () => {
+      const flags1: SuppressionFlags = {};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [],
+        messages: [],
+        betaHeaders: ['h1'],
+        turn: 1,
+        flags: flags1,
+      });
+
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt',
+        tools: [],
+        messages: [],
+        betaHeaders: ['h2'],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0]?.dimension).toBe('beta_headers');
+    });
+  });
+});
+
 describe('cache-diagnostics edge cases', () => {
   let diagnostics = createCacheDiagnostics();
 

@@ -1,5 +1,22 @@
 // pattern: Functional Core
 
+function isDimensionSuppressed(
+  dimension: CacheDimension,
+  flags: SuppressionFlags,
+): boolean {
+  if (flags.isFirstTurn) return true;
+
+  switch (dimension) {
+    case 'system_prompt':
+    case 'message_prefix':
+      return flags.compactionOccurred === true;
+    case 'tool_definitions':
+      return flags.toolsChanged === true;
+    case 'beta_headers':
+      return false;
+  }
+}
+
 function hashContent(value: string): DimensionSnapshot {
   return {
     hash: BigInt(Bun.hash(value)),
@@ -109,7 +126,7 @@ export function createCacheDiagnostics(): CacheDiagnostics {
 
   return {
     checkForCacheBust(options) {
-      const {systemPrompt, tools, messages, betaHeaders, turn} = options;
+      const {systemPrompt, tools, messages, betaHeaders, turn, flags} = options;
 
       // Compute current dimension hashes
       const currentSystemPromptHash = hashContent(systemPrompt);
@@ -135,37 +152,43 @@ export function createCacheDiagnostics(): CacheDiagnostics {
       // Check system_prompt dimension
       const prevSystemPromptHash = previousHashes.get('system_prompt');
       if (prevSystemPromptHash && prevSystemPromptHash.hash !== currentSystemPromptHash.hash) {
-        events.push({
-          dimension: 'system_prompt',
-          previousSize: prevSystemPromptHash.size,
-          currentSize: currentSystemPromptHash.size,
-          delta: currentSystemPromptHash.size - prevSystemPromptHash.size,
-          turn,
-        });
+        if (!isDimensionSuppressed('system_prompt', flags)) {
+          events.push({
+            dimension: 'system_prompt',
+            previousSize: prevSystemPromptHash.size,
+            currentSize: currentSystemPromptHash.size,
+            delta: currentSystemPromptHash.size - prevSystemPromptHash.size,
+            turn,
+          });
+        }
       }
 
       // Check tool_definitions dimension
       const prevToolsHash = previousHashes.get('tool_definitions');
       if (prevToolsHash && prevToolsHash.hash !== currentToolsHash.hash) {
-        events.push({
-          dimension: 'tool_definitions',
-          previousSize: prevToolsHash.size,
-          currentSize: currentToolsHash.size,
-          delta: currentToolsHash.size - prevToolsHash.size,
-          turn,
-        });
+        if (!isDimensionSuppressed('tool_definitions', flags)) {
+          events.push({
+            dimension: 'tool_definitions',
+            previousSize: prevToolsHash.size,
+            currentSize: currentToolsHash.size,
+            delta: currentToolsHash.size - prevToolsHash.size,
+            turn,
+          });
+        }
       }
 
       // Check beta_headers dimension
       const prevBetaHeadersHash = previousHashes.get('beta_headers');
       if (prevBetaHeadersHash && prevBetaHeadersHash.hash !== currentBetaHeadersHash.hash) {
-        events.push({
-          dimension: 'beta_headers',
-          previousSize: prevBetaHeadersHash.size,
-          currentSize: currentBetaHeadersHash.size,
-          delta: currentBetaHeadersHash.size - prevBetaHeadersHash.size,
-          turn,
-        });
+        if (!isDimensionSuppressed('beta_headers', flags)) {
+          events.push({
+            dimension: 'beta_headers',
+            previousSize: prevBetaHeadersHash.size,
+            currentSize: currentBetaHeadersHash.size,
+            delta: currentBetaHeadersHash.size - prevBetaHeadersHash.size,
+            turn,
+          });
+        }
       }
 
       // Check message_prefix dimension
@@ -192,7 +215,7 @@ export function createCacheDiagnostics(): CacheDiagnostics {
           }
         }
 
-        if (prefixChanged) {
+        if (prefixChanged && !isDimensionSuppressed('message_prefix', flags)) {
           events.push({
             dimension: 'message_prefix',
             previousSize: previousPrefixState.totalSize,

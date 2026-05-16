@@ -1,14 +1,14 @@
-# Session Checkpointing Implementation Plan
+# Session Checkpointing Implementation Plan — Phase 3
 
 **Goal:** Wire checkpoint creation into the four trigger points: explicit command, pre-compaction, shutdown, and turn interval.
 
-**Architecture:** Imperative Shell integration across the agent loop, shutdown handler, and tool registry. A shared `createCheckpoint` helper collects agent state and delegates to `serializeCheckpoint` and `CheckpointStore.save` + `.prune`. All checkpoint creation is wrapped in try/catch so failures never block the agent.
+**Architecture:** Imperative Shell integration across the agent loop, shutdown handler, and tool registry. A shared `performCheckpoint` helper collects agent state from subsystem dependencies and delegates to `serializeCheckpoint` and `CheckpointStore.save` + `.prune`. All checkpoint creation is wrapped in try/catch so failures never block the agent (AC1.6).
 
-**Tech Stack:** Bun, TypeScript 5.7+, PostgreSQL, Zod
+**Tech Stack:** Bun (TypeScript), PostgreSQL
 
-**Scope:** Phase 3 of 4
+**Scope:** 4 phases from original design (phase 3 of 4)
 
-**Codebase verified:** 2026-05-15
+**Codebase verified:** 2026-05-16
 
 ---
 
@@ -27,92 +27,106 @@ This phase implements and tests:
 ---
 
 <!-- START_TASK_1 -->
-### Task 1: Config schema additions
+### Task 1: Config schema and type additions
 
-**Verifies:** session-checkpointing.AC1.4, AC1.5
+**Verifies:** session-checkpointing.AC1.4, session-checkpointing.AC1.5
 
 **Files:**
-- Modify: `src/config/schema.ts`
+- Modify: `src/config/schema.ts` (the `AgentConfigSchema` block, currently lines 6-17)
+- Modify: `src/agent/types.ts` (the `AgentConfig` type, currently lines 21-32)
+- Modify: `src/index.ts` (the config unpacking block inside `createAgent()` call, currently around lines 967-976)
 
 **Implementation:**
 
-Add three fields to `AgentConfigSchema` in `src/config/schema.ts`:
+**In `src/config/schema.ts`:** Add four fields to `AgentConfigSchema`, following the existing `recall_enabled` and `cache_diagnostics` patterns:
 
 ```typescript
 checkpoint_interval: z.number().int().nonnegative().default(0),
 checkpoint_retention: z.number().int().positive().default(5),
 auto_resume: z.boolean().default(false),
+resume_checkpoint: z.string().optional(),
 ```
 
-And add one optional field to `AppConfigSchema` (not inside `AgentConfigSchema`, since it's a startup parameter rather than runtime config — or place in `AgentConfigSchema` if that's simpler for wiring):
+- `checkpoint_interval`: Turns between automatic checkpoints. `0` disables interval checkpointing (AC1.5).
+- `checkpoint_retention`: Max checkpoints to retain per conversation (default 5).
+- `auto_resume`: Load most recent checkpoint for configured owner on startup.
+- `resume_checkpoint`: Explicit checkpoint ID to restore on startup.
 
-Actually, keep all checkpoint config in `AgentConfigSchema` since it's agent behavior:
+**In `src/agent/types.ts`:** Add corresponding optional fields to `AgentConfig`:
 
 ```typescript
-checkpoint_interval: z.number().int().nonnegative().default(0),
-checkpoint_retention: z.number().int().positive().default(5),
-auto_resume: z.boolean().default(false),
-resume_checkpoint: z.string().uuid().optional(),
+checkpoint_interval?: number;
+checkpoint_retention?: number;
+auto_resume?: boolean;
+resume_checkpoint?: string;
 ```
 
-- `checkpoint_interval`: Number of turns between automatic checkpoints. `0` disables interval checkpointing (AC1.5).
-- `checkpoint_retention`: Maximum checkpoints to retain per conversation (default 5). Used by pruning.
-- `auto_resume`: When true and no explicit checkpoint ID is given, load the most recent checkpoint for the configured owner on startup.
-- `resume_checkpoint`: Explicit checkpoint UUID to restore on startup. Overrides `auto_resume`.
+**In `src/index.ts`:** Add to the config unpacking block:
 
-**Important:** `AgentConfig` in `src/agent/types.ts` is manually defined (NOT inferred from Zod). After adding these fields to `AgentConfigSchema`, you must also:
-1. Add the corresponding fields to the `AgentConfig` type in `src/agent/types.ts`
-2. Update the manual mapping in `src/index.ts` (where config schema values are mapped to `AgentConfig` properties) to include the new checkpoint fields
+```typescript
+checkpoint_interval: config.agent.checkpoint_interval,
+checkpoint_retention: config.agent.checkpoint_retention,
+auto_resume: config.agent.auto_resume,
+resume_checkpoint: config.agent.resume_checkpoint,
+```
 
 **Verification:**
 Run: `bun run build`
-Expected: Type-check passes. Existing tests still pass (defaults don't break anything).
+Expected: Type-check passes with no errors
 
-**Commit:** `feat(checkpoint): add checkpoint config fields to agent schema`
+**Commit:** `feat(config): add checkpoint config fields to agent schema`
+
 <!-- END_TASK_1 -->
 
-<!-- START_TASK_1B -->
-### Task 1b: Add getResult() to RecallContextState
+<!-- START_TASK_2 -->
+### Task 2: Add getResult() to RecallContextState
 
-**Verifies:** session-checkpointing.AC2.6 (prerequisite for checkpoint creation)
+**Verifies:** None (prerequisite for checkpoint creation — exposes recall cache for serialization)
 
 **Files:**
-- Modify: `src/recall/context.ts`
-- Modify: `src/recall/CLAUDE.md` (if it exists — update the public API section)
+- Modify: `src/recall/context.ts` (currently 59 lines)
 
 **Implementation:**
 
-The `RecallContextState` type in `src/recall/context.ts` currently has `setResult(result)` but no getter. The implementation already holds `currentResult` in closure. Add:
+The `RecallContextState` type at `src/recall/context.ts:11-13` currently only has `setResult`. The implementation holds `currentResult` in closure. Add a getter:
 
-1. Add `getResult(): RecallResult | null` to the `RecallContextState` type definition
-2. In `createRecallContextState()`, expose the getter: `getResult: () => currentResult`
+1. Add `getResult(): RecallResult | null` to the `RecallContextState` type definition at line 12.
+2. In `createRecallContextProvider()` at line 44, add the getter to the provider object: `provider.getResult = () => currentResult;`
 
-This is a minimal change — one type addition and one line of implementation.
+This is a minimal additive change — one type line and one implementation line.
 
 **Verification:**
 Run: `bun run build`
-Expected: Type-check passes. No existing tests break (additive change only).
+Expected: Type-check passes. No existing tests break.
 
 **Commit:** `feat(recall): expose getResult() on RecallContextState for checkpoint serialization`
-<!-- END_TASK_1B -->
 
-<!-- START_TASK_2 -->
-### Task 2: Checkpoint creation helper
+<!-- END_TASK_2 -->
+
+<!-- START_SUBCOMPONENT_A (tasks 3-4) -->
+
+<!-- START_TASK_3 -->
+### Task 3: Checkpoint creation helper
 
 **Verifies:** session-checkpointing.AC1.6
 
 **Files:**
 - Create: `src/agent/checkpoint-create.ts`
-- Test: `src/agent/checkpoint-create.test.ts` (unit)
 
 **Implementation:**
 
 Create `src/agent/checkpoint-create.ts` with pattern annotation `// pattern: Imperative Shell`.
 
-This module provides the shared checkpoint creation logic used by all four trigger points.
+Import types from checkpoint modules, memory, reflexion, subconscious, and recall:
+- `serializeCheckpoint`, `CheckpointTrigger`, `AgentCheckpointState` from `./checkpoint-types.ts` and `./checkpoint-serializer.ts`
+- `CheckpointStore` from `@/persistence/checkpoint-store.ts`
+- `MemoryManager` from `@/memory/manager.ts`
+- `PredictionStore` from `@/reflexion/types.ts`
+- `InterestRegistry` from `@/subconscious/types.ts`
+- `RecallContextState` from `@/recall/context.ts`
+- `randomUUID` from `node:crypto`
 
 Define `CheckpointDependencies`:
-
 ```typescript
 type CheckpointDependencies = {
   readonly checkpointStore: CheckpointStore;
@@ -126,196 +140,179 @@ type CheckpointDependencies = {
 };
 ```
 
-Define `CheckpointAgentState` (the mutable runtime state the agent exposes):
-
+Define `CheckpointAgentState` (runtime state the agent exposes via a shared ref):
 ```typescript
 type CheckpointAgentState = {
   readonly turnNumber: number;
   readonly toolRound: number;
   readonly messageIds: ReadonlyArray<string>;
-  readonly compactionMetadata: {
+  readonly compactionMeta: {
     readonly lastCompactedIndex: number;
     readonly summaryCount: number;
   };
 };
 ```
 
-Export `async function performCheckpoint(trigger: CheckpointTrigger, agentState: CheckpointAgentState, deps: CheckpointDependencies): Promise<string | null>`:
+Export `async function performCheckpoint(trigger, agentState, deps): Promise<string | null>`:
 
 1. Collect subsystem state:
-   - `workingMemory`: Call `deps.memory.getWorkingBlocks()` → map to `{ label: block.label, content: block.content }` (note: `MemoryManager` has owner baked in at construction — no owner parameter needed)
-   - `pendingPredictions`: If `deps.predictionStore` exists, call `deps.predictionStore.listPredictions(deps.owner, 'pending')` → map to `{ id: p.id, prediction: p.predictionText, createdAt: p.createdAt.toISOString() }`. Otherwise, empty array.
-   - `activeInterests`: If `deps.interestRegistry` exists, call `deps.interestRegistry.listInterests(deps.owner, { status: 'active' })` → map to `{ label: i.name, engagementScore: i.engagementScore }`. (Note: decay rate is a config-level value from `InterestRegistryConfig.engagementHalfLifeDays`, not per-interest. Only the engagement score is meaningful for restoration.) Otherwise, empty array.
-   - `recallCache`: If `deps.recallContextState` exists, call `deps.recallContextState.getResult()` (added in Task 1b). If the result is present, map to `{ decomposition: { queries: [...], entities: [...] }, fragmentCount: result.fragments.length }`. Otherwise, `null`.
+   - `workingMemory`: `deps.memory.list('working')` → map to `{ label: b.label, content: b.content }`
+   - `pendingPredictions`: If `deps.predictionStore` exists, `deps.predictionStore.listPredictions(deps.owner, 'pending')` → map to `{ id: p.id, predictionText: p.predictionText, domain: p.domain, confidence: p.confidence, createdAt: p.createdAt.toISOString() }`. Otherwise empty array.
+   - `activeInterests`: If `deps.interestRegistry` exists, `deps.interestRegistry.listInterests(deps.owner, { status: 'active' })` → map to `{ id: i.id, name: i.name, engagementScore: i.engagementScore, status: i.status, lastEngagedAt: i.lastEngagedAt.toISOString() }`. Otherwise empty array.
+   - `recallCache`: If `deps.recallContextState?.getResult()` returns a result, map to `{ decomposition: result.fragments.length > 0 ? { queries: [...decomp.queries], entities: [...decomp.entities] } : null, fragmentCount: result.fragments.length }`. Otherwise `null`. Note: Need to get the decomposition separately from the result — the `RecallResult` only has fragments, totalTokens, queryCount, elapsed. The decomposition lives in the recall pipeline, not the result. Simplify: store `fragmentCount` from the result and set `decomposition: null` for now. Full decomposition capture would require threading it through `RecallContextState` which is out of scope.
 
-2. Build `AgentCheckpointState` from collected data + `agentState`
+2. Build `AgentCheckpointState` from collected data + `agentState` fields
 
-3. Call `serializeCheckpoint(deps.conversationId, deps.owner, trigger, state)`
+3. Generate ID with `randomUUID()` and timestamp with `new Date().toISOString()`
 
-4. Call `deps.checkpointStore.save(checkpoint)` inside a transaction with `deps.checkpointStore.prune(deps.conversationId, deps.retentionCount)`
+4. Call `serializeCheckpoint({ id, conversationId: deps.conversationId, owner: deps.owner, trigger, state, createdAt })`
 
-   Since `CheckpointStore` methods use the underlying query function, and we want save+prune atomicity, the `performCheckpoint` function should accept the `PersistenceProvider.withTransaction` to wrap both calls. Alternatively, since `createCheckpointStore` already has access to `withTransaction`, add a `saveAndPrune(checkpoint, retainCount)` method to `CheckpointStore` that runs both in a single transaction.
+5. Call `deps.checkpointStore.save(checkpoint)` then `deps.checkpointStore.prune(deps.conversationId, deps.retentionCount)`
 
-   Simpler approach: Add `saveAndPrune(checkpoint: SessionCheckpoint, conversationId: string, retainCount: number): Promise<number>` to `CheckpointStore` (modifying Phase 2's store). This method calls save then prune within `withTransaction`. Returns the prune count.
+6. Wrap entire operation in try/catch. On error: `console.warn('[checkpoint] failed to create ${trigger} checkpoint:', (error as Error).message)`. Return `null`.
 
-5. Wrap the entire operation in try/catch. On error, log a warning: `console.warn('[checkpoint] failed to create ${trigger} checkpoint:', error.message)`. Return `null`.
+7. On success: return `checkpoint.id`.
 
-6. On success, return `checkpoint.id`.
-
-**Modification to Phase 2:** Add `saveAndPrune` method to `CheckpointStore` type and implementation. This is a convenience method that wraps `save` + `prune` in a single transaction.
-
-**Testing:**
-
-Create `src/agent/checkpoint-create.test.ts` with unit tests using manual stubs:
-
-1. **Successful checkpoint creation:** Stub all dependencies with in-memory implementations. Call `performCheckpoint('explicit', agentState, deps)`. Assert it returns a UUID string. Assert `checkpointStore.save` was called with a valid checkpoint. Assert `checkpointStore.prune` was called.
-
-2. **Failure tolerance (AC1.6):** Stub `checkpointStore.save` to throw an Error. Call `performCheckpoint()`. Assert it returns `null` (not thrown). Assert a warning was logged (use a spy or verify via captured console output).
-
-3. **Empty subsystem state:** Stub memory to return empty blocks, no prediction store, no interest registry, no recall state. Call `performCheckpoint()`. Assert checkpoint has empty arrays for all collections and `null` recallCache.
-
-4. **Full subsystem state:** Stub all dependencies with populated data. Assert the checkpoint correctly maps working memory labels/content, prediction IDs/text/dates, and interest labels/engagement scores.
-
-Stub pattern: Plain objects implementing the required interface methods. Same approach as `src/compaction/compactor.test.ts`.
-
-**Verification:**
-Run: `bun test src/agent/checkpoint-create.test.ts`
-Expected: All tests pass
-
-**Commit:** `feat(checkpoint): implement checkpoint creation helper with failure tolerance`
-<!-- END_TASK_2 -->
-
-<!-- START_TASK_3 -->
-### Task 3: Checkpoint tool
-
-**Verifies:** session-checkpointing.AC1.1
-
-**Files:**
-- Create: `src/tool/checkpoint-tool.ts`
-
-**Implementation:**
-
-Create `src/tool/checkpoint-tool.ts` with pattern annotation `// pattern: Imperative Shell`.
-
-Export `createCheckpointTool(deps: CheckpointDependencies, getAgentState: () => CheckpointAgentState): Tool`:
-
-The tool definition:
-- `name`: `'checkpoint'`
-- `description`: `'Create a snapshot of the current agent state. Captures conversation history, working memory, predictions, interests, and compaction metadata. Returns the checkpoint ID.'`
-- `input_schema`: `{ type: 'object', properties: {}, required: [] }` (no parameters)
-- `handler`: Calls `performCheckpoint('explicit', getAgentState(), deps)`. On success, returns `'Checkpoint created: ${id}'`. On null (failure), returns `'Checkpoint creation failed. Check logs for details.'`
-
-The tool is registered like other built-in tools — the composition root in `src/index.ts` creates it and adds it to the registry.
+Export `CheckpointDependencies`, `CheckpointAgentState`, and `performCheckpoint`.
 
 **Verification:**
 Run: `bun run build`
 Expected: Type-check passes
 
-**Commit:** `feat(checkpoint): add /checkpoint tool definition`
+**Commit:** `feat(agent): implement checkpoint creation helper with failure tolerance`
+
 <!-- END_TASK_3 -->
 
 <!-- START_TASK_4 -->
-### Task 4: Pre-compaction trigger
+### Task 4: Checkpoint creation helper tests
 
-**Verifies:** session-checkpointing.AC1.2
+**Verifies:** session-checkpointing.AC1.6
 
 **Files:**
-- Modify: `src/agent/agent.ts`
+- Create: `src/agent/checkpoint-create.test.ts`
 
-**Implementation:**
+**Testing:**
 
-In `src/agent/agent.ts`, find the two locations where compaction is triggered:
+Unit tests using inline stubs (same approach as `src/agent/agent.test.ts` mock patterns). No database needed — stub all dependencies.
 
-1. The automatic compression check (around line 126):
-   ```typescript
-   if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
-     const result = await deps.compactor.compress(history, id);
-   ```
+Tests:
 
-2. The `compact_context` tool call handler (around line 270):
-   ```typescript
-   if (deps.compactor) {
-     const compactionResult = await deps.compactor.compress(history, id);
-   ```
+- **Successful checkpoint creation:** Stub all deps with in-memory implementations (memory returns blocks, predictionStore returns predictions, interestRegistry returns interests). Call `performCheckpoint('explicit', agentState, deps)`. Assert returns a UUID string. Assert `checkpointStore.save` was called with a valid checkpoint containing the collected state.
 
-Before each `compress()` call, insert a checkpoint creation call:
+- **Failure tolerance (AC1.6):** Stub `checkpointStore.save` to throw. Call `performCheckpoint()`. Assert returns `null` (not thrown). Verify no exception propagates.
 
-```typescript
-if (deps.checkpointDeps) {
-  await performCheckpoint('pre_compaction', deps.checkpointDeps.getAgentState(), deps.checkpointDeps.deps);
-}
-```
+- **Empty subsystem state:** Stub memory to return `[]`, no predictionStore, no interestRegistry, no recallContextState. Assert checkpoint has empty arrays and null recallCache.
 
-Add `checkpointDeps?: { getAgentState: () => CheckpointAgentState; deps: CheckpointDependencies }` to `AgentDependencies`.
+- **Full subsystem state mapping:** Verify working memory blocks correctly map `label` and `content`. Verify predictions map `id`, `predictionText`, `domain`, `confidence`, `createdAt` (as ISO string). Verify interests map `id`, `name`, `engagementScore`, `status`, `lastEngagedAt` (as ISO string).
 
-This keeps the checkpoint logic out of the agent's core responsibility — it's an optional dependency that fires when present.
+- **Prune is called after save:** Assert that `checkpointStore.prune` is called with the correct conversationId and retentionCount.
 
 **Verification:**
-Run: `bun run build && bun test`
-Expected: Type-check passes. All existing tests still pass (checkpointDeps is optional).
+Run: `bun test src/agent/checkpoint-create.test.ts`
+Expected: All tests pass
 
-**Commit:** `feat(checkpoint): add pre-compaction checkpoint trigger`
+**Commit:** `test(agent): add unit tests for checkpoint creation helper`
+
 <!-- END_TASK_4 -->
 
-<!-- START_TASK_5 -->
-### Task 5: Turn-interval trigger
+<!-- END_SUBCOMPONENT_A -->
 
-**Verifies:** session-checkpointing.AC1.4, AC1.5
+<!-- START_TASK_5 -->
+### Task 5: Checkpoint tool definition
+
+**Verifies:** session-checkpointing.AC1.1
 
 **Files:**
-- Modify: `src/agent/agent.ts`
+- Create: `src/tool/builtin/checkpoint.ts`
 
 **Implementation:**
 
-In the agent loop within `processMessage`, track the current turn number. After a complete turn (user message processed, assistant response generated), check if interval checkpointing is configured:
+Create `src/tool/builtin/checkpoint.ts` with pattern annotation `// pattern: Imperative Shell`.
+
+Follow the tool definition pattern from `src/tool/builtin/memory.ts`. Export a factory function:
 
 ```typescript
-if (
-  deps.checkpointDeps &&
-  deps.config.checkpoint_interval > 0 &&
-  turnNumber % deps.config.checkpoint_interval === 0
-) {
-  await performCheckpoint('interval', deps.checkpointDeps.getAgentState(), deps.checkpointDeps.deps);
-}
+function createCheckpointTool(
+  deps: CheckpointDependencies,
+  getAgentState: () => CheckpointAgentState,
+): Tool
 ```
 
-The turn counter should be maintained as local state within the agent closure (incremented each time `processMessage` completes). It's also part of the `CheckpointAgentState` that `getAgentState()` returns.
+Tool definition:
+- `name`: `'checkpoint'`
+- `description`: `'Create a snapshot of the current agent state including conversation history, working memory, predictions, interests, and compaction metadata. Returns the checkpoint ID.'`
+- `parameters`: Empty array (no parameters needed)
 
-When `checkpoint_interval` is `0`, the condition short-circuits and no interval checkpoint is created (AC1.5).
+Handler: Calls `performCheckpoint('explicit', getAgentState(), deps)`. Returns `{ success: true, output: 'Checkpoint created: ${id}' }` on success, `{ success: false, output: 'Checkpoint creation failed. Check logs for details.', error: 'checkpoint_failed' }` on null.
 
 **Verification:**
-Run: `bun run build && bun test`
-Expected: Type-check passes. Existing tests pass.
+Run: `bun run build`
+Expected: Type-check passes
 
-**Commit:** `feat(checkpoint): add turn-interval checkpoint trigger`
+**Commit:** `feat(tool): add checkpoint tool definition`
+
 <!-- END_TASK_5 -->
 
 <!-- START_TASK_6 -->
-### Task 6: Shutdown trigger
+### Task 6: Agent loop integration (pre-compaction + turn-interval triggers)
 
-**Verifies:** session-checkpointing.AC1.3
+**Verifies:** session-checkpointing.AC1.2, session-checkpointing.AC1.4, session-checkpointing.AC1.5
+
+**Files:**
+- Modify: `src/agent/types.ts` (add optional checkpoint deps to `AgentDependencies`)
+- Modify: `src/agent/agent.ts`
+
+**Implementation:**
+
+**In `src/agent/types.ts`:** Add optional checkpoint dependencies to `AgentDependencies`:
+
+```typescript
+checkpointFn?: (trigger: CheckpointTrigger) => Promise<string | null>;
+```
+
+This is a pre-bound function (created in the composition root) that the agent calls when a trigger fires. It avoids passing all checkpoint dependencies into the agent — the agent just calls the function with the trigger type. The composition root binds everything else (agent state ref, subsystem deps).
+
+**In `src/agent/agent.ts`:**
+
+1. **Pre-compaction trigger (AC1.2):** Before each `deps.compactor.compress()` call (there are two — the automatic compression check around line 164, and the `compact_context` tool handler around line 373), insert:
+   ```typescript
+   if (deps.checkpointFn) {
+     await deps.checkpointFn('pre_compaction');
+   }
+   ```
+
+2. **Turn-interval trigger (AC1.4, AC1.5):** At the end of `processMessage()`, after persisting the assistant response but before returning, add:
+   ```typescript
+   if (
+     deps.checkpointFn &&
+     deps.config.checkpoint_interval &&
+     deps.config.checkpoint_interval > 0 &&
+     turnNumber % deps.config.checkpoint_interval === 0
+   ) {
+     await deps.checkpointFn('interval');
+   }
+   ```
+   When `checkpoint_interval` is 0 or undefined, this condition short-circuits (AC1.5).
+
+**Verification:**
+Run: `bun run build && bun test src/agent/`
+Expected: Type-check passes. All existing agent tests pass (checkpointFn is optional).
+
+**Commit:** `feat(agent): add pre-compaction and turn-interval checkpoint triggers`
+
+<!-- END_TASK_6 -->
+
+<!-- START_TASK_7 -->
+### Task 7: Shutdown trigger and composition root wiring
+
+**Verifies:** session-checkpointing.AC1.1, session-checkpointing.AC1.3
 
 **Files:**
 - Modify: `src/index.ts`
 
 **Implementation:**
 
-In `src/index.ts`, modify `createShutdownHandler` to accept optional checkpoint creation parameters:
-
-```typescript
-export function createShutdownHandler(
-  rl: readline.Interface,
-  persistence: PersistenceProvider,
-  dataSourceRegistry?: DataSourceRegistry,
-  scheduler?: SchedulerWrapper,
-  activityManager?: ActivityManager,
-  mcpClients?: Array<McpClient>,
-  checkpointFn?: () => Promise<void>,  // NEW
-)
-```
-
-In the handler function body, before the existing cleanup steps (stop scheduler, shutdown data sources, etc.), call:
-
+**Shutdown trigger (AC1.3):** In `createShutdownHandler()` (around line 239), add an optional checkpoint callback parameter. Before existing cleanup steps (stop scheduler, shutdown data sources), call it:
 ```typescript
 if (checkpointFn) {
   try {
@@ -326,90 +323,103 @@ if (checkpointFn) {
 }
 ```
 
-The `checkpointFn` is a closure created in the composition root that calls `performCheckpoint('shutdown', ...)`. This keeps the shutdown handler generic.
+**Composition root wiring:** After agent creation (around line 960+):
 
-At the composition root where `createShutdownHandler` is called (around line 1378), construct the checkpoint closure if a `CheckpointStore` is available:
+1. Create checkpoint store: `const checkpointStore = createCheckpointStore(persistence);`
 
-```typescript
-const shutdownCheckpointFn = checkpointStore
-  ? async () => {
-      await performCheckpoint('shutdown', getAgentState(), checkpointDeps);
-    }
-  : undefined;
-
-const shutdownHandler = createShutdownHandler(
-  rl, persistence, dataSourceRegistry, schedulerWrapper,
-  activityManager, mcpClients, shutdownCheckpointFn,
-);
-```
-
-**Design note:** The shutdown handler has limited time before SIGKILL. The checkpoint write is a single INSERT + DELETE query — it should complete within a few hundred milliseconds. The try/catch ensures a DB failure doesn't prevent the rest of the cleanup sequence.
-
-**Verification:**
-Run: `bun run build`
-Expected: Type-check passes
-
-**Commit:** `feat(checkpoint): add shutdown checkpoint trigger`
-<!-- END_TASK_6 -->
-
-<!-- START_TASK_7 -->
-### Task 7: Composition root wiring
-
-**Verifies:** session-checkpointing.AC1.1 (tool registration)
-
-**Files:**
-- Modify: `src/index.ts`
-
-**Implementation:**
-
-In the composition root section of `src/index.ts` (where tools are registered, around lines 550-689):
-
-1. Create the `CheckpointStore`:
+2. Create a mutable agent state ref that the agent updates and checkpoint reads:
    ```typescript
-   const checkpointStore = createCheckpointStore(persistence.query, persistence.withTransaction);
-   ```
-
-2. Build `CheckpointDependencies`:
-   ```typescript
-   const checkpointDeps: CheckpointDependencies = {
-     checkpointStore,
-     memory: memoryManager,
-     predictionStore: predictionStore,
-     interestRegistry: interestRegistry,
-     recallContextState: recallContextState,
-     owner: config.agent.owner ?? 'default',
-     conversationId: agent.conversationId,
-     retentionCount: config.agent.checkpoint_retention,
+   const agentStateRef: { current: CheckpointAgentState } = {
+     current: {
+       turnNumber: 0, toolRound: 0,
+       messageIds: [],
+       compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+     },
    };
    ```
 
-   Note: `checkpointDeps` depends on `agent.conversationId`, which is only available after `createAgent()`. Wire this after agent creation.
-
-3. Create and register the checkpoint tool:
+3. Build checkpoint deps and the bound `performCheckpoint` function:
    ```typescript
-   const checkpointTool = createCheckpointTool(checkpointDeps, getAgentState);
+   const checkpointDeps: CheckpointDependencies = {
+     checkpointStore,
+     memory,
+     predictionStore,
+     interestRegistry,
+     recallContextState,
+     owner: AGENT_OWNER,
+     conversationId: agent.conversationId,
+     retentionCount: config.agent.checkpoint_retention ?? 5,
+   };
+   
+   const checkpointFn = async (trigger: CheckpointTrigger) => {
+     return performCheckpoint(trigger, agentStateRef.current, checkpointDeps);
+   };
+   ```
+
+4. Register checkpoint tool:
+   ```typescript
+   const checkpointTool = createCheckpointTool(checkpointDeps, () => agentStateRef.current);
    registry.register(checkpointTool);
    ```
 
-4. Pass `checkpointDeps` to `createAgent` via the new `AgentDependencies.checkpointDeps` field.
+5. Pass `checkpointFn` to agent via `AgentDependencies`.
 
-5. Wire the shutdown checkpoint function as described in Task 6.
+6. Wire shutdown checkpoint: Pass `async () => { await checkpointFn('shutdown'); }` to the shutdown handler.
 
-The `getAgentState` callback is a function that reads the agent's current turn number, tool round, message IDs, and compaction metadata. This requires exposing these values from the agent — either via the existing `Agent` interface or via a shared mutable ref.
-
-Simplest approach: Create a `CheckpointAgentState` ref object that the agent updates each turn, and the checkpoint system reads:
+**Agent state ref update mechanism:** The `checkpointFn` closure captures `agentStateRef`, but the agent must update `agentStateRef.current` so checkpoint reads reflect current state. The chosen approach: pass `agentStateRef` into `AgentDependencies` as a new optional field `checkpointStateRef?: { current: CheckpointAgentState }`. In `agent.ts`, update it at the end of each `processMessage()` call (after persisting the assistant response, before returning):
 
 ```typescript
-const agentStateRef: { current: CheckpointAgentState } = {
-  current: { turnNumber: 0, toolRound: 0, messageIds: [], compactionMetadata: { lastCompactedIndex: -1, summaryCount: 0 } },
-};
+if (deps.checkpointStateRef) {
+  const messageIds = history.map(m => m.id);
+  deps.checkpointStateRef.current = {
+    turnNumber,
+    toolRound: 0,
+    messageIds,
+    compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+  };
+}
 ```
 
-The agent updates `agentStateRef.current` at the end of each turn. The `getAgentState` callback returns `agentStateRef.current`.
+Note: `compactionMeta` values (-1 and 0) are placeholders — the compactor tracks its own state internally and doesn't expose a "last compacted index". For restoration, the meaningful values are `turnNumber` and `messageIds`. The compaction system re-evaluates from scratch on each turn based on the current history length vs. budget, so the exact compaction index is not critical for checkpoint restoration. If more precise compaction state is needed later, it can be added by extending the `Compactor` interface.
+
+Add `checkpointStateRef?: { current: CheckpointAgentState }` to `AgentDependencies` in `src/agent/types.ts` alongside the `checkpointFn` field added in Task 6.
 
 **Verification:**
 Run: `bun run build`
 Expected: Type-check passes. Application starts without errors.
 
-**Commit:** `feat(checkpoint): wire checkpoint creation into composition root`
+**Commit:** `feat(checkpoint): wire checkpoint triggers into composition root`
+
 <!-- END_TASK_7 -->
+
+<!-- START_TASK_8 -->
+### Task 8: Integration tests for checkpoint triggers
+
+**Verifies:** session-checkpointing.AC1.1, session-checkpointing.AC1.2, session-checkpointing.AC1.3, session-checkpointing.AC1.4, session-checkpointing.AC1.5, session-checkpointing.AC1.6
+
+**Files:**
+- Create: `src/agent/checkpoint-triggers.test.ts`
+
+**Testing:**
+
+Add tests that verify the trigger integration using the same agent mock patterns from `src/agent/agent.test.ts`:
+
+- **AC1.1 (explicit tool):** Create a mock agent with checkpoint deps. Simulate a `checkpoint` tool call. Assert `checkpointStore.save` was called with `trigger: 'explicit'`.
+
+- **AC1.2 (pre-compaction):** Create agent with compactor and checkpoint deps. Trigger compaction (send a message that exceeds context budget). Assert a checkpoint with `trigger: 'pre_compaction'` was saved before compression ran.
+
+- **AC1.4 (turn-interval):** Create agent with `checkpoint_interval: 2`. Process 4 messages. Assert checkpoints with `trigger: 'interval'` were saved after turns 2 and 4.
+
+- **AC1.5 (interval disabled):** Create agent with `checkpoint_interval: 0`. Process 4 messages. Assert no interval checkpoints were created.
+
+- **AC1.3 (shutdown):** Call the shutdown checkpoint callback directly (signal testing is impractical in unit tests). Assert a checkpoint with `trigger: 'shutdown'` was saved via `checkpointStore.save`.
+
+- **AC1.6 (failure tolerance):** Create agent with checkpoint deps where `checkpointStore.save` throws. Process a message. Assert agent completes normally (no exception), warning was logged.
+
+**Verification:**
+Run: `bun test src/agent/checkpoint-triggers.test.ts`
+Expected: All tests pass
+
+**Commit:** `test(agent): add integration tests for checkpoint triggers`
+
+<!-- END_TASK_8 -->

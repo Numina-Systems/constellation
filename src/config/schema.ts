@@ -14,6 +14,10 @@ const AgentConfigSchema = z.object({
   recall_enabled: z.boolean().default(false),
   recall_token_budget: z.number().int().positive().default(4096),
   cache_diagnostics: z.boolean().default(true),
+  checkpoint_interval: z.number().int().nonnegative().default(0),
+  checkpoint_retention: z.number().int().positive().default(5),
+  auto_resume: z.boolean().default(false),
+  resume_checkpoint: z.string().optional(),
 });
 
 const OpenRouterConfigSchema = z.object({

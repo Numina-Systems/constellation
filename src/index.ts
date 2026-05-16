@@ -80,7 +80,7 @@ import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
-import type { ContextProvider, ClassifiedProvider } from '@/agent/types';
+import type { ContextProvider, ClassifiedProvider, CheckpointAgentState, CheckpointTrigger, SessionCheckpoint } from '@/agent';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
@@ -89,6 +89,10 @@ import { createRecallContextProvider } from '@/recall/index.js';
 import { createShellSession, ShellCreationError } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
 import type { ShellSession } from '@/shell/types';
+import { createCheckpointStore } from '@/persistence/checkpoint-store.ts';
+import { performCheckpoint, type CheckpointDependencies } from '@/agent/checkpoint-create.ts';
+import { restoreFromCheckpoint, type RestorationDependencies, type RestorationResult } from '@/agent/checkpoint-restore.ts';
+import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
 
 const AGENT_OWNER = 'spirit';
 
@@ -247,12 +251,20 @@ export function createShutdownHandler(
   activityManager?: ActivityManager | null,
   mcpClients?: ReadonlyArray<McpClient>,
   shellSession?: ShellSession | null,
+  checkpointFn?: () => Promise<string | null>,
 ): () => Promise<void> {
   let shuttingDown = false;
   return async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\nShutting down...');
+    if (checkpointFn) {
+      try {
+        await checkpointFn();
+      } catch (err) {
+        console.warn('[checkpoint] shutdown checkpoint failed:', (err as Error).message);
+      }
+    }
     if (scheduler) {
       scheduler.stop();
       console.log('scheduler stopped');
@@ -366,6 +378,21 @@ export function createInteractionLoop(deps: InteractionLoopDeps): (input: string
 }
 
 /**
+ * Parse --resume CLI flag from process.argv.
+ * Returns the checkpoint ID if provided, undefined otherwise.
+ * Exits with error code 1 if flag is present but missing its argument.
+ */
+function parseResumeFlag(): string | undefined {
+  const idx = process.argv.indexOf('--resume');
+  if (idx === -1) return undefined;
+  if (idx + 1 >= process.argv.length || process.argv[idx + 1]!.startsWith('--')) {
+    console.error('error: --resume requires a checkpoint ID');
+    process.exit(1);
+  }
+  return process.argv[idx + 1];
+}
+
+/**
  * Seed core memory blocks on first run.
  * If the database is empty (no core blocks exist), load persona from persona.md
  * and create three core memory blocks: system, persona, and familiar.
@@ -472,6 +499,9 @@ Use execute_code for anything beyond basic memory operations — API calls, file
 async function main(): Promise<void> {
   console.log('constellation daemon starting...\n');
 
+  // Parse CLI resume flag (must be before config loading)
+  const resumeCheckpointId = parseResumeFlag();
+
   // Load configuration
   const config = loadConfig();
 
@@ -565,8 +595,34 @@ async function main(): Promise<void> {
 
   const registry = createToolRegistry();
 
+  // Step 1a: Create checkpoint store and load checkpoint for resume (AC6)
+  const checkpointStore = createCheckpointStore(persistence);
+
+  const resumeId = resumeCheckpointId ?? config.agent.resume_checkpoint;
+
+  let loadedCheckpoint: {checkpoint: SessionCheckpoint; conversationId: string} | null = null;
+
+  if (resumeId) {
+    const checkpoint = await checkpointStore.load(resumeId);
+    if (!checkpoint) {
+      console.error(`error: checkpoint ${resumeId} not found`);
+      process.exit(1);
+    }
+    console.log(`resuming from checkpoint ${resumeId} (conversation: ${checkpoint.conversationId})`);
+    loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId };
+  } else if (config.agent.auto_resume) {
+    const checkpoint = await checkpointStore.loadLatest(AGENT_OWNER);
+    if (checkpoint) {
+      console.log(`auto-resuming from checkpoint ${checkpoint.id} (conversation: ${checkpoint.conversationId})`);
+      loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId };
+    } else {
+      console.log('auto-resume enabled but no checkpoint found — starting fresh');
+    }
+  }
+
   // Generate conversation ID for main agent upfront so it can be shared with prediction tools
-  const mainConversationId = crypto.randomUUID();
+  // Use resumed conversation ID if available, otherwise generate a new one
+  const mainConversationId = loadedCheckpoint?.conversationId ?? crypto.randomUUID();
 
   const memoryTools = createMemoryTools(memory);
   for (const tool of memoryTools) {
@@ -991,6 +1047,66 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
+  // Step 1b: Set up state ref and restoration (AC6)
+  const agentStateRef: { current: CheckpointAgentState } = {
+    current: {
+      turnNumber: 0,
+      toolRound: 0,
+      messageIds: [],
+      compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+    },
+  };
+
+  // Restore from checkpoint if one was loaded (AC6)
+  let restoredState: RestorationResult | null = null;
+  if (loadedCheckpoint && loadedCheckpoint.checkpoint) {
+    const restorationDeps: RestorationDependencies = {
+      persistence,
+      memory,
+      predictionStore,
+      interestRegistry,
+      recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+      owner: AGENT_OWNER,
+    };
+    try {
+      restoredState = await restoreFromCheckpoint(loadedCheckpoint.checkpoint, restorationDeps);
+      // Initialize agent state from restoration (AC6.1-6.3)
+      agentStateRef.current = {
+        turnNumber: restoredState.turnNumber,
+        toolRound: restoredState.toolRound,
+        messageIds: [],
+        compactionMeta: restoredState.compactionMeta,
+      };
+      console.log(
+        `restored: ${restoredState.messageCount} messages, turn ${restoredState.turnNumber}`,
+      );
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`failed to restore checkpoint: ${errorMsg}`);
+      process.exit(1);
+    }
+  }
+
+  // Build checkpoint dependencies and bound checkpoint function
+  const checkpointDeps: CheckpointDependencies = {
+    checkpointStore,
+    memory,
+    predictionStore,
+    interestRegistry,
+    recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+    owner: AGENT_OWNER,
+    conversationId: mainConversationId,
+    retentionCount: config.agent.checkpoint_retention ?? 5,
+  };
+
+  const checkpointFn = async (trigger: CheckpointTrigger) => {
+    return performCheckpoint(trigger, agentStateRef.current, checkpointDeps);
+  };
+
+  // Register checkpoint tool
+  const checkpointTool = createCheckpointTool(checkpointDeps, () => agentStateRef.current);
+  registry.register(checkpointTool);
+
   // Step 2: Create agent with source instructions and classified providers
   const agent = createAgent({
     model,
@@ -1009,6 +1125,10 @@ async function main(): Promise<void> {
       recall_enabled: config.agent.recall_enabled,
       recall_token_budget: config.agent.recall_token_budget,
       cache_diagnostics: config.agent.cache_diagnostics,
+      checkpoint_interval: config.agent.checkpoint_interval,
+      checkpoint_retention: config.agent.checkpoint_retention,
+      auto_resume: config.agent.auto_resume,
+      resume_checkpoint: config.agent.resume_checkpoint,
     },
     getExecutionContext,
     compactor,
@@ -1029,6 +1149,8 @@ async function main(): Promise<void> {
     searchStore: searchStore,
     summarizationModel: summarizationModel,
     summarizationModelName: config.summarization?.name,
+    checkpointFn,
+    checkpointStateRef: agentStateRef,
   }, mainConversationId);
 
   // Create subconscious agent if enabled
@@ -1495,7 +1617,18 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager, mcpClients, shellSession);
+  const shutdownHandler = createShutdownHandler(
+    rl,
+    persistence,
+    dataSourceRegistry,
+    schedulerWrapper,
+    activityManager,
+    mcpClients,
+    shellSession,
+    async () => {
+      return checkpointFn('shutdown');
+    },
+  );
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

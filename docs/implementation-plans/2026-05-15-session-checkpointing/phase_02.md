@@ -1,14 +1,14 @@
-# Session Checkpointing Implementation Plan
+# Session Checkpointing Implementation Plan — Phase 2
 
 **Goal:** Create the `session_checkpoints` table and implement the PostgreSQL adapter for checkpoint CRUD and pruning.
 
-**Architecture:** Append-only migration for the table schema, plus an Imperative Shell adapter implementing `CheckpointStore` via the existing `PersistenceProvider` query interface. Save and prune run in a single transaction for atomicity.
+**Architecture:** Append-only migration for the table schema, plus an Imperative Shell adapter implementing `CheckpointStore` via the existing `PersistenceProvider` query interface. Save and prune run atomically. Follows the `createPredictionStore(persistence)` factory pattern from `src/reflexion/prediction-store.ts`.
 
-**Tech Stack:** Bun, TypeScript 5.7+, PostgreSQL, Zod
+**Tech Stack:** Bun (TypeScript), PostgreSQL
 
-**Scope:** Phase 2 of 4
+**Scope:** 4 phases from original design (phase 2 of 4)
 
-**Codebase verified:** 2026-05-15
+**Codebase verified:** 2026-05-16
 
 ---
 
@@ -31,23 +31,27 @@ This phase implements and tests:
 <!-- START_TASK_1 -->
 ### Task 1: Database migration
 
-**Verifies:** session-checkpointing.AC5.1, AC5.2
+**Verifies:** session-checkpointing.AC5.1, session-checkpointing.AC5.2
 
 **Files:**
-- Create: `src/persistence/migrations/010_create_session_checkpoints.sql`
+- Create: `src/persistence/migrations/010_session_checkpoints.sql`
 
 **Implementation:**
 
-Create `src/persistence/migrations/010_create_session_checkpoints.sql`:
+Create `src/persistence/migrations/010_session_checkpoints.sql`. Follow the existing migration conventions from `009_subconscious_schema.sql`:
+- `CREATE TABLE IF NOT EXISTS` for idempotency
+- `TEXT PRIMARY KEY` for IDs (application-generated UUIDs stored as text, matching all other tables in the project)
+- `TIMESTAMPTZ NOT NULL DEFAULT NOW()` for timestamps
+- `CREATE INDEX IF NOT EXISTS` for query optimization
 
 ```sql
 CREATE TABLE IF NOT EXISTS session_checkpoints (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     owner TEXT NOT NULL,
-    trigger TEXT NOT NULL,
+    trigger TEXT NOT NULL CHECK (trigger IN ('explicit', 'pre_compaction', 'shutdown', 'interval')),
     checkpoint_data JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_checkpoints_conversation_id
@@ -60,27 +64,24 @@ CREATE INDEX IF NOT EXISTS idx_session_checkpoints_owner_created_at
     ON session_checkpoints (owner, created_at DESC);
 ```
 
-The composite index on `(owner, created_at DESC)` supports the `loadLatest` query efficiently. The individual `conversation_id` index supports pruning queries.
+The CHECK constraint on `trigger` matches the `CheckpointTrigger` type from Phase 1. The composite index on `(owner, created_at DESC)` supports `loadLatest` efficiently. The `conversation_id` index supports `prune` queries.
 
-Follow existing migration conventions:
-- File naming: `NNN_description.sql` (this is 010)
-- CREATE IF NOT EXISTS for idempotency
-- No modification of existing tables
-
-**Note:** Verify migration number at implementation time against the latest `src/persistence/migrations/` directory state. If `010` is already taken, use the next available number.
+**Note:** Verify migration number at implementation time against the latest `src/persistence/migrations/` directory. If `010` is taken, use the next available number.
 
 **Verification:**
-Run: `bun run migrate`
-Expected: Migration 010 applies cleanly. Running again is a no-op.
+Run: `bun run build`
+Expected: Type-check passes (migrations are just SQL, build verifies no TypeScript regressions)
 
-**Commit:** `feat(checkpoint): add session_checkpoints table migration`
+**Commit:** `feat(persistence): add session_checkpoints table migration`
+
 <!-- END_TASK_1 -->
 
 <!-- START_SUBCOMPONENT_A (tasks 2-3) -->
+
 <!-- START_TASK_2 -->
 ### Task 2: CheckpointStore implementation
 
-**Verifies:** session-checkpointing.AC4.1, AC4.3, AC5.2
+**Verifies:** session-checkpointing.AC4.1, session-checkpointing.AC4.3, session-checkpointing.AC5.2
 
 **Files:**
 - Create: `src/persistence/checkpoint-store.ts`
@@ -89,10 +90,14 @@ Expected: Migration 010 applies cleanly. Running again is a no-op.
 
 Create `src/persistence/checkpoint-store.ts` with pattern annotation `// pattern: Imperative Shell`.
 
-Import `SessionCheckpoint` and `deserializeCheckpoint` from `@/agent/checkpoint-types.js` and `@/agent/checkpoint-serializer.js` respectively. Import `QueryFunction` from `./types.js`.
+Import types from the persistence module and the checkpoint module:
+```typescript
+import type { PersistenceProvider } from './types.ts';
+import type { SessionCheckpoint } from '@/agent/checkpoint-types.ts';
+import { deserializeCheckpoint } from '@/agent/checkpoint-serializer.ts';
+```
 
 Define the `CheckpointStore` type:
-
 ```typescript
 type CheckpointStore = {
   save(checkpoint: SessionCheckpoint): Promise<void>;
@@ -102,7 +107,7 @@ type CheckpointStore = {
 };
 ```
 
-Implement `createCheckpointStore(query: QueryFunction, withTransaction: <T>(fn: (q: QueryFunction) => Promise<T>) => Promise<T>): CheckpointStore`:
+Implement `createCheckpointStore(persistence: PersistenceProvider): CheckpointStore` following the factory pattern from `src/reflexion/prediction-store.ts:62-180`:
 
 1. **`save(checkpoint)`** — INSERT into `session_checkpoints`:
    ```sql
@@ -111,13 +116,13 @@ Implement `createCheckpointStore(query: QueryFunction, withTransaction: <T>(fn: 
    ```
    Parameters: `[checkpoint.id, checkpoint.conversationId, checkpoint.owner, checkpoint.trigger, JSON.stringify(checkpoint), checkpoint.createdAt]`
 
-   Note: The entire `SessionCheckpoint` is stored in `checkpoint_data` as JSONB. The top-level columns (`conversation_id`, `owner`, `trigger`, `created_at`) are denormalized for querying and indexing.
+   The entire `SessionCheckpoint` is stored as JSONB in `checkpoint_data`. The top-level columns are denormalized for querying and indexing.
 
 2. **`load(id)`** — SELECT by primary key:
    ```sql
    SELECT checkpoint_data FROM session_checkpoints WHERE id = $1
    ```
-   If no row, return `null`. Otherwise, pass `rows[0].checkpoint_data` through `deserializeCheckpoint()` and return the validated object.
+   Define a row type: `type CheckpointRow = { checkpoint_data: unknown }`. If no rows returned, return `null`. Otherwise, pass `rows[0]!.checkpoint_data` through `deserializeCheckpoint()` and return.
 
 3. **`loadLatest(owner)`** — SELECT most recent by owner:
    ```sql
@@ -128,20 +133,7 @@ Implement `createCheckpointStore(query: QueryFunction, withTransaction: <T>(fn: 
    ```
    Same null/deserialize logic as `load`.
 
-4. **`prune(conversationId, retainCount)`** — DELETE oldest beyond retention, return count deleted:
-   ```sql
-   DELETE FROM session_checkpoints
-   WHERE conversation_id = $1
-     AND id NOT IN (
-       SELECT id FROM session_checkpoints
-       WHERE conversation_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2
-     )
-   ```
-   Return `Number(result.length)` (the number of deleted rows, derived from `query` return type `Array<T>` — use a `RETURNING id` clause to get the count).
-
-   Revised query with RETURNING:
+4. **`prune(conversationId, retainCount)`** — DELETE oldest beyond retention, return deleted count:
    ```sql
    DELETE FROM session_checkpoints
    WHERE conversation_id = $1
@@ -154,84 +146,75 @@ Implement `createCheckpointStore(query: QueryFunction, withTransaction: <T>(fn: 
    RETURNING id
    ```
    Parameters: `[conversationId, conversationId, retainCount]`
-   Return `rows.length`.
+   Return `rows.length` (number of deleted rows).
 
-Export `CheckpointStore` type and `createCheckpointStore` factory.
+Export `CheckpointStore` type and `createCheckpointStore` factory as named exports.
 
 **Verification:**
 Run: `bun run build`
 Expected: Type-check passes
 
-**Commit:** `feat(checkpoint): implement CheckpointStore PostgreSQL adapter`
+**Commit:** `feat(persistence): implement CheckpointStore PostgreSQL adapter`
+
 <!-- END_TASK_2 -->
 
 <!-- START_TASK_3 -->
 ### Task 3: CheckpointStore integration tests
 
-**Verifies:** session-checkpointing.AC4.1, AC4.2, AC4.3, AC4.4, AC5.2
+**Verifies:** session-checkpointing.AC4.1, session-checkpointing.AC4.2, session-checkpointing.AC4.3, session-checkpointing.AC4.4, session-checkpointing.AC5.2
 
 **Files:**
-- Test: `src/persistence/checkpoint-store.test.ts` (integration)
+- Create: `src/persistence/checkpoint-store.test.ts`
 
-**Implementation:**
+**Testing:**
 
-Create `src/persistence/checkpoint-store.test.ts` with integration tests against a real PostgreSQL database. Follow the same test setup pattern as existing persistence tests (connect, run migrations, clean up).
+Create integration tests against a real PostgreSQL database. Follow the test setup pattern from `src/skill/postgres-store.test.ts:25-44`:
 
-Setup: Use the test database (same approach as other integration tests in `src/persistence/`). Before each test, DELETE FROM `session_checkpoints` to ensure clean state. Use `serializeCheckpoint()` from Phase 1 to create test checkpoint objects.
+```typescript
+import { createPostgresProvider } from '../persistence/postgres.ts';
 
-Test cases:
+const DB_CONNECTION_STRING = 'postgresql://constellation:constellation@localhost:5432/constellation';
 
-1. **Save and load round-trip:** Create a checkpoint via `serializeCheckpoint()`, save it, load it by ID. Assert all fields match the original.
+beforeAll(async () => {
+  persistence = createPostgresProvider({ url: DB_CONNECTION_STRING });
+  await persistence.connect();
+  await persistence.runMigrations();
+  store = createCheckpointStore(persistence);
+});
 
-2. **Load nonexistent returns null:** Call `load()` with a random UUID. Assert result is `null`.
+afterEach(async () => {
+  await persistence.query('DELETE FROM session_checkpoints');
+});
 
-3. **loadLatest returns most recent:** Save 3 checkpoints for the same owner (with staggered `createdAt` values — set manually or rely on insertion order with small delays). Call `loadLatest(owner)`. Assert the returned checkpoint is the one with the latest `createdAt`.
+afterAll(async () => {
+  await persistence.disconnect();
+});
+```
 
-4. **loadLatest with no checkpoints returns null:** Call `loadLatest()` for a nonexistent owner. Assert result is `null`.
+Use `serializeCheckpoint()` from Phase 1 to create test checkpoint objects. Create a helper to build test checkpoints with controlled timestamps and IDs.
 
-5. **Prune deletes oldest beyond retention (AC4.1, AC4.3):** Save 5 checkpoints for the same conversation. Call `prune(conversationId, 3)`. Assert return value is `2` (deleted 2). Call `load()` for each of the 5 IDs. Assert the 2 oldest return `null` and the 3 newest return valid checkpoints.
+Tests must verify:
 
-6. **Prune with fewer than retention is no-op (AC4.4):** Save 2 checkpoints. Call `prune(conversationId, 5)`. Assert return value is `0`. Both checkpoints still loadable.
+- **session-checkpointing.AC5.2 (save and load round-trip):** Create a checkpoint via `serializeCheckpoint()`, save it, load it by ID. Assert all fields match the original (verify through `deserializeCheckpoint` which validates via Zod).
 
-7. **Prune scoped to conversation:** Save 3 checkpoints for conversation A, 3 for conversation B. Prune conversation A with retention 1. Assert only conversation A's oldest 2 are deleted; all of conversation B's checkpoints remain.
+- **Load nonexistent returns null:** Call `load()` with a random UUID string. Assert result is `null`.
 
-For creating test checkpoints with controlled timestamps, build a helper that calls `serializeCheckpoint()` and then overwrites `createdAt` with a specific ISO string before saving. This requires either mutating the object (since it comes back from serialization as a plain object) or creating the checkpoint object directly.
+- **loadLatest returns most recent:** Save 3 checkpoints for the same owner with staggered `createdAt` values (e.g., subtract seconds from `new Date().toISOString()`). Call `loadLatest(owner)`. Assert the returned checkpoint's `id` matches the newest one.
+
+- **loadLatest with no checkpoints returns null:** Call `loadLatest()` for a nonexistent owner. Assert result is `null`.
+
+- **session-checkpointing.AC4.1 + AC4.3 (prune deletes oldest beyond retention):** Save 5 checkpoints for the same conversation with sequential timestamps. Call `prune(conversationId, 3)`. Assert return value is `2`. Call `load()` for each ID. Assert the 2 oldest return `null` and the 3 newest return valid checkpoints.
+
+- **session-checkpointing.AC4.4 (prune with fewer than retention is no-op):** Save 2 checkpoints. Call `prune(conversationId, 5)`. Assert return value is `0`. Both checkpoints still loadable.
+
+- **Prune scoped to conversation:** Save 3 checkpoints for conversation A, 3 for conversation B. Prune conversation A with retention 1. Assert only conversation A's oldest 2 are deleted; all of conversation B's checkpoints remain.
 
 **Verification:**
 Run: `bun test src/persistence/checkpoint-store.test.ts`
-Expected: All tests pass (requires running PostgreSQL with migrations applied)
+Expected: All tests pass (requires running PostgreSQL — `docker compose up -d`)
 
-**Commit:** `test(checkpoint): add CheckpointStore integration tests`
+**Commit:** `test(persistence): add CheckpointStore integration tests`
+
 <!-- END_TASK_3 -->
+
 <!-- END_SUBCOMPONENT_A -->
-
-<!-- START_TASK_4 -->
-### Task 4: Barrel export
-
-**Verifies:** None (infrastructure)
-
-**Files:**
-- Create: `src/persistence/index.ts` (barrel file does not exist yet)
-
-**Implementation:**
-
-Create `src/persistence/index.ts` with re-exports of the existing persistence public API plus the new checkpoint store:
-
-```typescript
-// Re-export existing persistence public API
-export type { PersistenceProvider, QueryFunction } from './types.js';
-export { createPersistenceProvider } from './provider.js';
-
-// Checkpoint store
-export type { CheckpointStore } from './checkpoint-store.js';
-export { createCheckpointStore } from './checkpoint-store.js';
-```
-
-Note: Verify the exact existing export names by checking `src/persistence/` source files at implementation time. The re-exports above are representative — include whatever the rest of the codebase currently imports from individual persistence files.
-
-**Verification:**
-Run: `bun run build`
-Expected: Type-check passes
-
-**Commit:** `feat(checkpoint): export CheckpointStore from persistence barrel`
-<!-- END_TASK_4 -->

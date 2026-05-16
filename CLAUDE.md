@@ -26,18 +26,18 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 ## Project Structure
 - `src/errors/` -- Structured error hierarchy (ConstellationError base, subsystem errors, trace integration, utilities)
 - `src/config/` -- TOML config loading, Zod schemas
-- `src/persistence/` -- PostgreSQL adapter, migrations
+- `src/persistence/` -- PostgreSQL adapter, migrations, checkpoint store
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama, OpenRouter)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
 - `src/search/` -- Hybrid search (semantic + keyword + RRF) across memory and conversations
 - `src/shell/` -- Persistent PTY shell session (stateful across commands), ANSI stripping, output truncation
-- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search, subconscious, shell)
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search, subconscious, shell, checkpoint)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
 - `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
-- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording
+- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording, session checkpointing
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/recall/` -- Reflexive recall pipeline (query decomposition, multi-domain retrieval, context injection)

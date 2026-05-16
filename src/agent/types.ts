@@ -17,6 +17,7 @@ import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { RecallContextState } from '../recall/index.js';
 import type { SearchStore } from '../search/store.js';
+import type { CheckpointTrigger, CheckpointAgentState } from './checkpoint-types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -29,6 +30,10 @@ export type AgentConfig = {
   recall_enabled?: boolean;
   recall_token_budget?: number;
   cache_diagnostics?: boolean;
+  checkpoint_interval?: number;
+  checkpoint_retention?: number;
+  auto_resume?: boolean;
+  resume_checkpoint?: string;
 };
 
 export type ConversationMessage = {
@@ -79,6 +84,8 @@ export type AgentDependencies = {
   searchStore?: SearchStore;
   summarizationModel?: ModelProvider;
   summarizationModelName?: string;
+  checkpointFn?: (trigger: CheckpointTrigger) => Promise<string | null>;
+  checkpointStateRef?: { current: CheckpointAgentState };
 };
 
 export type Agent = {

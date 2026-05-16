@@ -1,46 +1,74 @@
-# Session Checkpointing Test Requirements
+# Session Checkpointing — Test Requirements
 
-Generated from Acceptance Criteria in the design plan.
+## Automated Test Coverage
 
-## Automated Tests
+### session-checkpointing.AC1: Checkpoint Creation
 
-| AC ID | Criterion | Test Type | Expected Test File | Phase |
-|-------|-----------|-----------|-------------------|-------|
-| session-checkpointing.AC1.2 | Pre-compaction checkpoint is created automatically before compaction runs | integration | src/agent/checkpoint-restore.test.ts | 3 |
-| session-checkpointing.AC1.4 | Turn-interval checkpoint fires every N turns when `checkpoint_interval` is configured | unit | src/agent/checkpoint-restore.test.ts | 3 |
-| session-checkpointing.AC1.5 | Turn-interval of 0 disables interval-based checkpointing | unit | src/agent/checkpoint-restore.test.ts | 3 |
-| session-checkpointing.AC1.6 | Checkpoint creation failure (DB error) does not block the agent loop — warning is logged | integration | src/agent/checkpoint-restore.test.ts | 3 |
-| session-checkpointing.AC2.1 | Checkpoint includes full conversation message history (message IDs, not content) | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.2 | Checkpoint includes all working memory block labels and content | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.3 | Checkpoint includes pending prediction journal entries | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.4 | Checkpoint includes active interest state (labels, decay values) | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.5 | Checkpoint includes compaction metadata (last compacted index, summary count) | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.6 | Checkpoint includes recall cache (last decomposition result) | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.7 | Checkpoint includes current turn number and tool round count | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC2.8 | Checkpoint with empty working memory / no predictions / no interests serializes cleanly (empty arrays, not null) | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC3.1 | Restored agent sees the same conversation history as when checkpointed | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC3.2 | Restored agent's working memory matches the checkpoint state | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC3.3 | Restored agent's pending predictions are present and reviewable | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC3.4 | Restored agent's active interests resume with checkpointed decay values | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC3.5 | Compaction metadata is restored so next compaction check uses correct baseline | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC3.6 | Restoring a checkpoint for a deleted conversation fails with a clear error | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC3.7 | Restoring the same checkpoint twice produces identical state (idempotent) | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC4.1 | After creating a new checkpoint, old checkpoints beyond retention limit are deleted | integration | src/persistence/checkpoint-store.test.ts | 2 |
-| session-checkpointing.AC4.2 | Retention limit is configurable via `checkpoint_retention` (default 5) | integration | src/persistence/checkpoint-store.test.ts | 2 |
-| session-checkpointing.AC4.3 | Pruning deletes by `created_at` ascending (oldest first) | integration | src/persistence/checkpoint-store.test.ts | 2 |
-| session-checkpointing.AC4.4 | Conversations with fewer checkpoints than retention limit are unaffected by pruning | integration | src/persistence/checkpoint-store.test.ts | 2 |
-| session-checkpointing.AC5.1 | New `session_checkpoints` table is created via append-only migration | integration | src/persistence/checkpoint-store.test.ts | 2 |
-| session-checkpointing.AC5.2 | Table schema matches spec (id UUID PK, conversation_id, owner, trigger, checkpoint_data JSONB, created_at) | integration | src/persistence/checkpoint-store.test.ts | 2 |
-| session-checkpointing.AC5.3 | `checkpoint_data` JSONB is validated with Zod schema on read | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC5.4 | Corrupted `checkpoint_data` JSONB fails validation with clear error rather than crashing | unit | src/agent/checkpoint-serializer.test.ts | 1 |
-| session-checkpointing.AC6.3 | If no checkpoint ID is provided but `auto_resume` is true, most recent checkpoint for owner is loaded | integration | src/agent/checkpoint-restore.test.ts | 4 |
-| session-checkpointing.AC6.4 | Invalid or missing checkpoint ID produces a clear startup error and daemon does not start | integration | src/agent/checkpoint-restore.test.ts | 4 |
+| Criterion | Type | Test File | Description |
+|-----------|------|-----------|-------------|
+| AC1.1 | unit | `src/agent/checkpoint-triggers.test.ts` | Simulate `checkpoint` tool call via mock agent; assert `checkpointStore.save` called with `trigger: 'explicit'` and response includes the checkpoint ID |
+| AC1.2 | unit | `src/agent/checkpoint-triggers.test.ts` | Create agent with compactor and checkpoint deps; trigger compaction by exceeding context budget; assert checkpoint saved with `trigger: 'pre_compaction'` before `compress()` runs |
+| AC1.3 | unit | `src/agent/checkpoint-triggers.test.ts` | Call the shutdown checkpoint callback directly; assert checkpoint saved with `trigger: 'shutdown'` via `checkpointStore.save` |
+| AC1.4 | unit | `src/agent/checkpoint-triggers.test.ts` | Create agent with `checkpoint_interval: 2`; process 4 messages; assert checkpoints with `trigger: 'interval'` saved after turns 2 and 4 |
+| AC1.5 | unit | `src/agent/checkpoint-triggers.test.ts` | Create agent with `checkpoint_interval: 0`; process 4 messages; assert no interval-triggered checkpoints created |
+| AC1.6 | unit | `src/agent/checkpoint-create.test.ts` | Stub `checkpointStore.save` to throw; call `performCheckpoint()`; assert returns `null` without propagating exception |
+
+### session-checkpointing.AC2: Checkpoint Content
+
+| Criterion | Type | Test File | Description |
+|-----------|------|-----------|-------------|
+| AC2.1 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with `messageIds: ['msg-1', 'msg-2', 'msg-3']`; deserialize; assert `messageIds` matches exactly |
+| AC2.2 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with working memory blocks `[{label: 'goals', content: 'Be helpful'}]`; deserialize; assert `workingMemory` matches |
+| AC2.3 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with pending predictions including `predictionText`, `domain`, `confidence`, `createdAt`; deserialize; assert `pendingPredictions` matches |
+| AC2.4 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with active interests including `name`, `engagementScore`, `status`, `lastEngagedAt`; deserialize; assert `activeInterests` matches |
+| AC2.5 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with `compactionMeta: { lastCompactedIndex: 42, summaryCount: 3 }`; deserialize; assert `compactionMeta` matches |
+| AC2.6 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with populated `recallCache` (decomposition + fragmentCount) and with `recallCache: null`; deserialize both; assert values match |
+| AC2.7 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with `turnNumber: 15`, `toolRound: 3`; deserialize; assert both fields match |
+| AC2.8 | unit | `src/agent/checkpoint-serializer.test.ts` | Serialize with all arrays empty and `recallCache: null`; deserialize; assert all arrays are `[]` (not null/undefined) and `recallCache` is `null` |
+
+### session-checkpointing.AC3: Restoration Fidelity
+
+| Criterion | Type | Test File | Description |
+|-----------|------|-----------|-------------|
+| AC3.1 | integration | `src/agent/checkpoint-restore.test.ts` | Seed DB with messages; create checkpoint; call `restoreFromCheckpoint()`; verify message ID coverage via verification query against messages table |
+| AC3.2 | integration | `src/agent/checkpoint-restore.test.ts` | Seed DB with working memory; create checkpoint; add new block and modify existing block in DB; restore; assert working memory matches checkpoint state (new block removed, original content restored) |
+| AC3.3 | integration | `src/agent/checkpoint-restore.test.ts` | Create checkpoint with pending prediction; delete prediction from DB; call `restoreFromCheckpoint()`; assert no exception thrown (discrepancy logged, not fatal) |
+| AC3.4 | integration | `src/agent/checkpoint-restore.test.ts` | Seed DB with interests; create checkpoint; change engagement score in DB; restore; assert score reverted to checkpoint value. Also: delete interest from DB, restore, assert no exception |
+| AC3.5 | integration | `src/agent/checkpoint-restore.test.ts` | Create checkpoint with `compactionMeta: { lastCompactedIndex: 42, summaryCount: 3 }`; restore; assert `RestorationResult.compactionMeta` matches |
+| AC3.6 | integration | `src/agent/checkpoint-restore.test.ts` | Create checkpoint referencing a conversation with messages; delete all messages; call `restoreFromCheckpoint()`; assert thrown error contains "no messages" |
+| AC3.7 | integration | `src/agent/checkpoint-restore.test.ts` | Seed DB; create checkpoint; call `restoreFromCheckpoint()` twice; assert working memory, interests, and returned metadata are identical after both calls |
+
+### session-checkpointing.AC4: Pruning
+
+| Criterion | Type | Test File | Description |
+|-----------|------|-----------|-------------|
+| AC4.1 | integration | `src/persistence/checkpoint-store.test.ts` | Save 5 checkpoints for one conversation; call `prune(conversationId, 3)`; assert returns 2 deleted and 3 newest remain loadable |
+| AC4.2 | integration | `src/persistence/checkpoint-store.test.ts` | Verify `retainCount` parameter controls retention (test with values 1, 3, 5); assert correct number of checkpoints retained each time |
+| AC4.3 | integration | `src/persistence/checkpoint-store.test.ts` | Save 5 checkpoints with sequential timestamps; prune to 3; assert the 2 oldest (by `created_at`) are deleted while the 3 newest survive |
+| AC4.4 | integration | `src/persistence/checkpoint-store.test.ts` | Save 2 checkpoints; call `prune(conversationId, 5)`; assert returns 0 deleted and both checkpoints remain loadable |
+
+### session-checkpointing.AC5: Storage and Migration
+
+| Criterion | Type | Test File | Description |
+|-----------|------|-----------|-------------|
+| AC5.1 | integration | `src/persistence/checkpoint-store.test.ts` | Migration runs via `persistence.runMigrations()` in `beforeAll`; table existence verified implicitly by successful INSERT/SELECT in all store tests |
+| AC5.2 | integration | `src/persistence/checkpoint-store.test.ts` | Save a checkpoint and load it; assert all denormalized columns (`id`, `conversation_id`, `owner`, `trigger`, `created_at`) populated correctly alongside `checkpoint_data` JSONB |
+| AC5.3 | unit | `src/agent/checkpoint-serializer.test.ts` | Deserialize valid data through `JSON.parse(JSON.stringify(...))` (simulating JSONB round-trip); assert Zod validation passes and returns typed `SessionCheckpoint` |
+| AC5.4 | unit | `src/agent/checkpoint-serializer.test.ts` | Attempt to deserialize corrupted inputs: missing field, wrong type, unknown version (`version: 99`), null, string, partial object, `workingMemory: null`; assert each throws with descriptive error |
+
+### session-checkpointing.AC6: Resume Startup
+
+| Criterion | Type | Test File | Description |
+|-----------|------|-----------|-------------|
+| AC6.3 | integration | `src/agent/checkpoint-restore.test.ts` | Save multiple checkpoints for the same owner; call `checkpointStore.loadLatest(owner)`; assert most recent checkpoint returned and restoration succeeds |
+| AC6.4 | integration | `src/agent/checkpoint-restore.test.ts` | Call `checkpointStore.load()` with nonexistent UUID; assert returns `null` (composition root translates to `process.exit(1)`) |
 
 ## Human Verification Required
 
-| AC ID | Criterion | Justification | Verification Approach |
-|-------|-----------|---------------|----------------------|
-| session-checkpointing.AC1.1 | Explicit `/checkpoint` command creates a checkpoint and confirms with checkpoint ID | Requires live REPL interaction with tool dispatch | Start the daemon, issue `/checkpoint` in the REPL, verify confirmation message includes a UUID checkpoint ID. Inspect `session_checkpoints` table to confirm the row exists. |
-| session-checkpointing.AC1.3 | Graceful shutdown (SIGTERM/SIGINT) creates a checkpoint before exit | Signal handling and shutdown timing are difficult to test in automated unit tests without race conditions | Start the daemon, send SIGTERM (`kill -TERM <pid>`), then query `session_checkpoints` for a row with `trigger = 'shutdown'` and a `created_at` within the last few seconds. |
-| session-checkpointing.AC6.1 | `--resume <checkpoint_id>` CLI flag loads the specified checkpoint on startup | Requires full daemon startup with CLI argument parsing | Create a checkpoint via the REPL, stop the daemon, restart with `--resume <id>`, verify the agent's working memory and conversation state match the checkpoint. |
-| session-checkpointing.AC6.2 | `resume_checkpoint` config option provides the same functionality via config.toml | Requires full daemon startup with config file parsing | Set `resume_checkpoint = "<id>"` in config.toml, start the daemon, verify restoration occurs. Check logs for restoration confirmation message. |
+| Criterion | Why Manual | Verification Approach |
+|-----------|------------|----------------------|
+| AC1.1 (partial) | The REPL confirmation message format ("Checkpoint created: <uuid>") requires visual inspection of live tool output rendering | Start daemon, issue `/checkpoint` in the REPL, verify output includes a UUID checkpoint ID. Query `session_checkpoints` table to confirm the row exists with `trigger = 'explicit'`. |
+| AC1.3 (partial) | OS signal handling (SIGTERM/SIGINT) interacts with process lifecycle and shutdown timing; automated tests risk race conditions and flakiness | Start daemon, send `SIGTERM` via `kill -TERM <pid>`, query `session_checkpoints` for a row with `trigger = 'shutdown'` and `created_at` within the last few seconds. |
+| AC6.1 | CLI flag parsing (`--resume <id>`) requires spawning the full daemon process with arguments; the composition root startup sequence is not unit-testable in isolation | Create a checkpoint via the REPL, stop the daemon, restart with `bun run start -- --resume <id>`, verify logs show "resuming from checkpoint" and agent state matches the checkpoint. |
+| AC6.2 | Config-driven resume (`resume_checkpoint` in config.toml) requires full daemon startup with config file parsing; same composition root concern as AC6.1 | Set `resume_checkpoint = "<id>"` in `config.toml`, start the daemon, verify restoration occurs via log output and agent state inspection. |
+| AC6.4 (partial) | The `process.exit(1)` behaviour on invalid/missing checkpoint ID is a composition root concern that cannot be tested without spawning a subprocess | Run `bun run start -- --resume nonexistent-uuid`, verify process exits with code 1 and stderr contains "checkpoint ... not found". |

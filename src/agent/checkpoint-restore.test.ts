@@ -496,4 +496,66 @@ describe('restoreFromCheckpoint Integration Tests', () => {
       expect(restorationResult.compactionMeta).toEqual({lastCompactedIndex: 0, summaryCount: 0});
     });
   });
+
+  describe('session-checkpointing.AC6.3: auto-resume round-trip', () => {
+    it('should create checkpoint, load via loadLatest, and restore successfully', async () => {
+      const {createCheckpointStore} = await import('@/persistence/checkpoint-store.ts');
+      const store = createCheckpointStore(persistence);
+
+      const conversationId = 'conv-auto-resume';
+      const owner = 'agent-auto-resume';
+      const checkpointBlocks = [
+        {label: 'findings', content: 'Checkpoint findings'},
+        {label: 'status', content: 'Current status'},
+      ];
+
+      // Create and save checkpoint
+      const checkpoint = createTestCheckpoint(
+        {messageIds: ['msg-1'], workingMemory: checkpointBlocks},
+        {conversationId, owner},
+      );
+
+      await store.save(checkpoint);
+      await createTestMessages(conversationId, ['msg-1']);
+
+      // Load via loadLatest (the auto-resume pattern)
+      const loadedCheckpoint = await store.loadLatest(owner);
+
+      expect(loadedCheckpoint).toBeDefined();
+      expect(loadedCheckpoint?.id).toBe(checkpoint.id);
+      expect(loadedCheckpoint?.owner).toBe(owner);
+
+      // Restore from the loaded checkpoint
+      const restoredBlocks: Array<{label: string; content: string}> = [];
+
+      const mockMemory = {
+        list: async (tier: string) => {
+          if (tier === 'working') return [] as Array<MemoryBlock>;
+          return [];
+        },
+        write: async (label: string, content: string) => {
+          restoredBlocks.push({label, content});
+          return {applied: true, block: {id: crypto.randomUUID(), label, content}};
+        },
+        deleteBlock: async () => {},
+      };
+
+      const deps: RestorationDependencies = {
+        persistence,
+        memory: mockMemory as any,
+        owner,
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const restorationResult = await restoreFromCheckpoint(loadedCheckpoint!, deps);
+
+      // Verify restoration succeeded with expected state
+      expect(restorationResult.conversationId).toBe(conversationId);
+      expect(restorationResult.messageCount).toBe(1);
+      expect(restorationResult.turnNumber).toBe(checkpoint.turnNumber);
+      expect(restoredBlocks).toHaveLength(2);
+      expect(restoredBlocks[0]).toEqual({label: 'findings', content: 'Checkpoint findings'});
+      expect(restoredBlocks[1]).toEqual({label: 'status', content: 'Current status'});
+    });
+  });
 });

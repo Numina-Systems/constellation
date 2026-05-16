@@ -153,6 +153,99 @@ describe('CheckpointStore Integration Tests', () => {
     });
   });
 
+  describe('session-checkpointing.AC4.2: retention parameter controls how many are kept', () => {
+    it('should keep only 1 checkpoint when retainCount=1', async () => {
+      const conversationId = 'conv-retain-one';
+      const now = new Date();
+      const checkpoints = Array.from({length: 3}, (_, i) =>
+        createTestCheckpoint({
+          conversationId,
+          createdAt: new Date(now.getTime() + i * 1000).toISOString(),
+        }),
+      );
+
+      for (const cp of checkpoints) {
+        await store.save(cp);
+      }
+
+      const deletedCount = await store.prune(conversationId, 1);
+
+      expect(deletedCount).toBe(2);
+
+      // Only the newest checkpoint should remain
+      for (let i = 0; i < 2; i++) {
+        const loaded = await store.load(checkpoints[i]!.id);
+        expect(loaded).toBeNull();
+      }
+
+      const newest = await store.load(checkpoints[2]!.id);
+      expect(newest).toBeDefined();
+      expect(newest?.id).toBe(checkpoints[2]!.id);
+    });
+
+    it('should keep 3 checkpoints when retainCount=3', async () => {
+      const conversationId = 'conv-retain-three';
+      const now = new Date();
+      const checkpoints = Array.from({length: 5}, (_, i) =>
+        createTestCheckpoint({
+          conversationId,
+          createdAt: new Date(now.getTime() + i * 1000).toISOString(),
+        }),
+      );
+
+      for (const cp of checkpoints) {
+        await store.save(cp);
+      }
+
+      const deletedCount = await store.prune(conversationId, 3);
+
+      expect(deletedCount).toBe(2);
+
+      // Oldest 2 should be deleted
+      for (let i = 0; i < 2; i++) {
+        const loaded = await store.load(checkpoints[i]!.id);
+        expect(loaded).toBeNull();
+      }
+
+      // Newest 3 should remain
+      for (let i = 2; i < 5; i++) {
+        const loaded = await store.load(checkpoints[i]!.id);
+        expect(loaded).toBeDefined();
+      }
+    });
+
+    it('should keep 5 checkpoints when retainCount=5', async () => {
+      const conversationId = 'conv-retain-five';
+      const now = new Date();
+      const checkpoints = Array.from({length: 7}, (_, i) =>
+        createTestCheckpoint({
+          conversationId,
+          createdAt: new Date(now.getTime() + i * 1000).toISOString(),
+        }),
+      );
+
+      for (const cp of checkpoints) {
+        await store.save(cp);
+      }
+
+      const deletedCount = await store.prune(conversationId, 5);
+
+      expect(deletedCount).toBe(2);
+
+      // Oldest 2 should be deleted
+      for (let i = 0; i < 2; i++) {
+        const loaded = await store.load(checkpoints[i]!.id);
+        expect(loaded).toBeNull();
+      }
+
+      // Newest 5 should remain
+      for (let i = 2; i < 7; i++) {
+        const loaded = await store.load(checkpoints[i]!.id);
+        expect(loaded).toBeDefined();
+      }
+    });
+  });
+
   describe('session-checkpointing.AC4.4: prune with fewer than retention is no-op', () => {
     it('should not delete when checkpoint count is below retention', async () => {
       const conversationId = 'conv-few-test';

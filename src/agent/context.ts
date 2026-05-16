@@ -9,29 +9,18 @@
 
 import type { Message, ContentBlock, ToolUseBlock } from '../model/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
-import type { ConversationMessage, ContextProvider } from './types.ts';
+import type { ConversationMessage } from './types.ts';
 
 /**
  * Build system prompt from memory manager's core blocks.
- * This ensures AC1.3: core blocks are always in the system prompt.
- * Optionally appends output from context providers.
+ * This ensures system prompt stability: the prompt only includes
+ * the memory manager's base output (persona and core memory blocks).
+ * Dynamic context providers are routed to user message attachments in Phase 4.
  */
 export async function buildSystemPrompt(
   memory: MemoryManager,
-  contextProviders?: ReadonlyArray<ContextProvider>,
 ): Promise<string> {
-  let prompt = await memory.buildSystemPrompt();
-
-  if (contextProviders) {
-    for (const provider of contextProviders) {
-      const section = provider();
-      if (section !== undefined) {
-        prompt += '\n\n' + section;
-      }
-    }
-  }
-
-  return prompt;
+  return memory.buildSystemPrompt();
 }
 
 /**

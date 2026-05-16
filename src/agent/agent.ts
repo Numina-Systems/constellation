@@ -120,7 +120,7 @@ export function createAgent(
     let history = await loadConversationHistory(id);
 
     // Step 3: Check context budget and compress if needed
-    const preliminarySystemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+    const preliminarySystemPrompt = await buildSystemPrompt(deps.memory);
     const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, deps.registry.toModelTools(), maxTokens);
 
     if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
@@ -140,7 +140,7 @@ export function createAgent(
       roundCount++;
 
       // Build fresh context for each round
-      let systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+      let systemPrompt = await buildSystemPrompt(deps.memory);
 
       // Recall step — fires once per turn, cached across tool rounds
       if (!recallExecuted && deps.config.recall_enabled && deps.recallContextState && deps.searchStore) {
@@ -163,7 +163,7 @@ export function createAgent(
         }
         deps.recallContextState.setResult(cachedRecallResult);
         // Rebuild system prompt with recall context now set
-        systemPrompt = await buildSystemPrompt(deps.memory, deps.contextProviders);
+        systemPrompt = await buildSystemPrompt(deps.memory);
       } else if (recallExecuted && deps.recallContextState) {
         // Subsequent rounds: result already cached, just ensure state is set
         deps.recallContextState.setResult(cachedRecallResult);

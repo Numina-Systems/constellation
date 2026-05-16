@@ -50,6 +50,14 @@ export type ExternalEvent = {
 
 export type ContextProvider = () => string | undefined;
 
+export type ProviderClassification = 'stable' | 'dynamic';
+
+export type ClassifiedProvider = {
+  readonly name: string;
+  readonly provider: ContextProvider;
+  readonly classification: ProviderClassification;
+};
+
 export type AgentDependencies = {
   model: ModelProvider;
   memory: MemoryManager;
@@ -63,6 +71,7 @@ export type AgentDependencies = {
   traceRecorder?: TraceRecorder;
   owner?: string;
   contextProviders?: ReadonlyArray<ContextProvider>;
+  classifiedProviders?: ReadonlyArray<ClassifiedProvider>;
   skills?: SkillRegistry;
   sourceInstructions?: ReadonlyMap<string, string>;
   recallContextState?: RecallContextState;

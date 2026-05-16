@@ -9,6 +9,21 @@ import {z} from 'zod';
 
 export type CheckpointTrigger = 'explicit' | 'pre_compaction' | 'shutdown' | 'interval';
 
+/**
+ * Minimal agent runtime state that the agent loop tracks and passes to checkpoint creation.
+ * The checkpoint creation helper collects subsystem data (memory, predictions, interests, recall)
+ * and combines with this minimal state to build the full AgentCheckpointState for serialization.
+ */
+export type CheckpointAgentState = {
+  readonly turnNumber: number;
+  readonly toolRound: number;
+  readonly messageIds: ReadonlyArray<string>;
+  readonly compactionMeta: {
+    readonly lastCompactedIndex: number;
+    readonly summaryCount: number;
+  };
+};
+
 export type CheckpointWorkingMemory = {
   readonly label: string;
   readonly content: string;

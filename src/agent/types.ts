@@ -17,7 +17,7 @@ import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { RecallContextState } from '../recall/index.js';
 import type { SearchStore } from '../search/store.js';
-import type { CheckpointTrigger } from './checkpoint-types.ts';
+import type { CheckpointTrigger, CheckpointAgentState } from './checkpoint-types.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -62,16 +62,6 @@ export type ClassifiedProvider = {
   readonly name: string;
   readonly provider: ContextProvider;
   readonly classification: ProviderClassification;
-};
-
-export type CheckpointAgentState = {
-  readonly turnNumber: number;
-  readonly toolRound: number;
-  readonly messageIds: ReadonlyArray<string>;
-  readonly compactionMeta: {
-    readonly lastCompactedIndex: number;
-    readonly summaryCount: number;
-  };
 };
 
 export type AgentDependencies = {

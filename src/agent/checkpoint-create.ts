@@ -13,6 +13,7 @@ import type {
   CheckpointWorkingMemory,
   CheckpointPrediction,
   CheckpointInterest,
+  CheckpointAgentState,
   AgentCheckpointState,
 } from './checkpoint-types.ts';
 import type {CheckpointStore} from '@/persistence/checkpoint-store.ts';
@@ -32,15 +33,8 @@ export type CheckpointDependencies = {
   readonly retentionCount: number;
 };
 
-export type CheckpointAgentState = {
-  readonly turnNumber: number;
-  readonly toolRound: number;
-  readonly messageIds: ReadonlyArray<string>;
-  readonly compactionMeta: {
-    readonly lastCompactedIndex: number;
-    readonly summaryCount: number;
-  };
-};
+// Re-export for convenience
+export type { CheckpointAgentState };
 
 export async function performCheckpoint(
   trigger: CheckpointTrigger,

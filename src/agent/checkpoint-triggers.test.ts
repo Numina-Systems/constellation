@@ -1,3 +1,5 @@
+// pattern: Imperative Shell
+
 /**
  * Integration tests for checkpoint triggers.
  * Verifies checkpoint creation at explicit command, pre-compaction, shutdown, and turn-interval trigger points.
@@ -20,7 +22,8 @@ import type { Compactor, CompactionResult } from '../compaction/types.ts';
 import type { CheckpointStore } from '../persistence/checkpoint-store.ts';
 import type { SessionCheckpoint } from './checkpoint-types.ts';
 import { createCheckpointTool } from '../tool/builtin/checkpoint.ts';
-import { performCheckpoint, type CheckpointDependencies, type CheckpointAgentState } from './checkpoint-create.ts';
+import { performCheckpoint, type CheckpointDependencies } from './checkpoint-create.ts';
+import type { CheckpointAgentState } from './checkpoint-types.ts';
 
 /**
  * Mock implementations for checkpoint integration testing
@@ -254,7 +257,7 @@ function createAgentDependencies(overrides?: {
   config?: AgentConfig;
   compactor?: Compactor;
   checkpointFn?: (trigger: string) => Promise<string | null>;
-  checkpointStateRef?: { current: CheckpointAgentState };
+  checkpointStateRef?: { current: CheckpointAgentState } | undefined;
 }): AgentDependencies {
   return {
     model: overrides?.model ?? createMockModelProvider([]),
@@ -304,27 +307,43 @@ describe('Checkpoint Triggers', () => {
   describe('AC1.2: Pre-compaction checkpoint', () => {
     it('should create checkpoint before compaction runs', async () => {
       const store = createMockCheckpointStore();
+      let compressWasCalled = false;
+      let checkpointCountWhenCompressionStarted = 0;
 
       const trackedCompactor: Compactor = {
         async compress(_history: ReadonlyArray<ConversationMessage>, _conversationId: string) {
-          // Check if a checkpoint was already created
-          if (store.savedCheckpoints.length > 0) {
-            // Pre-compaction checkpoint was created
-          }
+          compressWasCalled = true;
+          checkpointCountWhenCompressionStarted = store.savedCheckpoints.length;
           return {
-            history: [],
-            batchesCreated: 0,
-            messagesCompressed: 0,
-            tokensEstimateBefore: 100,
-            tokensEstimateAfter: 50,
+            history: _history.slice(0, 1), // Return at least one message
+            batchesCreated: 1,
+            messagesCompressed: Math.max(1, _history.length - 1),
+            tokensEstimateBefore: 10000,
+            tokensEstimateAfter: 5000,
           } as CompactionResult;
         },
         consecutiveFailures: 0,
       };
 
+      const checkpointDeps: CheckpointDependencies = {
+        checkpointStore: store,
+        memory: createMockMemoryManager(),
+        owner: 'test-owner',
+        conversationId: 'conv-123',
+        retentionCount: 5,
+      };
+
+      let checkpointFnCalled = false;
       const checkpointFn = async (trigger: string) => {
         if (trigger === 'pre_compaction') {
-          return 'checkpoint-id-123';
+          checkpointFnCalled = true;
+          const agentState: CheckpointAgentState = {
+            turnNumber: 1,
+            toolRound: 0,
+            messageIds: ['msg-1', 'msg-2'],
+            compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+          };
+          return await performCheckpoint('pre_compaction', agentState, checkpointDeps);
         }
         return null;
       };
@@ -333,19 +352,23 @@ describe('Checkpoint Triggers', () => {
         compactor: trackedCompactor,
         config: {
           max_tool_rounds: 5,
-          context_budget: 0.8,
+          context_budget: 0.1, // Very low to force compression
           checkpoint_interval: 0,
         },
         checkpointFn,
       });
 
-      // Create the agent to verify the mechanism is in place
-      createAgent(deps, 'conv-123');
+      // Create agent and process a message that will trigger compaction
+      const agent = createAgent(deps, 'conv-123');
 
-      // The compactor would be called by the agent when context budget is exceeded
-      // For this test, we verify the mechanism is in place by checking the dependency exists
-      expect(deps.compactor).toBeDefined();
-      expect(deps.checkpointFn).toBeDefined();
+      // Send a message (will trigger checkpointFn before compress if budget is exceeded)
+      await agent.processMessage('Hello world');
+
+      // Verify: checkpoint was created before compaction
+      expect(checkpointFnCalled).toBe(true);
+      expect(compressWasCalled).toBe(true);
+      expect(checkpointCountWhenCompressionStarted).toBeGreaterThan(0);
+      expect(store.savedCheckpoints[0]?.trigger).toBe('pre_compaction');
     });
   });
 
@@ -419,21 +442,50 @@ describe('Checkpoint Triggers', () => {
 
   describe('AC1.5: Interval disabled when checkpoint_interval is 0', () => {
     it('should not create interval checkpoints when checkpoint_interval is 0', async () => {
-      // When checkpoint_interval is 0, the agent should not trigger interval checkpoints
-      // The condition in agent.ts checks: checkpoint_interval > 0
-      // So no checkpoint should be created for interval trigger when interval is 0
-      // This is tested by verifying the mechanism in agent.ts:
-      // if (checkpoint_interval && checkpoint_interval > 0 && turnNumber % checkpoint_interval === 0)
+      const store = createMockCheckpointStore();
+      let checkpointFnCallCount = 0;
 
-      const config: AgentConfig = {
-        max_tool_rounds: 5,
-        context_budget: 0.8,
-        checkpoint_interval: 0, // Disabled
+      const checkpointDeps: CheckpointDependencies = {
+        checkpointStore: store,
+        memory: createMockMemoryManager(),
+        owner: 'test-owner',
+        conversationId: 'conv-123',
+        retentionCount: 5,
       };
 
-      // With checkpoint_interval: 0, the condition should short-circuit
-      // Verify the config is properly set
-      expect(config.checkpoint_interval).toBe(0);
+      const checkpointFn = async (trigger: string) => {
+        if (trigger === 'interval') {
+          checkpointFnCallCount++;
+          const agentState: CheckpointAgentState = {
+            turnNumber: checkpointFnCallCount,
+            toolRound: 0,
+            messageIds: [`msg-${checkpointFnCallCount}`],
+            compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+          };
+          return await performCheckpoint('interval', agentState, checkpointDeps);
+        }
+        return null;
+      };
+
+      const deps = createAgentDependencies({
+        config: {
+          max_tool_rounds: 5,
+          context_budget: 0.8,
+          checkpoint_interval: 0, // Disabled
+        },
+        checkpointFn,
+      });
+
+      const agent = createAgent(deps, 'conv-123');
+
+      // Process 4 messages; with checkpoint_interval=0, no interval checkpoints should be created
+      for (let i = 0; i < 4; i++) {
+        await agent.processMessage(`Message ${i + 1}`);
+      }
+
+      // Verify: checkpointFn was never called with 'interval' trigger
+      expect(checkpointFnCallCount).toBe(0);
+      expect(store.savedCheckpoints.filter(cp => cp.trigger === 'interval')).toHaveLength(0);
     });
   });
 

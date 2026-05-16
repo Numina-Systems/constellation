@@ -118,6 +118,44 @@ export function createAgent(
   let turnNumber = 0;
   let previousToolsHash: bigint | null = null;
 
+  // Track compaction state for checkpoint serialization
+  let lastCompactionMessageCount = 0;
+  let lastCompactionSummaryCount = 0;
+
+  /**
+   * Helper to update checkpoint state ref and trigger interval-based checkpoint.
+   * Centralizes the duplicate checkpoint state update and interval-trigger logic
+   * that appears at multiple exit points of processMessage.
+   */
+  async function updateCheckpointStateAndTriggerInterval(
+    currentTurnNumber: number,
+  ): Promise<void> {
+    // Update checkpoint state ref (AC1.4, AC1.5)
+    if (deps.checkpointStateRef) {
+      const currentHistory = await loadConversationHistory(id);
+      const messageIds = currentHistory.map(m => m.id);
+      deps.checkpointStateRef.current = {
+        turnNumber: currentTurnNumber,
+        toolRound: 0,
+        messageIds,
+        compactionMeta: {
+          lastCompactedIndex: Math.max(0, lastCompactionMessageCount - 1),
+          summaryCount: lastCompactionSummaryCount,
+        },
+      };
+    }
+
+    // Turn-interval checkpoint (AC1.4, AC1.5)
+    if (
+      deps.checkpointFn &&
+      deps.config.checkpoint_interval &&
+      deps.config.checkpoint_interval > 0 &&
+      currentTurnNumber % deps.config.checkpoint_interval === 0
+    ) {
+      await deps.checkpointFn('interval');
+    }
+  }
+
   function recordTrace(
     toolName: string,
     input: Record<string, unknown>,
@@ -172,6 +210,10 @@ export function createAgent(
       // Reset snapshot state after compaction so next turn gets full snapshot
       snapshotState.reset();
       compactionOccurredThisTurn = result.messagesCompressed > 0;
+
+      // Track compaction state for checkpoints
+      lastCompactionMessageCount = result.messagesCompressed;
+      lastCompactionSummaryCount = result.batchesCreated;
     }
 
     // Step 4 & 5: Build context and call model
@@ -335,27 +377,8 @@ export function createAgent(
           reasoning_content: response.reasoning_content,
         });
 
-        // Update checkpoint state ref (AC1.4, AC1.5)
-        if (deps.checkpointStateRef) {
-          const currentHistory = await loadConversationHistory(id);
-          const messageIds = currentHistory.map(m => m.id);
-          deps.checkpointStateRef.current = {
-            turnNumber,
-            toolRound: 0,
-            messageIds,
-            compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
-          };
-        }
-
-        // Turn-interval checkpoint (AC1.4, AC1.5)
-        if (
-          deps.checkpointFn &&
-          deps.config.checkpoint_interval &&
-          deps.config.checkpoint_interval > 0 &&
-          turnNumber % deps.config.checkpoint_interval === 0
-        ) {
-          await deps.checkpointFn('interval');
-        }
+        // Update checkpoint state and trigger interval checkpoint if needed
+        await updateCheckpointStateAndTriggerInterval(turnNumber);
 
         return text;
       }
@@ -408,6 +431,10 @@ export function createAgent(
                 // Reset snapshot state after compaction so next tool round gets full snapshot
                 snapshotState.reset();
                 compactionOccurredThisTurn = compactionResult.messagesCompressed > 0;
+
+                // Track compaction state for checkpoints
+                lastCompactionMessageCount = compactionResult.messagesCompressed;
+                lastCompactionSummaryCount = compactionResult.batchesCreated;
 
                 toolResult = JSON.stringify({
                   messagesCompressed: compactionResult.messagesCompressed,
@@ -486,27 +513,8 @@ export function createAgent(
       content: warningMessage,
     });
 
-    // Update checkpoint state ref (AC1.4, AC1.5)
-    if (deps.checkpointStateRef) {
-      const currentHistory = await loadConversationHistory(id);
-      const messageIds = currentHistory.map(m => m.id);
-      deps.checkpointStateRef.current = {
-        turnNumber,
-        toolRound: 0,
-        messageIds,
-        compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
-      };
-    }
-
-    // Turn-interval checkpoint (AC1.4, AC1.5)
-    if (
-      deps.checkpointFn &&
-      deps.config.checkpoint_interval &&
-      deps.config.checkpoint_interval > 0 &&
-      turnNumber % deps.config.checkpoint_interval === 0
-    ) {
-      await deps.checkpointFn('interval');
-    }
+    // Update checkpoint state and trigger interval checkpoint if needed
+    await updateCheckpointStateAndTriggerInterval(turnNumber);
 
     return warningMessage;
   }

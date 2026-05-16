@@ -38,6 +38,7 @@ export { createCacheDiagnostics } from './cache-diagnostics.ts';
 export type {
   SessionCheckpoint,
   CheckpointTrigger,
+  CheckpointAgentState,
   AgentCheckpointState,
   CheckpointWorkingMemory,
   CheckpointPrediction,

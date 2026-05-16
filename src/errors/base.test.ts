@@ -66,7 +66,7 @@ test('AC1.5: Empty context object is valid', () => {
   expect(error.context).toEqual({});
 
   const json = error.toJSON();
-  expect(json.context).toEqual({});
+  expect(json['context']).toEqual({});
 });
 
 test('AC4.1: toDisplayString() returns [subsystem:CODE] message', () => {
@@ -112,7 +112,7 @@ test('AC4.3: toJSON() returns object with all expected keys', () => {
   expect(json.subsystem).toBe('auth');
   expect(json.message).toBe('test message');
   expect(json.context).toEqual(context);
-  expect(json.suggestion).toBe('Try this');
+  expect(json['suggestion']).toBe('Try this');
   expect(json.stack).toBeDefined();
 });
 
@@ -131,7 +131,7 @@ test('AC4.4: toJSON() omits suggestion when absent', () => {
 
 test('AC4.5: Context with circular reference is safely serialized', () => {
   const context: Record<string, unknown> = { data: {} };
-  context.data = context; // circular reference
+  context['data'] = context; // circular reference
 
   const error = new ConstellationError(
     'message',
@@ -141,9 +141,9 @@ test('AC4.5: Context with circular reference is safely serialized', () => {
   );
 
   const json = error.toJSON();
-  expect(json.context).toBeDefined();
+  expect(json['context']).toBeDefined();
   // Should have replaced circular ref with string or omitted it
-  expect(typeof json.context).toBe('object');
+  expect(typeof json['context']).toBe('object');
 });
 
 test('AC4.5: Context with function value is safely serialized', () => {
@@ -162,10 +162,10 @@ test('AC4.5: Context with function value is safely serialized', () => {
   );
 
   const json = error.toJSON();
-  expect(json.context).toBeDefined();
-  expect(typeof json.context).toBe('object');
+  expect(json['context']).toBeDefined();
+  expect(typeof json['context']).toBe('object');
   // data should be included, callback omitted or stringified
-  expect((json.context as Record<string, unknown>).data).toBe('valid');
+  expect((json['context'] as Record<string, unknown>)['data']).toBe('valid');
 });
 
 test('AC6.1: catch block with instanceof Error matches ConstellationError', () => {

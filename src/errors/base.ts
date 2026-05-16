@@ -48,8 +48,22 @@ export class ConstellationError extends Error {
     return base;
   }
 
-  toJSON(): Record<string, unknown> {
-    const result: Record<string, unknown> = {
+  toJSON(): {
+    code: string;
+    subsystem: string;
+    message: string;
+    context: Record<string, unknown>;
+    stack: string | undefined;
+    suggestion?: string;
+  } {
+    const result: {
+      code: string;
+      subsystem: string;
+      message: string;
+      context: Record<string, unknown>;
+      stack: string | undefined;
+      suggestion?: string;
+    } = {
       code: this.code,
       subsystem: this.subsystem,
       message: this.message,

@@ -38,30 +38,34 @@ function isRetryableError(error: unknown): boolean {
 function classifyError(error: unknown): never {
   if (error instanceof OpenAI.AuthenticationError) {
     throw new ModelError(
-      "auth",
+      "PROVIDER_UNAVAILABLE",
+      error.message || "authentication failed",
       false,
-      error.message || "authentication failed"
+      { provider: "openrouter" }
     );
   }
   if (error instanceof OpenAI.APIConnectionTimeoutError) {
     throw new ModelError(
-      "timeout",
+      "TIMEOUT",
+      error.message || "request timed out",
       true,
-      error.message || "request timed out"
+      { provider: "openrouter" }
     );
   }
   if (error instanceof OpenAI.RateLimitError) {
     throw new ModelError(
-      "rate_limit",
+      "RATE_LIMITED",
+      error.message || "rate limit exceeded",
       true,
-      error.message || "rate limit exceeded"
+      { provider: "openrouter" }
     );
   }
   if (error instanceof OpenAI.APIError) {
     throw new ModelError(
-      "api_error",
+      "INVALID_RESPONSE",
+      error.message || "api error",
       false,
-      error.message || "api error"
+      { provider: "openrouter" }
     );
   }
   throw error;
@@ -215,9 +219,10 @@ export function createOpenRouterAdapter(
         if (!choice) {
           const raw = JSON.stringify(response).slice(0, 500);
           throw new ModelError(
-            "api_error",
+            "INVALID_RESPONSE",
+            `no choices in response (model=${request.model}): ${raw}`,
             true,
-            `no choices in response (model=${request.model}): ${raw}`
+            { provider: "openrouter" }
           );
         }
 
@@ -302,9 +307,10 @@ export function createOpenRouterAdapter(
           const finishReason = choice.finish_reason as string | null;
           if (finishReason === "error") {
             throw new ModelError(
-              "api_error",
+              "INVALID_RESPONSE",
+              "openrouter upstream provider error during streaming",
               true,
-              "openrouter upstream provider error during streaming"
+              { provider: "openrouter" }
             );
           }
 

@@ -105,18 +105,8 @@ export type StreamEvent =
   | StreamEventContentBlockDelta
   | StreamEventMessageStop;
 
-export type ModelErrorCode = "auth" | "rate_limit" | "timeout" | "api_error";
-
-export class ModelError extends Error {
-  constructor(
-    public code: ModelErrorCode,
-    public retryable: boolean = false,
-    message: string = ""
-  ) {
-    super(message);
-    this.name = "ModelError";
-  }
-}
+export { ModelError } from "@/errors/model.js";
+export type { ModelErrorCode } from "@/errors/model.js";
 
 export interface ModelProvider {
   complete(request: ModelRequest): Promise<ModelResponse>;

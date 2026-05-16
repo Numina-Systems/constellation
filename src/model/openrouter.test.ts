@@ -1001,7 +1001,7 @@ describe("createOpenRouterAdapter", () => {
 
       expect(error).toBeInstanceOf(ModelError);
       if (error instanceof ModelError) {
-        expect(error.code).toBe("api_error");
+        expect(error.code).toBe("INVALID_RESPONSE");
         expect(error.retryable).toBe(true);
       }
     });

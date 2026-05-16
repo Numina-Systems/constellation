@@ -193,30 +193,34 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(
-              "auth",
+              "PROVIDER_UNAVAILABLE",
+              error.message || "authentication failed",
               false,
-              error.message || "authentication failed"
+              { provider: "anthropic" }
             );
           }
           if (error instanceof Anthropic.APIConnectionTimeoutError) {
             throw new ModelError(
-              "timeout",
+              "TIMEOUT",
+              error.message || "request timed out",
               true,
-              error.message || "request timed out"
+              { provider: "anthropic" }
             );
           }
           if (error instanceof Anthropic.RateLimitError) {
             throw new ModelError(
-              "rate_limit",
+              "RATE_LIMITED",
+              error.message || "rate limit exceeded",
               true,
-              error.message || "rate limit exceeded"
+              { provider: "anthropic" }
             );
           }
           if (error instanceof Anthropic.APIError) {
             throw new ModelError(
-              "api_error",
+              "INVALID_RESPONSE",
+              error.message || "api error",
               false,
-              error.message || "api error"
+              { provider: "anthropic" }
             );
           }
           throw error;
@@ -250,30 +254,34 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(
-              "auth",
+              "PROVIDER_UNAVAILABLE",
+              error.message || "authentication failed",
               false,
-              error.message || "authentication failed"
+              { provider: "anthropic" }
             );
           }
           if (error instanceof Anthropic.APIConnectionTimeoutError) {
             throw new ModelError(
-              "timeout",
+              "TIMEOUT",
+              error.message || "request timed out",
               true,
-              error.message || "request timed out"
+              { provider: "anthropic" }
             );
           }
           if (error instanceof Anthropic.RateLimitError) {
             throw new ModelError(
-              "rate_limit",
+              "RATE_LIMITED",
+              error.message || "rate limit exceeded",
               true,
-              error.message || "rate limit exceeded"
+              { provider: "anthropic" }
             );
           }
           if (error instanceof Anthropic.APIError) {
             throw new ModelError(
-              "api_error",
+              "INVALID_RESPONSE",
+              error.message || "api error",
               false,
-              error.message || "api error"
+              { provider: "anthropic" }
             );
           }
           throw error;

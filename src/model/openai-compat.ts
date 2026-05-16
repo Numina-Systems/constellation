@@ -73,30 +73,34 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
         } catch (error) {
           if (error instanceof OpenAI.AuthenticationError) {
             throw new ModelError(
-              "auth",
+              "PROVIDER_UNAVAILABLE",
+              error.message || "authentication failed",
               false,
-              error.message || "authentication failed"
+              { provider: "openai-compat" }
             );
           }
           if (error instanceof OpenAI.APIConnectionTimeoutError) {
             throw new ModelError(
-              "timeout",
+              "TIMEOUT",
+              error.message || "request timed out",
               true,
-              error.message || "request timed out"
+              { provider: "openai-compat" }
             );
           }
           if (error instanceof OpenAI.RateLimitError) {
             throw new ModelError(
-              "rate_limit",
+              "RATE_LIMITED",
+              error.message || "rate limit exceeded",
               true,
-              error.message || "rate limit exceeded"
+              { provider: "openai-compat" }
             );
           }
           if (error instanceof OpenAI.APIError) {
             throw new ModelError(
-              "api_error",
+              "INVALID_RESPONSE",
+              error.message || "api error",
               false,
-              error.message || "api error"
+              { provider: "openai-compat" }
             );
           }
           throw error;
@@ -107,9 +111,10 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
       if (!choice) {
         const raw = JSON.stringify(response).slice(0, 500);
         throw new ModelError(
-          "api_error",
+          "INVALID_RESPONSE",
+          `no choices in response (model=${request.model}): ${raw}`,
           true,
-          `no choices in response (model=${request.model}): ${raw}`
+          { provider: "openai-compat" }
         );
       }
 
@@ -156,30 +161,34 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
         } catch (error) {
           if (error instanceof OpenAI.AuthenticationError) {
             throw new ModelError(
-              "auth",
+              "PROVIDER_UNAVAILABLE",
+              error.message || "authentication failed",
               false,
-              error.message || "authentication failed"
+              { provider: "openai-compat" }
             );
           }
           if (error instanceof OpenAI.APIConnectionTimeoutError) {
             throw new ModelError(
-              "timeout",
+              "TIMEOUT",
+              error.message || "request timed out",
               true,
-              error.message || "request timed out"
+              { provider: "openai-compat" }
             );
           }
           if (error instanceof OpenAI.RateLimitError) {
             throw new ModelError(
-              "rate_limit",
+              "RATE_LIMITED",
+              error.message || "rate limit exceeded",
               true,
-              error.message || "rate limit exceeded"
+              { provider: "openai-compat" }
             );
           }
           if (error instanceof OpenAI.APIError) {
             throw new ModelError(
-              "api_error",
+              "INVALID_RESPONSE",
+              error.message || "api error",
               false,
-              error.message || "api error"
+              { provider: "openai-compat" }
             );
           }
           throw error;

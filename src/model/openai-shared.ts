@@ -45,9 +45,10 @@ export function normalizeContentBlocks(
         input = JSON.parse(toolCall.function.arguments);
       } catch {
         throw new ModelError(
-          "api_error",
+          "INVALID_RESPONSE",
+          `failed to parse tool call arguments: ${toolCall.function.arguments}`,
           false,
-          `failed to parse tool call arguments: ${toolCall.function.arguments}`
+          { provider: "openai-shared" }
         );
       }
       blocks.push({

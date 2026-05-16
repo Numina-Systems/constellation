@@ -128,7 +128,7 @@ describe("createOpenAICompatAdapter", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(ModelError);
         const modelError = error as ModelError;
-        expect(modelError.code).toBe("auth");
+        expect(modelError.code).toBe("PROVIDER_UNAVAILABLE");
       }
     });
 
@@ -444,7 +444,7 @@ describe("createOpenAICompatAdapter", () => {
         expect(true).toBe(false); // Should not reach here
       } catch (error) {
         expect(error).toBeInstanceOf(ModelError);
-        expect((error as ModelError).code).toBe("timeout");
+        expect((error as ModelError).code).toBe("TIMEOUT");
         expect((error as ModelError).retryable).toBe(true);
       } finally {
         requestDelay = 0;

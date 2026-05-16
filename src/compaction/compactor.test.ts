@@ -2060,7 +2060,7 @@ describe('compaction pipeline integration', () => {
         timeoutsSeen++;
         if (timeoutsSeen === 1) {
           // First call times out
-          throw new ModelError('timeout', true, 'timeout during summarization');
+          throw new ModelError('TIMEOUT', 'timeout during summarization', true);
         }
         // Second call succeeds
         return {
@@ -2121,7 +2121,7 @@ describe('compaction pipeline integration', () => {
         capturedRequests.push(request);
         if (callCount <= 2) {
           // First two calls time out
-          throw new ModelError('timeout', true, 'timeout');
+          throw new ModelError('TIMEOUT', 'timeout', true);
         }
         // Third call succeeds
         return {
@@ -2189,7 +2189,7 @@ describe('compaction pipeline integration', () => {
       async complete(): Promise<ModelResponse> {
         callCount++;
         // Always timeout to force exhaustion
-        throw new ModelError('timeout', true, 'timeout');
+        throw new ModelError('TIMEOUT', 'timeout', true);
       },
       async *stream() {
         yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
@@ -2239,7 +2239,7 @@ describe('compaction pipeline integration', () => {
       async complete(): Promise<ModelResponse> {
         callCount++;
         // Auth error is non-retryable
-        throw new ModelError('auth', false, 'unauthorized');
+        throw new ModelError('PROVIDER_UNAVAILABLE', 'unauthorized', false);
       },
       async *stream() {
         yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
@@ -2393,7 +2393,7 @@ describe('compaction pipeline integration', () => {
     const mockModel: ModelProvider = {
       async complete(): Promise<ModelResponse> {
         // Always timeout
-        throw new ModelError('timeout', true, 'timeout');
+        throw new ModelError('TIMEOUT', 'timeout', true);
       },
       async *stream() {
         yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
@@ -2502,7 +2502,7 @@ describe('circuit breaker', () => {
     const failingModel: ModelProvider = {
       async complete(): Promise<ModelResponse> {
         callCount++;
-        throw new ModelError('timeout', true, 'request timed out');
+        throw new ModelError('TIMEOUT', 'request timed out', true);
       },
       async *stream() {
         yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
@@ -2559,7 +2559,7 @@ describe('circuit breaker', () => {
     const toggleModel: ModelProvider = {
       async complete(): Promise<ModelResponse> {
         if (shouldFail) {
-          throw new ModelError('timeout', true, 'request timed out');
+          throw new ModelError('TIMEOUT', 'request timed out', true);
         }
         return {
           content: [{ type: 'text', text: 'Summary of conversation' }],

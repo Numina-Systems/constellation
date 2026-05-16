@@ -359,7 +359,7 @@ describe('createRateLimitedProvider', () => {
       const { ModelError } = await import('../model/types.js');
       const provider: ModelProvider = {
         complete: async () => {
-          throw new ModelError('rate_limit', true, 'Rate limit hit');
+          throw new ModelError('RATE_LIMITED', 'Rate limit hit', true);
         },
         stream: async function* () {
           /* no-op */
@@ -385,7 +385,7 @@ describe('createRateLimitedProvider', () => {
       const { ModelError } = await import('../model/types.js');
       const provider: ModelProvider = {
         complete: async () => {
-          throw new ModelError('api_error', true, 'API error');
+          throw new ModelError('INVALID_RESPONSE', 'API error', true);
         },
         stream: async function* () {
           /* no-op */

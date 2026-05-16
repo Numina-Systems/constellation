@@ -240,12 +240,27 @@ export function normalizeResponse(response: OllamaChatResponse): ModelResponse {
 
 export function classifyHttpError(status: number, body: string): ModelError {
   if (status === 429) {
-    return new ModelError("rate_limit", true, `rate limit exceeded: ${body}`);
+    return new ModelError(
+      "RATE_LIMITED",
+      `rate limit exceeded: ${body}`,
+      true,
+      { provider: "ollama", status }
+    );
   }
   if (status === 500 || status === 502) {
-    return new ModelError("api_error", true, `server error (${status}): ${body}`);
+    return new ModelError(
+      "INVALID_RESPONSE",
+      `server error (${status}): ${body}`,
+      true,
+      { provider: "ollama", status }
+    );
   }
-  return new ModelError("api_error", false, `request failed (${status}): ${body}`);
+  return new ModelError(
+    "INVALID_RESPONSE",
+    `request failed (${status}): ${body}`,
+    false,
+    { provider: "ollama", status }
+  );
 }
 
 export function isRetryableOllamaError(error: unknown): boolean {
@@ -291,9 +306,10 @@ export async function* parseNDJSON(
           parsed = JSON.parse(trimmed);
         } catch {
           throw new ModelError(
-            "api_error",
+            "INVALID_RESPONSE",
+            `malformed NDJSON line: ${trimmed}`,
             false,
-            `malformed NDJSON line: ${trimmed}`
+            { provider: "ollama" }
           );
         }
 
@@ -301,9 +317,10 @@ export async function* parseNDJSON(
 
         if ((chunk as Record<string, unknown>)["error"]) {
           throw new ModelError(
-            "api_error",
+            "INVALID_RESPONSE",
+            `ollama streaming error: ${(chunk as Record<string, unknown>)["error"]}`,
             false,
-            `ollama streaming error: ${(chunk as Record<string, unknown>)["error"]}`
+            { provider: "ollama" }
           );
         }
 
@@ -319,9 +336,10 @@ export async function* parseNDJSON(
         parsed = JSON.parse(trimmed);
       } catch {
         throw new ModelError(
-          "api_error",
+          "INVALID_RESPONSE",
+          `malformed NDJSON line: ${trimmed}`,
           false,
-          `malformed NDJSON line: ${trimmed}`
+          { provider: "ollama" }
         );
       }
 
@@ -329,9 +347,10 @@ export async function* parseNDJSON(
 
       if ((remaining as Record<string, unknown>)["error"]) {
         throw new ModelError(
-          "api_error",
+          "INVALID_RESPONSE",
+          `ollama streaming error: ${(remaining as Record<string, unknown>)["error"]}`,
           false,
-          `ollama streaming error: ${(remaining as Record<string, unknown>)["error"]}`
+          { provider: "ollama" }
         );
       }
 
@@ -476,7 +495,12 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             return normalizeResponse(data);
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
-              throw new ModelError("timeout", true, "request timed out");
+              throw new ModelError(
+                "TIMEOUT",
+                "request timed out",
+                true,
+                { provider: "ollama" }
+              );
             }
             throw error;
           }
@@ -506,7 +530,12 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             return res;
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
-              throw new ModelError("timeout", true, "request timed out");
+              throw new ModelError(
+                "TIMEOUT",
+                "request timed out",
+                true,
+                { provider: "ollama" }
+              );
             }
             throw error;
           }
@@ -515,7 +544,12 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
       );
 
       if (!response.body) {
-        throw new ModelError("api_error", false, "no response body for streaming");
+        throw new ModelError(
+          "INVALID_RESPONSE",
+          "no response body for streaming",
+          false,
+          { provider: "ollama" }
+        );
       }
 
       yield* mapChunksToStreamEvents(parseNDJSON(response.body));

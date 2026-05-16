@@ -77,7 +77,7 @@ describe("parseNDJSON", () => {
       expect(true).toBe(false); // should not reach
     } catch (error) {
       expect(error).toBeInstanceOf(ModelError);
-      expect((error as ModelError).code).toBe("api_error");
+      expect((error as ModelError).code).toBe("INVALID_RESPONSE");
       expect((error as ModelError).retryable).toBe(false);
     }
   });
@@ -904,7 +904,7 @@ describe("classifyHttpError - rate limiting", () => {
     const error = classifyHttpError(429, "Too many requests");
 
     expect(error).toBeInstanceOf(ModelError);
-    expect(error.code).toBe("rate_limit");
+    expect(error.code).toBe("RATE_LIMITED");
     expect(error.retryable).toBe(true);
   });
 });
@@ -915,7 +915,7 @@ describe("classifyHttpError - server errors", () => {
     const error = classifyHttpError(500, "Internal server error");
 
     expect(error).toBeInstanceOf(ModelError);
-    expect(error.code).toBe("api_error");
+    expect(error.code).toBe("INVALID_RESPONSE");
     expect(error.retryable).toBe(true);
   });
 
@@ -923,7 +923,7 @@ describe("classifyHttpError - server errors", () => {
     const error = classifyHttpError(502, "Bad gateway");
 
     expect(error).toBeInstanceOf(ModelError);
-    expect(error.code).toBe("api_error");
+    expect(error.code).toBe("INVALID_RESPONSE");
     expect(error.retryable).toBe(true);
   });
 });
@@ -934,7 +934,7 @@ describe("classifyHttpError - client errors", () => {
     const error = classifyHttpError(400, "Bad request");
 
     expect(error).toBeInstanceOf(ModelError);
-    expect(error.code).toBe("api_error");
+    expect(error.code).toBe("INVALID_RESPONSE");
     expect(error.retryable).toBe(false);
   });
 
@@ -942,7 +942,7 @@ describe("classifyHttpError - client errors", () => {
     const error = classifyHttpError(404, "Not found");
 
     expect(error).toBeInstanceOf(ModelError);
-    expect(error.code).toBe("api_error");
+    expect(error.code).toBe("INVALID_RESPONSE");
     expect(error.retryable).toBe(false);
   });
 });
@@ -980,13 +980,13 @@ describe("isRetryableOllamaError", () => {
   });
 
   it("should return false for non-retryable ModelError", () => {
-    const error = new ModelError("api_error", false, "not retryable");
+    const error = new ModelError("INVALID_RESPONSE", "not retryable", false);
 
     expect(isRetryableOllamaError(error)).toBe(false);
   });
 
   it("should return true for retryable ModelError", () => {
-    const error = new ModelError("rate_limit", true, "retryable");
+    const error = new ModelError("RATE_LIMITED", "retryable", true);
 
     expect(isRetryableOllamaError(error)).toBe(true);
   });
@@ -1383,7 +1383,7 @@ describe("createOllamaAdapter - timeout support", () => {
       expect(true).toBe(false); // Should not reach here
     } catch (error) {
       expect(error).toBeInstanceOf(ModelError);
-      expect((error as ModelError).code).toBe("timeout");
+      expect((error as ModelError).code).toBe("TIMEOUT");
       expect((error as ModelError).retryable).toBe(true);
     } finally {
       requestDelay = 0; // Reset
@@ -1422,7 +1422,7 @@ describe("createOllamaAdapter - timeout support", () => {
       expect(true).toBe(false); // Should not reach here
     } catch (error) {
       expect(error).toBeInstanceOf(ModelError);
-      expect((error as ModelError).code).toBe("timeout");
+      expect((error as ModelError).code).toBe("TIMEOUT");
       expect((error as ModelError).retryable).toBe(true);
     } finally {
       requestDelay = 0; // Reset

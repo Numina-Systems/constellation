@@ -219,6 +219,14 @@ const SubconsciousConfigSchema = z
     }
   });
 
+const LoopDetectionConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  window_size: z.number().int().positive().default(5),
+  similarity_threshold: z.number().min(0).max(1).default(0.85),
+  consecutive_trigger: z.number().int().positive().default(3),
+  action: z.enum(['warn', 'redirect', 'halt']).default('warn'),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -233,6 +241,7 @@ const AppConfigSchema = z.object({
   activity: ActivityConfigSchema.optional(),
   mcp: McpConfigSchema.default({}),
   subconscious: SubconsciousConfigSchema.optional(),
+  loop_detection: LoopDetectionConfigSchema.default({}),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -250,5 +259,6 @@ export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
 export type McpConfig = z.infer<typeof McpConfigSchema>;
 export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
+export type LoopDetectionSchemaConfig = z.infer<typeof LoopDetectionConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema, LoopDetectionConfigSchema };

@@ -7,10 +7,12 @@ function hashContent(value: string): DimensionSnapshot {
   };
 }
 
-function serializeTools(tools: ReadonlyArray<unknown>): string {
+function serializeTools(
+  tools: ReadonlyArray<{readonly name?: string; [key: string]: unknown}>,
+): string {
   const sorted = Array.from(tools).sort((a, b) => {
-    const aName = (a as {name?: string}).name ?? '';
-    const bName = (b as {name?: string}).name ?? '';
+    const aName = a.name ?? '';
+    const bName = b.name ?? '';
     return aName.localeCompare(bName);
   });
   return JSON.stringify(sorted);
@@ -30,12 +32,14 @@ function computeMessagePrefixState(
   const prefixLength = messages.length - 1;
   const prefixMessages = Array.from(messages).slice(0, prefixLength);
 
-  const messageHashes = prefixMessages.map(msg =>
-    BigInt(Bun.hash(JSON.stringify(msg))),
+  const serializedMessages = prefixMessages.map(msg => JSON.stringify(msg));
+
+  const messageHashes = serializedMessages.map(serialized =>
+    BigInt(Bun.hash(serialized)),
   );
 
-  const totalSize = prefixMessages.reduce((sum: number, msg) => {
-    return sum + JSON.stringify(msg).length;
+  const totalSize = serializedMessages.reduce((sum: number, serialized) => {
+    return sum + serialized.length;
   }, 0);
 
   return {
@@ -85,15 +89,17 @@ type MessagePrefixState = {
   readonly totalSize: number;
 };
 
+export type CheckForCacheBustOptions = {
+  readonly systemPrompt: string;
+  readonly tools: ReadonlyArray<{readonly name?: string; [key: string]: unknown}>;
+  readonly messages: ReadonlyArray<unknown>;
+  readonly betaHeaders?: ReadonlyArray<string>;
+  readonly turn: number;
+  readonly flags: SuppressionFlags;
+};
+
 export type CacheDiagnostics = {
-  checkForCacheBust(
-    systemPrompt: string,
-    tools: ReadonlyArray<unknown>,
-    messages: ReadonlyArray<unknown>,
-    betaHeaders: ReadonlyArray<string> | undefined,
-    turn: number,
-    flags: SuppressionFlags,
-  ): ReadonlyArray<CacheBustEvent>;
+  checkForCacheBust(options: CheckForCacheBustOptions): ReadonlyArray<CacheBustEvent>;
   reset(): void;
 };
 
@@ -102,14 +108,9 @@ export function createCacheDiagnostics(): CacheDiagnostics {
   let previousPrefixState: MessagePrefixState | null = null;
 
   return {
-    checkForCacheBust(
-      systemPrompt,
-      tools,
-      messages,
-      betaHeaders,
-      turn,
-      _flags,
-    ) {
+    checkForCacheBust(options) {
+      const {systemPrompt, tools, messages, betaHeaders, turn} = options;
+
       // Compute current dimension hashes
       const currentSystemPromptHash = hashContent(systemPrompt);
       const toolsSerialised = serializeTools(tools);

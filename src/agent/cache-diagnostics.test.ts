@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import {describe, test, expect, beforeEach} from 'bun:test';
 import {createCacheDiagnostics, type SuppressionFlags} from './cache-diagnostics.ts';
 
@@ -12,28 +10,51 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
 
   describe('AC1.1 — System prompt content hashing', () => {
     test('first call with system prompt returns empty array', () => {
-      const events = diagnostics.checkForCacheBust(
-        'system prompt',
-        [],
-        [],
-        undefined,
-        1,
-        {},
-      );
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'system prompt',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags: {},
+      });
       expect(events.length).toBe(0);
     });
 
     test('identical system prompt produces no event', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('prompt v1', [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('prompt v1', [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
 
     test('changed system prompt produces event', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('prompt v1', [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('prompt v2', [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v1',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt v2',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('system_prompt');
     });
@@ -42,15 +63,33 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
   describe('AC1.2 — Tool definitions hashing', () => {
     test('first call with tools returns empty array', () => {
       const tools = [{name: 'tool1', description: 'desc'}];
-      const events = diagnostics.checkForCacheBust('', tools, [], undefined, 1, {});
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools,
+        messages: [],
+        turn: 1,
+        flags: {},
+      });
       expect(events.length).toBe(0);
     });
 
     test('identical tools produce no event', () => {
       const flags: SuppressionFlags = {};
       const tool = {name: 'tool1', description: 'desc'};
-      diagnostics.checkForCacheBust('', [tool], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [tool], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [tool],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [tool],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
 
@@ -58,8 +97,20 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const flags: SuppressionFlags = {};
       const tool1 = {name: 'tool1', description: 'desc1'};
       const tool2 = {name: 'tool1', description: 'desc2'};
-      diagnostics.checkForCacheBust('', [tool1], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [tool2], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [tool1],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [tool2],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('tool_definitions');
     });
@@ -69,15 +120,33 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const tool1 = {name: 'a', description: 'desc'};
       const tool2 = {name: 'b', description: 'desc'};
 
-      diagnostics.checkForCacheBust('', [tool1, tool2], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [tool2, tool1], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [tool1, tool2],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [tool2, tool1],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
   });
 
   describe('AC1.3 — Message prefix hashing', () => {
     test('no messages in first call returns empty array', () => {
-      const events = diagnostics.checkForCacheBust('', [], [], undefined, 1, {});
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags: {},
+      });
       expect(events.length).toBe(0);
     });
 
@@ -86,8 +155,20 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const msg1 = {role: 'user', content: 'hello'};
       const msg2 = {role: 'assistant', content: 'hi'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
 
@@ -96,10 +177,22 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const msg1 = {role: 'user', content: 'hello'};
       const msg2 = {role: 'assistant', content: 'hi'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 1, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
 
       const msg1Modified = {role: 'user', content: 'hello world'};
-      const events = diagnostics.checkForCacheBust('', [], [msg1Modified, msg2], undefined, 2, flags);
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1Modified, msg2],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('message_prefix');
     });
@@ -110,9 +203,21 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const msg2 = {role: 'assistant', content: 'hi'};
       const msg3 = {role: 'user', content: 'how are you'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 1, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
       // Append msg3 (no edit to existing messages)
-      const events = diagnostics.checkForCacheBust('', [], [msg1, msg2, msg3], undefined, 2, flags);
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2, msg3],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
 
@@ -121,9 +226,21 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const msg1 = {role: 'user', content: 'hello'};
       const msg2 = {role: 'assistant', content: 'hi'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 1, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
       // Remove msg1, keep msg2
-      const events = diagnostics.checkForCacheBust('', [], [msg2], undefined, 2, flags);
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg2],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('message_prefix');
     });
@@ -134,9 +251,21 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const msg2 = {role: 'assistant', content: 'hi'};
       const msg3 = {role: 'user', content: 'how are you'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2, msg3], undefined, 1, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2, msg3],
+        turn: 1,
+        flags,
+      });
       // Reorder: msg2, msg1, msg3 (msg3 becomes the new last message)
-      const events = diagnostics.checkForCacheBust('', [], [msg2, msg1, msg3], undefined, 2, flags);
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg2, msg1, msg3],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('message_prefix');
     });
@@ -146,30 +275,83 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
     test('identical beta headers produce no event', () => {
       const flags: SuppressionFlags = {};
       const headers = ['header1', 'header2'];
-      diagnostics.checkForCacheBust('', [], [], headers, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [], headers, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: headers,
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: headers,
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
 
     test('changed beta headers produce event', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('', [], [], ['header1'], 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [], ['header2'], 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: ['header1'],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: ['header2'],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('beta_headers');
     });
 
     test('undefined to undefined beta headers produce no event', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('', [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
 
     test('undefined to defined beta headers produce event', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('', [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [], ['header1'], 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: ['header1'],
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(1);
       expect(events[0]?.dimension).toBe('beta_headers');
     });
@@ -178,22 +360,36 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       const flags: SuppressionFlags = {};
       const headers1 = ['z', 'a', 'b'];
       const headers2 = ['a', 'b', 'z'];
-      diagnostics.checkForCacheBust('', [], [], headers1, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [], headers2, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: headers1,
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [],
+        betaHeaders: headers2,
+        turn: 2,
+        flags,
+      });
       expect(events.length).toBe(0);
     });
   });
 
   describe('AC1.5 — First turn has no previous snapshot', () => {
     test('first turn returns empty array with any content', () => {
-      const events = diagnostics.checkForCacheBust(
-        'system prompt',
-        [{name: 'tool1'}],
-        [{role: 'user', content: 'msg'}],
-        ['header'],
-        1,
-        {},
-      );
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'system prompt',
+        tools: [{name: 'tool1'}],
+        messages: [{role: 'user', content: 'msg'}],
+        betaHeaders: ['header'],
+        turn: 1,
+        flags: {},
+      });
       expect(events.length).toBe(0);
     });
   });
@@ -209,8 +405,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
   describe('AC2.1 — System prompt change dimension', () => {
     test('event has dimension "system_prompt"', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('prompt1', [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('prompt2', [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt1',
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt2',
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events[0]?.dimension).toBe('system_prompt');
     });
   });
@@ -218,8 +426,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
   describe('AC2.2 — Tool definitions change dimension', () => {
     test('event has dimension "tool_definitions"', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('', [{name: 'tool1'}], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [{name: 'tool2'}], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [{name: 'tool1'}],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [{name: 'tool2'}],
+        messages: [],
+        turn: 2,
+        flags,
+      });
       expect(events[0]?.dimension).toBe('tool_definitions');
     });
   });
@@ -231,8 +451,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const msg2 = {role: 'assistant', content: 'hi'};
       const msg1mod = {role: 'user', content: 'hello world'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [msg1mod, msg2], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1mod, msg2],
+        turn: 2,
+        flags,
+      });
       expect(events[0]?.dimension).toBe('message_prefix');
     });
 
@@ -241,8 +473,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const msg1 = {role: 'user', content: 'hello'};
       const msg2 = {role: 'assistant', content: 'hi'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [msg2], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg2],
+        turn: 2,
+        flags,
+      });
       expect(events[0]?.dimension).toBe('message_prefix');
     });
 
@@ -252,8 +496,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const msg2 = {role: 'assistant', content: 'hi'};
       const msg3 = {role: 'user', content: 'how'};
 
-      diagnostics.checkForCacheBust('', [], [msg1, msg2, msg3], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('', [], [msg2, msg1, msg3], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2, msg3],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg2, msg1, msg3],
+        turn: 2,
+        flags,
+      });
       expect(events[0]?.dimension).toBe('message_prefix');
     });
   });
@@ -264,8 +520,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const prompt1 = 'prompt v1';
       const prompt2 = 'prompt v2 longer';
 
-      diagnostics.checkForCacheBust(prompt1, [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust(prompt2, [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: prompt1,
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: prompt2,
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
 
       expect(events[0]?.previousSize).toBe(prompt1.length);
       expect(events[0]?.currentSize).toBe(prompt2.length);
@@ -277,8 +545,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const prompt1 = '12345';
       const prompt2 = '123456789';
 
-      diagnostics.checkForCacheBust(prompt1, [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust(prompt2, [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: prompt1,
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: prompt2,
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
 
       expect(events[0]?.delta).toBe(4);
     });
@@ -288,8 +568,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const prompt1 = '123456789';
       const prompt2 = '12345';
 
-      diagnostics.checkForCacheBust(prompt1, [], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust(prompt2, [], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: prompt1,
+        tools: [],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: prompt2,
+        tools: [],
+        messages: [],
+        turn: 2,
+        flags,
+      });
 
       expect(events[0]?.delta).toBe(-4);
     });
@@ -298,8 +590,20 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
   describe('AC2.5 — Multiple dimensions produce separate events', () => {
     test('system prompt and tool changes produce two events', () => {
       const flags: SuppressionFlags = {};
-      diagnostics.checkForCacheBust('prompt1', [{name: 'tool1'}], [], undefined, 1, flags);
-      const events = diagnostics.checkForCacheBust('prompt2', [{name: 'tool2'}], [], undefined, 2, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt1',
+        tools: [{name: 'tool1'}],
+        messages: [],
+        turn: 1,
+        flags,
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt2',
+        tools: [{name: 'tool2'}],
+        messages: [],
+        turn: 2,
+        flags,
+      });
 
       expect(events.length).toBe(2);
       const dimensions = events.map(e => e.dimension).sort();
@@ -311,9 +615,23 @@ describe('cache-bust-detection.AC2: Change Detection', () => {
       const msg1 = {role: 'user', content: 'hello'};
       const msg2 = {role: 'assistant', content: 'hi'};
 
-      diagnostics.checkForCacheBust('prompt1', [{name: 'tool1'}], [msg1, msg2], ['h1'], 1, flags);
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt1',
+        tools: [{name: 'tool1'}],
+        messages: [msg1, msg2],
+        betaHeaders: ['h1'],
+        turn: 1,
+        flags,
+      });
       const msg1mod = {role: 'user', content: 'hello!'};
-      const events = diagnostics.checkForCacheBust('prompt2', [{name: 'tool2'}], [msg1mod, msg2], ['h2'], 2, flags);
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'prompt2',
+        tools: [{name: 'tool2'}],
+        messages: [msg1mod, msg2],
+        betaHeaders: ['h2'],
+        turn: 2,
+        flags,
+      });
 
       expect(events.length).toBe(4);
       const dimensions = events.map(e => e.dimension).sort();
@@ -331,24 +649,60 @@ describe('cache-diagnostics edge cases', () => {
 
   test('reset() clears state — next call behaves like first turn', () => {
     const flags: SuppressionFlags = {};
-    diagnostics.checkForCacheBust('prompt1', [], [], undefined, 1, flags);
+    diagnostics.checkForCacheBust({
+      systemPrompt: 'prompt1',
+      tools: [],
+      messages: [],
+      turn: 1,
+      flags,
+    });
     diagnostics.reset();
-    const events = diagnostics.checkForCacheBust('prompt2', [], [], undefined, 2, flags);
+    const events = diagnostics.checkForCacheBust({
+      systemPrompt: 'prompt2',
+      tools: [],
+      messages: [],
+      turn: 2,
+      flags,
+    });
     expect(events.length).toBe(0);
   });
 
   test('empty system prompt transitions', () => {
     const flags: SuppressionFlags = {};
-    diagnostics.checkForCacheBust('', [], [], undefined, 1, flags);
-    const events = diagnostics.checkForCacheBust('non-empty', [], [], undefined, 2, flags);
+    diagnostics.checkForCacheBust({
+      systemPrompt: '',
+      tools: [],
+      messages: [],
+      turn: 1,
+      flags,
+    });
+    const events = diagnostics.checkForCacheBust({
+      systemPrompt: 'non-empty',
+      tools: [],
+      messages: [],
+      turn: 2,
+      flags,
+    });
     expect(events.length).toBe(1);
     expect(events[0]?.dimension).toBe('system_prompt');
   });
 
   test('empty to non-empty system prompt', () => {
     const flags: SuppressionFlags = {};
-    diagnostics.checkForCacheBust('non-empty', [], [], undefined, 1, flags);
-    const events = diagnostics.checkForCacheBust('', [], [], undefined, 2, flags);
+    diagnostics.checkForCacheBust({
+      systemPrompt: 'non-empty',
+      tools: [],
+      messages: [],
+      turn: 1,
+      flags,
+    });
+    const events = diagnostics.checkForCacheBust({
+      systemPrompt: '',
+      tools: [],
+      messages: [],
+      turn: 2,
+      flags,
+    });
     expect(events.length).toBe(1);
     expect(events[0]?.previousSize).toBe(9);
     expect(events[0]?.currentSize).toBe(0);
@@ -356,15 +710,39 @@ describe('cache-diagnostics edge cases', () => {
 
   test('empty messages array (no prefix) produces no event', () => {
     const flags: SuppressionFlags = {};
-    diagnostics.checkForCacheBust('', [], [], undefined, 1, flags);
-    const events = diagnostics.checkForCacheBust('', [], [], undefined, 2, flags);
+    diagnostics.checkForCacheBust({
+      systemPrompt: '',
+      tools: [],
+      messages: [],
+      turn: 1,
+      flags,
+    });
+    const events = diagnostics.checkForCacheBust({
+      systemPrompt: '',
+      tools: [],
+      messages: [],
+      turn: 2,
+      flags,
+    });
     expect(events.length).toBe(0);
   });
 
   test('turn number is recorded in event', () => {
     const flags: SuppressionFlags = {};
-    diagnostics.checkForCacheBust('prompt1', [], [], undefined, 42, flags);
-    const events = diagnostics.checkForCacheBust('prompt2', [], [], undefined, 99, flags);
+    diagnostics.checkForCacheBust({
+      systemPrompt: 'prompt1',
+      tools: [],
+      messages: [],
+      turn: 42,
+      flags,
+    });
+    const events = diagnostics.checkForCacheBust({
+      systemPrompt: 'prompt2',
+      tools: [],
+      messages: [],
+      turn: 99,
+      flags,
+    });
     expect(events[0]?.turn).toBe(99);
   });
 
@@ -374,11 +752,23 @@ describe('cache-diagnostics edge cases', () => {
     const msg2 = {role: 'assistant', content: 'b'};
     const msg3 = {role: 'user', content: 'c'};
 
-    diagnostics.checkForCacheBust('', [], [msg1, msg2, msg3], undefined, 1, flags);
+    diagnostics.checkForCacheBust({
+      systemPrompt: '',
+      tools: [],
+      messages: [msg1, msg2, msg3],
+      turn: 1,
+      flags,
+    });
 
     // Modify msg1 (in prefix)
     const msg1mod = {role: 'user', content: 'aa'};
-    const events = diagnostics.checkForCacheBust('', [], [msg1mod, msg2, msg3], undefined, 2, flags);
+    const events = diagnostics.checkForCacheBust({
+      systemPrompt: '',
+      tools: [],
+      messages: [msg1mod, msg2, msg3],
+      turn: 2,
+      flags,
+    });
 
     expect(events.length).toBe(1);
     // Previous prefix (excluding msg3): msg1, msg2 → total serialized size

@@ -27,5 +27,11 @@ export { createSchedulingContextProvider } from './scheduling-context.ts';
 export type { SnapshotMode, SnapshotResult, SnapshotState } from './snapshot.ts';
 export { createSnapshotState } from './snapshot.ts';
 export { buildUserMessage } from './messages.ts';
-export type { CacheDiagnostics, CacheDimension, CacheBustEvent, SuppressionFlags } from './cache-diagnostics.ts';
+export type {
+  CacheDiagnostics,
+  CacheDimension,
+  CacheBustEvent,
+  SuppressionFlags,
+  CheckForCacheBustOptions,
+} from './cache-diagnostics.ts';
 export { createCacheDiagnostics } from './cache-diagnostics.ts';

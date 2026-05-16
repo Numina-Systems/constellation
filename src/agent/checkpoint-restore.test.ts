@@ -165,19 +165,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       };
 
       // Attempt restore - should throw
-      let threwError = false;
-      let errorMessage = '';
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-      } catch (error) {
-        threwError = true;
-        if (error instanceof Error) {
-          errorMessage = error.message;
-        }
-      }
-
-      expect(threwError).toBe(true);
-      expect(errorMessage).toContain('pre-flight validation failed');
+      await expect(restoreFromCheckpoint(checkpoint, deps)).rejects.toThrow('pre-flight validation failed');
 
       // Verify state unchanged: existing block should still be present
       const blocks = await memory.list('working');
@@ -222,19 +210,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       };
 
       // Attempt restore - should throw
-      let threwError = false;
-      let errorMessage = '';
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-      } catch (error) {
-        threwError = true;
-        if (error instanceof Error) {
-          errorMessage = error.message;
-        }
-      }
-
-      expect(threwError).toBe(true);
-      expect(errorMessage).toContain('exceeds limit');
+      await expect(restoreFromCheckpoint(checkpoint, deps)).rejects.toThrow('exceeds limit');
 
       // Verify no memory blocks were written
       const blocks = await memory.list('working');
@@ -281,19 +257,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       };
 
       // Attempt restore - should throw
-      let threwError = false;
-      let errorMessage = '';
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-      } catch (error) {
-        threwError = true;
-        if (error instanceof Error) {
-          errorMessage = error.message;
-        }
-      }
-
-      expect(threwError).toBe(true);
-      expect(errorMessage).toContain('exceeds limit');
+      await expect(restoreFromCheckpoint(checkpoint, deps)).rejects.toThrow('exceeds limit');
 
       // Verify no memory blocks were written
       const blocks = await memory.list('working');
@@ -364,14 +328,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       };
 
       // Attempt restore - should throw
-      let threwError = false;
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-      } catch {
-        threwError = true;
-      }
-
-      expect(threwError).toBe(true);
+      await expect(restoreFromCheckpoint(checkpoint, deps)).rejects.toThrow('Simulated DB failure');
 
       // Verify interest score was NOT updated (transaction rolled back)
       const interests = await interestRegistry.listInterests(AGENT_OWNER);
@@ -435,7 +392,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       let writeCount = 0;
       const failingMemory = {
         ...memory,
-        write: async (label: string, content: string, tier?: any, reason?: string) => {
+        write: async (label: string, content: string, tier: 'core' | 'working' | 'archival', reason?: string) => {
           writeCount++;
           if (writeCount === 2) {
             throw new Error('Simulated memory write failure');
@@ -457,26 +414,17 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       };
 
       // Attempt restore - should throw
-      let threwError = false;
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-      } catch {
-        threwError = true;
-      }
-
-      expect(threwError).toBe(true);
+      await expect(restoreFromCheckpoint(checkpoint, deps)).rejects.toThrow('Simulated memory write failure');
 
       // Verify interest score was NOT updated (transaction rolled back)
       const interests = await interestRegistry.listInterests(AGENT_OWNER);
       const updatedInterest = interests.find(i => i.id === interest.id);
       expect(updatedInterest?.engagementScore).toBe(interest.engagementScore);
 
-      // Verify working memory was cleared (best-effort cleanup)
-      // Note: This is challenging to verify without internal access to memory.list
-      // In production, we'd see it was attempted to be cleared
+      // Verify working memory was cleared (best-effort cleanup ran before rethrowing)
+      // The cleanup tries to delete all blocks, so final state should be empty
       const finalBlocks = await memory.list('working');
-      // Should be empty or contain only what was written before the failure
-      expect(finalBlocks.length).toBeLessThanOrEqual(1);
+      expect(finalBlocks.length).toBe(0);
     });
   });
 });

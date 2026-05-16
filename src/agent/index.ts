@@ -49,3 +49,7 @@ export type {
 export { SessionCheckpointSchema, CHECKPOINT_VERSION } from './checkpoint-types.ts';
 export type { SerializeCheckpointOptions } from './checkpoint-serializer.ts';
 export { serializeCheckpoint, deserializeCheckpoint } from './checkpoint-serializer.ts';
+export type { CheckpointDependencies } from './checkpoint-create.ts';
+export { performCheckpoint } from './checkpoint-create.ts';
+export type { RestorationDependencies, RestorationResult } from './checkpoint-restore.ts';
+export { restoreFromCheckpoint } from './checkpoint-restore.ts';

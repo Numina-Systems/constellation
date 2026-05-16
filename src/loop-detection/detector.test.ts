@@ -130,8 +130,8 @@ describe('loop-detection.AC5.1: trace records similarity and consecutive count',
 
     expect(traces.length).toBe(1);
     const trace = traces[0]!;
-    expect(trace.input.similarity).toBeGreaterThanOrEqual(0.85);
-    expect(trace.input.consecutiveCount).toBe(3);
+    expect((trace.input['similarity'] as number)).toBeGreaterThanOrEqual(0.85);
+    expect((trace.input['consecutiveCount'] as number)).toBe(3);
   });
 });
 

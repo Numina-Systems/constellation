@@ -14,6 +14,7 @@ import { describe, test, expect } from 'bun:test';
 import { buildUserMessage } from './messages';
 import { createSnapshotState, hashProviderOutput } from './snapshot';
 import type { ConversationMessage, ContextProvider } from './types';
+import type { TextBlock } from '../model/types';
 import { estimateTokens, shouldCompress } from './context';
 
 describe('AC5: Backward Compatibility', () => {
@@ -33,8 +34,8 @@ describe('AC5: Backward Compatibility', () => {
       expect(Array.isArray(message.content)).toBe(true);
       if (Array.isArray(message.content)) {
         expect(message.content.length).toBe(2);
-        const attachmentBlock = message.content[0] as any;
-        const userBlock = message.content[1] as any;
+        const attachmentBlock = message.content[0] as TextBlock;
+        const userBlock = message.content[1] as TextBlock;
         expect(attachmentBlock?.type).toBe('text');
         expect(userBlock?.type).toBe('text');
         expect(attachmentBlock?.text).toContain('Dynamic Context — Full Snapshot');
@@ -55,7 +56,7 @@ describe('AC5: Backward Compatibility', () => {
 
       expect(Array.isArray(message.content)).toBe(true);
       if (Array.isArray(message.content)) {
-        const attachmentBlock = message.content[0] as any;
+        const attachmentBlock = message.content[0] as TextBlock;
         expect(attachmentBlock.text).toContain('Dynamic Context — Updated Sections');
       }
     });

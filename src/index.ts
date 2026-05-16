@@ -476,6 +476,9 @@ async function main(): Promise<void> {
 
   const contextProviders: Array<ContextProvider> = [];
 
+  // Keep reference to rate limit provider for later classification
+  let rateLimitContextProvider: ContextProvider | undefined;
+
   const model = hasRateLimitConfig(config.model)
     ? (() => {
         const rateLimitedModel = createRateLimitedProvider(
@@ -485,7 +488,8 @@ async function main(): Promise<void> {
         if (config.model.provider === "openrouter") {
           syncFromServerCallback = rateLimitedModel.syncFromServer;
         }
-        contextProviders.push(createRateLimitContextProvider(() => rateLimitedModel.getStatus()));
+        rateLimitContextProvider = createRateLimitContextProvider(() => rateLimitedModel.getStatus());
+        contextProviders.push(rateLimitContextProvider);
         console.log(`rate limiting active for model ${config.model.name} (${config.model.requests_per_minute} RPM, ${config.model.input_tokens_per_minute} ITPM, ${config.model.output_tokens_per_minute} OTPM)`);
         return rateLimitedModel;
       })()
@@ -694,6 +698,7 @@ async function main(): Promise<void> {
   // --- MCP servers ---
   const mcpClients: Array<McpClient> = [];
   const mcpFailedServers: Array<{name: string; error: string}> = [];
+  const mcpInstructionsProviders = new Map<string, ContextProvider>();
 
   if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
     console.log(`[mcp] connecting to ${Object.keys(config.mcp.servers).length} server(s)...`);
@@ -731,7 +736,9 @@ async function main(): Promise<void> {
         // Collect server instructions for context provider
         const instructions = await client.getInstructions();
         if (instructions) {
-          contextProviders.push(createMcpInstructionsProvider(serverName, instructions));
+          const mcpProvider = createMcpInstructionsProvider(serverName, instructions);
+          contextProviders.push(mcpProvider);
+          mcpInstructionsProviders.set(serverName, mcpProvider);
         }
 
       } catch (error) {
@@ -825,6 +832,7 @@ async function main(): Promise<void> {
   // --- Activity Manager (opt-in) ---
   let activityManager: ActivityManager | null = null;
   let activityScheduleConfig: ScheduleConfig | null = null;
+  let activityContextProvider: ContextProvider | undefined;
 
   if (config.activity?.enabled) {
     const activityConfig = config.activity;
@@ -850,7 +858,7 @@ async function main(): Promise<void> {
     console.log(`activity manager started (mode: ${state.mode}, next transition: ${state.nextTransitionAt?.toISOString() ?? 'unknown'})`);
 
     // 3. Register context provider BEFORE agent creation
-    const activityContextProvider = createActivityContextProvider(activityManager);
+    activityContextProvider = createActivityContextProvider(activityManager);
     contextProviders.push(activityContextProvider);
   }
 
@@ -882,61 +890,35 @@ async function main(): Promise<void> {
   }
 
   // Step 2: Build classified providers array for snapshot routing (Phase 4)
+  // Note: Provider identification now uses direct variable references instead of string matching.
+  // This is more robust and maintainable than searching contextProviders by output strings.
   const classifiedProviders: Array<ClassifiedProvider> = [];
 
-  // Rate limit context provider
-  if (model instanceof Object && 'getStatus' in model && typeof (model as any).getStatus === 'function') {
-    const rateLimitProvider = contextProviders.find(p => {
-      try {
-        return p() !== undefined && String(p()).includes('rate limit');
-      } catch {
-        return false;
-      }
+  // Rate limit context provider (use direct reference if it was created)
+  if (rateLimitContextProvider) {
+    classifiedProviders.push({
+      name: 'rate-limit',
+      provider: rateLimitContextProvider,
+      classification: 'dynamic',
     });
-    if (rateLimitProvider) {
-      classifiedProviders.push({
-        name: 'rate-limit',
-        provider: rateLimitProvider,
-        classification: 'dynamic',
-      });
-    }
   }
 
-  // MCP instructions providers
-  for (const client of mcpClients) {
-    const mcpProvider = contextProviders.find(p => {
-      try {
-        const result = p();
-        return result !== undefined && result.includes(`[MCP: ${client.serverName}]`);
-      } catch {
-        return false;
-      }
+  // MCP instructions providers (use direct references from the map)
+  for (const [serverName, provider] of mcpInstructionsProviders) {
+    classifiedProviders.push({
+      name: `mcp-${serverName}`,
+      provider,
+      classification: 'dynamic',
     });
-    if (mcpProvider) {
-      classifiedProviders.push({
-        name: `mcp-${client.serverName}`,
-        provider: mcpProvider,
-        classification: 'dynamic',
-      });
-    }
   }
 
-  // Activity context provider
-  if (activityManager) {
-    const activityProvider = contextProviders.find(p => {
-      try {
-        return p() !== undefined && String(p()).includes('sleep') || String(p()).includes('awake');
-      } catch {
-        return false;
-      }
+  // Activity context provider (use direct reference if it was created)
+  if (activityContextProvider) {
+    classifiedProviders.push({
+      name: 'activity',
+      provider: activityContextProvider,
+      classification: 'dynamic',
     });
-    if (activityProvider) {
-      classifiedProviders.push({
-        name: 'activity',
-        provider: activityProvider,
-        classification: 'dynamic',
-      });
-    }
   }
 
   // Recall context provider

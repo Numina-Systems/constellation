@@ -198,6 +198,16 @@ export function createAgent(
       }
 
       // Retrieve and append relevant skills
+      // KNOWN LIMITATION: Skills currently mutate systemPrompt directly rather than routing through
+      // the snapshot pipeline like other dynamic providers (recall, prediction, activity, etc).
+      // Future improvement: Create a SkillsContextState holder (similar to RecallContextState) that
+      // stores skill content and registers as a dynamic provider in classifiedProviders. This would
+      // allow skill injection to be cached and versioned in snapshots. Requires:
+      // 1. New SkillsContextState type with setContent/getContent methods
+      // 2. Creating the holder before agent loop (in index.ts composition root)
+      // 3. Passing it as AgentDependencies.skillsContextState
+      // 4. Calling setContent after getRelevant() here, then removing this direct mutation
+      // For now, this approach works but prevents skills from being routed through snapshot caching.
       if (deps.skills) {
         try {
           const maxSkills = deps.config.max_skills_per_turn ?? 3;

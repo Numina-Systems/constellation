@@ -162,6 +162,11 @@ export function createAgent(
 
     let compactionOccurredThisTurn = false;
     if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
+      // Pre-compaction checkpoint (AC1.2)
+      if (deps.checkpointFn) {
+        await deps.checkpointFn('pre_compaction');
+      }
+
       const result = await deps.compactor.compress(history, id);
       history = Array.from(result.history);
       // Reset snapshot state after compaction so next turn gets full snapshot
@@ -330,6 +335,28 @@ export function createAgent(
           reasoning_content: response.reasoning_content,
         });
 
+        // Update checkpoint state ref (AC1.4, AC1.5)
+        if (deps.checkpointStateRef) {
+          const currentHistory = await loadConversationHistory(id);
+          const messageIds = currentHistory.map(m => m.id);
+          deps.checkpointStateRef.current = {
+            turnNumber,
+            toolRound: 0,
+            messageIds,
+            compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+          };
+        }
+
+        // Turn-interval checkpoint (AC1.4, AC1.5)
+        if (
+          deps.checkpointFn &&
+          deps.config.checkpoint_interval &&
+          deps.config.checkpoint_interval > 0 &&
+          turnNumber % deps.config.checkpoint_interval === 0
+        ) {
+          await deps.checkpointFn('interval');
+        }
+
         return text;
       }
 
@@ -371,6 +398,11 @@ export function createAgent(
               // Special case: context compaction
               const compactSuccess = !!deps.compactor;
               if (deps.compactor) {
+                // Pre-compaction checkpoint (AC1.2)
+                if (deps.checkpointFn) {
+                  await deps.checkpointFn('pre_compaction');
+                }
+
                 const compactionResult = await deps.compactor.compress(history, id);
                 history = Array.from(compactionResult.history);
                 // Reset snapshot state after compaction so next tool round gets full snapshot
@@ -453,6 +485,28 @@ export function createAgent(
       role: 'assistant',
       content: warningMessage,
     });
+
+    // Update checkpoint state ref (AC1.4, AC1.5)
+    if (deps.checkpointStateRef) {
+      const currentHistory = await loadConversationHistory(id);
+      const messageIds = currentHistory.map(m => m.id);
+      deps.checkpointStateRef.current = {
+        turnNumber,
+        toolRound: 0,
+        messageIds,
+        compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+      };
+    }
+
+    // Turn-interval checkpoint (AC1.4, AC1.5)
+    if (
+      deps.checkpointFn &&
+      deps.config.checkpoint_interval &&
+      deps.config.checkpoint_interval > 0 &&
+      turnNumber % deps.config.checkpoint_interval === 0
+    ) {
+      await deps.checkpointFn('interval');
+    }
 
     return warningMessage;
   }

@@ -162,7 +162,7 @@ describe('loop-detection.AC5.2: trace recorded via TraceRecorder interface', () 
   });
 });
 
-describe('loop-detection.AC5.3: non-activation does not record trace', async () => {
+describe('loop-detection.AC5.3: non-activation does not record trace', () => {
   test('does not record trace when responses do not trigger breaker', async () => {
     const { recorder, traces } = createMockTraceRecorder();
     const config = DEFAULT_LOOP_DETECTION_CONFIG;

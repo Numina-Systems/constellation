@@ -1,5 +1,3 @@
-// pattern: Imperative Shell (barrel export)
-
 export type {
   LoopDetectionAction,
   LoopDetectionConfig,

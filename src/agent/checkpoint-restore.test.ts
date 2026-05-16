@@ -165,13 +165,91 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
       };
 
       // Attempt restore - should throw
-      await expect(restoreFromCheckpoint(checkpoint, deps)).rejects.toThrow('pre-flight validation failed');
+      let caughtError: unknown;
+      try {
+        await restoreFromCheckpoint(checkpoint, deps);
+        expect.unreachable('should have thrown AgentError');
+      } catch (err) {
+        caughtError = err;
+      }
+
+      // AC5.1: Assert error structure (instanceof, code, context fields)
+      expect(caughtError).toBeInstanceOf(Error);
+      const { AgentError } = await import('@/errors/agent.ts');
+      expect(caughtError).toBeInstanceOf(AgentError);
+      expect((caughtError as any).code).toBe('CHECKPOINT_FAILED');
+      expect((caughtError as any).context.conversationId).toBe(checkpoint.conversationId);
+      expect((caughtError as any).context.checkpointId).toBe(checkpoint.id);
+      expect((caughtError as any).message).toContain('pre-flight validation failed');
 
       // Verify state unchanged: existing block should still be present
       const blocks = await memory.list('working');
       expect(blocks.length).toBe(1);
       expect(blocks[0]!.label).toBe('existing-block');
       expect(blocks[0]!.content).toBe('initial content');
+    });
+  });
+
+  describe('arch-hardening.AC5.2: Error tracing on checkpoint validation failure', () => {
+    it('should call traceError when pre-flight validation fails', async () => {
+      // Setup: create message
+      await persistence.query(
+        `INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)`,
+        [randomUUID(), TEST_CONVERSATION_ID, 'user', 'test'],
+      );
+
+      // Create checkpoint with invalid label
+      const checkpoint: SessionCheckpoint = {
+        version: 1,
+        id: 'checkpoint-trace-test',
+        conversationId: TEST_CONVERSATION_ID,
+        owner: AGENT_OWNER,
+        trigger: 'explicit',
+        turnNumber: 5,
+        toolRound: 2,
+        messageIds: [],
+        workingMemory: [
+          { label: '999-bad', content: 'invalid' },
+        ],
+        pendingPredictions: [],
+        activeInterests: [],
+        compactionMeta: { lastCompactedIndex: 0, summaryCount: 0 },
+        recallCache: null,
+        createdAt: new Date().toISOString(),
+      };
+
+      const deps: RestorationDependencies = {
+        persistence,
+        memory,
+        messageStore,
+        predictionStore,
+        interestRegistry,
+        traceRecorder,
+        owner: AGENT_OWNER,
+      };
+
+      // Execute - should fail and trace error
+      try {
+        await restoreFromCheckpoint(checkpoint, deps);
+        expect.unreachable('should have thrown');
+      } catch {
+        // Expected
+      }
+
+      // AC5.2: Verify traceError was called by checking operation_traces table
+      // traceError records with toolName = error.subsystem ('agent')
+      const traces = await persistence.query<any>(
+        `SELECT * FROM operation_traces
+         WHERE owner = $1 AND tool_name = $2 AND conversation_id = $3
+         ORDER BY created_at DESC LIMIT 1`,
+        [AGENT_OWNER, 'agent', TEST_CONVERSATION_ID],
+      );
+
+      expect(traces.length).toBeGreaterThan(0);
+      const trace = traces[0];
+      expect(trace.success).toBe(false);
+      expect(trace.input).toBeDefined();
+      expect((trace.input as any).errorCode).toBe('CHECKPOINT_FAILED');
     });
   });
 

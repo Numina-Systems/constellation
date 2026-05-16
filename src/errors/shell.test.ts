@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'bun:test';
 import { ShellError, type ShellErrorCode } from './shell.js';
 import { ConstellationError } from './base.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 describe('arch-hardening.AC5.3: ShellError is ConstellationError with subsystem shell', () => {
   it('instantiates with SHELL_CREATION_FAILED code', () => {
@@ -119,5 +121,44 @@ describe('ShellError serialization', () => {
     const json = error.toJSON();
 
     expect(json.suggestion).toBeDefined();
+  });
+});
+
+describe('arch-hardening.AC5.5: Error handling must use structured errors, not bare Error', () => {
+  it('checkpoint-restore.ts contains no bare throw new Error() statements', () => {
+    const filePath = resolve(import.meta.dir, '../agent/checkpoint-restore.ts');
+    const content = readFileSync(filePath, 'utf-8');
+
+    // Check for bare "throw new Error(" patterns (not caught by ShellCreationError or AgentError)
+    const bareErrorPattern = /throw\s+new\s+Error\s*\(/g;
+    const matches = content.match(bareErrorPattern) || [];
+
+    expect(matches.length).toBe(0);
+  });
+
+  it('shell/session.ts contains no bare throw new Error() statements', () => {
+    const filePath = resolve(import.meta.dir, '../shell/session.ts');
+    const content = readFileSync(filePath, 'utf-8');
+
+    // Check for bare "throw new Error(" patterns (not caught by ShellError)
+    const bareErrorPattern = /throw\s+new\s+Error\s*\(/g;
+    const matches = content.match(bareErrorPattern) || [];
+
+    expect(matches.length).toBe(0);
+  });
+
+  it('all throw statements in shell/session.ts use ShellError', () => {
+    const filePath = resolve(import.meta.dir, '../shell/session.ts');
+    const content = readFileSync(filePath, 'utf-8');
+
+    // Find all throw statements
+    const throwPattern = /throw\s+(?:new\s+)?(\w+Error)\s*\(/g;
+    const matches = Array.from(content.matchAll(throwPattern));
+
+    // Verify each throw is using ShellError
+    for (const match of matches) {
+      const errorClass = match[1];
+      expect(errorClass).toBe('ShellError');
+    }
   });
 });

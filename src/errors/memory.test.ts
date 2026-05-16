@@ -42,7 +42,7 @@ describe('MemoryError', () => {
       { available: ['status', 'goals', 'personality'] }
     );
     expect(error.context).toBeDefined();
-    expect(error.context.available).toEqual(['status', 'goals', 'personality']);
+    expect(error.context['available']).toEqual(['status', 'goals', 'personality']);
   });
 
   // AC6.4: MemoryError instanceof checks

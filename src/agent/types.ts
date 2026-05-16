@@ -17,6 +17,7 @@ import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { RecallContextState } from '../recall/index.js';
 import type { SearchStore } from '../search/store.js';
+import type { LoopDetector } from '@/loop-detection/types.js';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -79,6 +80,7 @@ export type AgentDependencies = {
   searchStore?: SearchStore;
   summarizationModel?: ModelProvider;
   summarizationModelName?: string;
+  loopDetector?: LoopDetector;
 };
 
 export type Agent = {

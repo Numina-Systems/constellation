@@ -9,9 +9,11 @@
 // UUID generation is built-in to Bun via crypto
 import { toSql } from 'pgvector/utils';
 import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
+import { createSnapshotState } from './snapshot.ts';
+import { buildUserMessage } from './messages.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
-import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent } from './types.ts';
+import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
 import type { MemoryManager } from '../memory/manager.ts';
@@ -68,6 +70,24 @@ function formatExternalEvent(
 }
 
 /**
+ * Build a dynamic providers map from classified providers.
+ * Extracts providers with 'dynamic' classification into the format
+ * expected by computeSnapshot: ReadonlyMap<string, () => string | undefined>.
+ */
+function buildDynamicProviderMap(
+  classified: ReadonlyArray<ClassifiedProvider> | undefined,
+): ReadonlyMap<string, () => string | undefined> {
+  if (!classified) return new Map();
+  const map = new Map<string, () => string | undefined>();
+  for (const cp of classified) {
+    if (cp.classification === 'dynamic') {
+      map.set(cp.name, cp.provider);
+    }
+  }
+  return map;
+}
+
+/**
  * Create an agent instance.
  * If conversationId is not provided, generates a new ULID/UUID.
  * If provided, loads existing conversation history from Postgres.
@@ -82,6 +102,12 @@ export function createAgent(
   const maxTokens = deps.config.max_tokens ?? DEFAULT_MAX_TOKENS;
 
   const traceOwner = deps.owner ?? 'unknown';
+
+  // Create snapshot state for batch-anchored snapshots (Phase 4)
+  const snapshotState = createSnapshotState();
+
+  // Build dynamic providers map once (providers don't change, but their state does each turn)
+  const dynamicProviders = buildDynamicProviderMap(deps.classifiedProviders);
 
   function recordTrace(
     toolName: string,
@@ -126,6 +152,8 @@ export function createAgent(
     if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
       const result = await deps.compactor.compress(history, id);
       history = Array.from(result.history);
+      // Reset snapshot state after compaction so next turn gets full snapshot
+      snapshotState.reset();
     }
 
     // Step 4 & 5: Build context and call model
@@ -204,6 +232,17 @@ export function createAgent(
         finalMessages = truncateOldest(messages, modelMaxTokens, requestOverhead);
       }
 
+      // Compute snapshot — first round forces full, subsequent rounds detect delta/noop
+      const isFirstRound = roundCount === 1;
+      const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, isFirstRound);
+
+      // Build final user message with snapshot composition
+      const lastMessage = finalMessages[finalMessages.length - 1];
+      if (lastMessage && lastMessage.role === 'user' && typeof lastMessage.content === 'string') {
+        const composedUserMessage = buildUserMessage(lastMessage.content, snapshotResult);
+        finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
+      }
+
       // Call the model with current context
       const modelRequest = {
         messages: finalMessages,
@@ -272,6 +311,8 @@ export function createAgent(
               if (deps.compactor) {
                 const compactionResult = await deps.compactor.compress(history, id);
                 history = Array.from(compactionResult.history);
+                // Reset snapshot state after compaction so next tool round gets full snapshot
+                snapshotState.reset();
 
                 toolResult = JSON.stringify({
                   messagesCompressed: compactionResult.messagesCompressed,

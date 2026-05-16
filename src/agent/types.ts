@@ -49,6 +49,16 @@ export type ExternalEvent = {
   readonly timestamp: Date;
 };
 
+export type CheckpointState = {
+  readonly turnNumber: number;
+  readonly toolRound: number;
+  readonly messageIds: ReadonlyArray<string>;
+  readonly compactionMeta: {
+    readonly lastCompactedIndex: number;
+    readonly summaryCount: number;
+  };
+};
+
 export type ContextProvider = () => string | undefined;
 
 export type ProviderClassification = 'stable' | 'dynamic';
@@ -85,5 +95,6 @@ export type Agent = {
   processMessage(userMessage: string): Promise<string>;
   processEvent(event: ExternalEvent): Promise<string>;
   getConversationHistory(): Promise<Array<ConversationMessage>>;
+  getCheckpointState(): CheckpointState | null;
   conversationId: string;
 };

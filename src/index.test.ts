@@ -23,6 +23,7 @@ function createMockAgent(overrides?: Partial<Agent>): Agent {
     processMessage: mock(async (_message: string) => 'mock response'),
     processEvent: mock(async () => 'mock response'),
     getConversationHistory: mock(async () => []),
+    getCheckpointState: mock(() => null),
     conversationId: 'test-conv-123',
     ...overrides,
   };

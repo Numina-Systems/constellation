@@ -89,7 +89,7 @@ function createMockModelProvider(options?: { toolUseFirst?: boolean }): ModelPro
     stream: async function* (_request: ModelRequest) {
       yield {
         type: 'content_block_delta' as const,
-        delta: { type: 'text_delta' as const, text: 'streamed' },
+        delta: { type: 'text_delta' as const, text: 'streamed', index: 0 },
       };
     },
   };
@@ -103,7 +103,7 @@ function createMockToolRegistry(): Partial<ToolRegistry> {
     toModelTools: () => [],
     generateStubs: () => '',
     dispatch: async (_name: string, _input: Record<string, unknown>) => {
-      return { success: true, output: 'No-op tool executed', error: null };
+      return { success: true, output: 'No-op tool executed', error: undefined };
     },
   };
 }
@@ -118,24 +118,58 @@ function createMockMemoryManager(): Partial<MemoryManager> {
     buildSystemPrompt: async () => 'Test system prompt',
     read: async () => [],
     write: async () => ({
-      success: true,
-      id: 'test-id',
-      contentLength: 0,
-      blockLabel: 'test',
+      applied: true,
+      block: {
+        id: 'test-id',
+        owner: 'test-owner',
+        tier: 'working' as const,
+        label: 'test',
+        content: 'test',
+        embedding: null,
+        permission: 'readwrite' as const,
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
     }),
     list: async () => [],
     deleteBlock: async () => {},
     moveBlock: async (id: string, _targetTier) => ({
       id,
+      owner: 'test-owner',
       label: 'test',
       content: 'test',
       tier: 'working' as const,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      embedding: null,
+      permission: 'readwrite' as const,
+      pinned: false,
+      created_at: new Date(),
+      updated_at: new Date(),
     }),
-    generateEmbedding: async () => null,
-    getCompactionMetadata: async () => ({ lastCompactedIndex: 0, summaryCount: 0 }),
-    getMemoryStats: async () => ({ core: 0, working: 0, archival: 0 }),
+    getStats: async () => ({ tier: 'all', block_count: 0, total_bytes: 0 }),
+    getPendingMutations: async () => [],
+    approveMutation: async () => ({
+      id: 'test-id',
+      owner: 'test-owner',
+      label: 'test',
+      content: 'test',
+      tier: 'working' as const,
+      embedding: null,
+      permission: 'readwrite' as const,
+      pinned: false,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }),
+    rejectMutation: async () => ({
+      id: 'test-id',
+      block_id: 'test-block-id',
+      proposed_content: 'test',
+      reason: null,
+      status: 'rejected' as const,
+      feedback: null,
+      created_at: new Date(),
+      resolved_at: new Date(),
+    }),
   };
 }
 
@@ -147,6 +181,9 @@ function createMockCodeRuntime(): Partial<CodeRuntime> {
     execute: async (_code: string, _stubs: string, _context?: unknown) => ({
       success: true,
       output: 'Code executed',
+      error: null,
+      tool_calls_made: 0,
+      duration_ms: 0,
     }),
   };
 }
@@ -220,10 +257,6 @@ describe('arch-hardening.AC3: History loading per turn', () => {
   });
 
   it('arch-hardening.AC3.2: Checkpoint state includes message IDs from locally-appended messages', async () => {
-    // We need to expose checkpointStateRef to verify it contains the right IDs
-    // This requires modifying createAgent to accept it as a dependency
-    // For now, we verify by checking the history can be loaded and includes all IDs
-
     const config: AgentConfig = {
       max_tool_rounds: 5,
       context_budget: 0.7,
@@ -253,6 +286,17 @@ describe('arch-hardening.AC3: History loading per turn', () => {
 
     expect(hasUserMessage).toBe(true);
     expect(hasAssistantMessage).toBe(true);
+
+    // Verify checkpoint state contains message IDs from history
+    const checkpointState = agent.getCheckpointState();
+    expect(checkpointState).not.toBeNull();
+    expect(checkpointState?.messageIds.length).toBe(history.length);
+
+    // Verify all history message IDs are in checkpoint state
+    const historyIds = history.map(m => m.id);
+    for (const id of historyIds) {
+      expect(checkpointState?.messageIds).toContain(id);
+    }
   });
 
   it('arch-hardening.AC3.3: Mid-turn checkpoint (triggered by tool) captures all messages persisted up to that point', async () => {
@@ -292,9 +336,9 @@ describe('arch-hardening.AC3: History loading per turn', () => {
     expect(history.length).toBeGreaterThanOrEqual(4);
 
     // Verify order: user, assistant, tool, assistant
-    expect(history[0].role).toBe('user');
-    expect(history[1].role).toBe('assistant');
-    expect(history[2].role).toBe('tool');
-    expect(history[history.length - 1].role).toBe('assistant');
+    expect(history[0]?.role).toBe('user');
+    expect(history[1]?.role).toBe('assistant');
+    expect(history[2]?.role).toBe('tool');
+    expect(history[history.length - 1]?.role).toBe('assistant');
   });
 });

@@ -14,7 +14,7 @@ import { buildUserMessage } from './messages.ts';
 import { createCacheDiagnostics, serializeTools } from './cache-diagnostics.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
-import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
+import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider, CheckpointState } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
 import type { MemoryManager } from '../memory/manager.ts';
@@ -170,22 +170,20 @@ export function createAgent(
    * history array passed by the caller (already kept in sync via manual pushes).
    * Verifies: arch-hardening.AC3.1 (single load per turn)
    */
-  async function updateCheckpointStateAndTriggerInterval(
+  function updateCheckpointStateAndTriggerInterval(
     currentTurnNumber: number,
     currentHistory: ReadonlyArray<ConversationMessage>,
-  ): Promise<void> {
-    if (checkpointStateRef) {
-      const messageIds = currentHistory.map(m => m.id);
-      checkpointStateRef.current = {
-        turnNumber: currentTurnNumber,
-        toolRound: 0,
-        messageIds,
-        compactionMeta: {
-          lastCompactedIndex: Math.max(0, lastCompactionMessageCount - 1),
-          summaryCount: lastCompactionSummaryCount,
-        },
-      };
-    }
+  ): void {
+    const messageIds = currentHistory.map(m => m.id);
+    checkpointStateRef.current = {
+      turnNumber: currentTurnNumber,
+      toolRound: 0,
+      messageIds,
+      compactionMeta: {
+        lastCompactedIndex: Math.max(0, lastCompactionMessageCount - 1),
+        summaryCount: lastCompactionSummaryCount,
+      },
+    };
     // Future: trigger checkpoint creation at configured intervals
   }
 
@@ -394,7 +392,7 @@ export function createAgent(
         });
 
         // Update checkpoint state with current history (verifies AC3.1, AC3.2)
-        await updateCheckpointStateAndTriggerInterval(turnNumber, history);
+        updateCheckpointStateAndTriggerInterval(turnNumber, history);
 
         return text;
       }
@@ -552,10 +550,15 @@ export function createAgent(
     return processMessage(formattedMessage);
   }
 
+  function getCheckpointState(): CheckpointState | null {
+    return checkpointStateRef.current;
+  }
+
   return {
     processMessage,
     processEvent,
     getConversationHistory,
+    getCheckpointState,
     conversationId: id,
   };
 

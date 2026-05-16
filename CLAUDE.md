@@ -24,6 +24,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `docker compose up -d` -- Start pgvector PostgreSQL
 
 ## Project Structure
+- `src/errors/` -- Structured error hierarchy (ConstellationError base, subsystem errors, trace integration, utilities)
 - `src/config/` -- TOML config loading, Zod schemas
 - `src/persistence/` -- PostgreSQL adapter, migrations
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama, OpenRouter)
@@ -55,6 +56,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - **Barrel exports**: Each module has `index.ts` exporting public API
 - **Factory functions over classes**: `createFoo()` returns interface, no `new`
 - **Path aliases**: `@/*` maps to `./src/*` (tsconfig paths)
+- **Structured errors**: Subsystem errors extend `ConstellationError` from `src/errors/`. Domain modules re-export their error type from `src/errors/` (e.g., `src/model/types.ts` re-exports `ModelError`). Errors carry `code`, `subsystem`, `context`, and optional `suggestion`. Use `traceError()` to record errors as operation traces in catch blocks.
 - **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `OPENROUTER_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` override config.toml values
 
 ## Boundaries

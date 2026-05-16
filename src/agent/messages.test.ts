@@ -1,7 +1,10 @@
 import {describe, test, expect} from 'bun:test';
 import {buildUserMessage} from './messages.ts';
+import {buildMessages} from './context.ts';
 import type {SnapshotResult} from './snapshot.ts';
 import type {TextBlock} from '../model/types.ts';
+import type {ConversationMessage} from './types.ts';
+import type {MemoryManager} from '../memory/manager.ts';
 
 // Type guard to narrow ContentBlock to TextBlock
 function isTextBlock(block: unknown): block is TextBlock {
@@ -166,5 +169,164 @@ describe('AC2: Attachment Composition', () => {
     expect(isTextBlock(contentArrayDelta[0])).toBe(true);
     if (!isTextBlock(contentArrayDelta[0])) throw new Error('Expected TextBlock');
     expect(contentArrayDelta[0].text).toContain('Updated Sections');
+  });
+});
+
+describe('AC6.1: End-to-End Message Composition', () => {
+  /**
+   * Create a mock memory manager for integration testing.
+   * Returns fixed working memory blocks.
+   */
+  function createMockMemoryForIntegration(workingBlocks: Array<{ label: string; content: string }>): MemoryManager {
+    return {
+      buildSystemPrompt: async () => 'Base system prompt.',
+      getWorkingBlocks: async () => workingBlocks,
+      // Other methods stubbed
+      addCore: async () => {},
+      removeCore: async () => {},
+      getCore: async () => [],
+      addWorking: async () => {},
+      removeWorking: async () => {},
+      getWorking: async () => [],
+      addArchival: async () => {},
+      searchArchival: async () => [],
+      archiveWorking: async () => {},
+    } as unknown as MemoryManager;
+  }
+
+  test('AC6.1: buildMessages() composes conversation history with working memory context', async () => {
+    const mockMemory = createMockMemoryForIntegration([
+      { label: 'Recent Context', content: 'The user asked about TypeScript.' },
+    ]);
+
+    const history: ConversationMessage[] = [
+      {
+        id: '1',
+        conversation_id: 'conv-1',
+        role: 'user',
+        content: 'hello',
+        created_at: new Date(),
+      },
+      {
+        id: '2',
+        conversation_id: 'conv-1',
+        role: 'assistant',
+        content: 'hi there',
+        created_at: new Date(),
+      },
+    ];
+
+    const messages = await buildMessages(history, mockMemory);
+
+    // First message should be the working memory context (prepended)
+    expect(messages.length).toBe(3);
+    expect(messages[0]).toBeDefined();
+    expect(messages[0]!.role).toBe('user');
+    expect(typeof messages[0]!.content).toBe('string');
+    expect((messages[0]!.content as string)).toContain('[Working Memory Context]');
+    expect((messages[0]!.content as string)).toContain('Recent Context');
+
+    // Second message should be the original user message
+    expect(messages[1]).toBeDefined();
+    expect(messages[1]!.role).toBe('user');
+    expect(messages[1]!.content).toBe('hello');
+
+    // Third message should be the assistant response
+    expect(messages[2]).toBeDefined();
+    expect(messages[2]!.role).toBe('assistant');
+    expect(messages[2]!.content).toBe('hi there');
+  });
+
+  test('AC6.1: buildUserMessage() attaches dynamic context to the current turn', async () => {
+    const snapshotWithRecall: SnapshotResult = {
+      mode: 'full',
+      content: '## Recall\nRecalled past context about the topic.',
+      hashes: new Map([['recall', 123n]]),
+      changedProviders: ['recall'],
+    };
+
+    const result = buildUserMessage('what did we discuss?', snapshotWithRecall);
+
+    expect(Array.isArray(result.content)).toBe(true);
+    if (!Array.isArray(result.content)) throw new Error('Expected array');
+
+    // First block is the attachment
+    const attachmentBlock = result.content[0];
+    expect(isTextBlock(attachmentBlock)).toBe(true);
+    if (!isTextBlock(attachmentBlock)) throw new Error('Expected TextBlock');
+    expect(attachmentBlock.text).toContain('[Dynamic Context — Full Snapshot]');
+    expect(attachmentBlock.text).toContain('Recalled past context');
+
+    // Second block is the user message
+    const userBlock = result.content[1];
+    expect(isTextBlock(userBlock)).toBe(true);
+    if (!isTextBlock(userBlock)) throw new Error('Expected TextBlock');
+    expect(userBlock.text).toBe('what did we discuss?');
+  });
+
+  test('AC6.1: End-to-end composition — buildMessages history + buildUserMessage current turn', async () => {
+    const mockMemory = createMockMemoryForIntegration([
+      { label: 'Context', content: 'Previous context.' },
+    ]);
+
+    const history: ConversationMessage[] = [
+      {
+        id: '1',
+        conversation_id: 'conv-1',
+        role: 'user',
+        content: 'first message',
+        created_at: new Date(),
+      },
+    ];
+
+    const messages = await buildMessages(history, mockMemory);
+
+    // Add the current turn with dynamic context
+    const currentTurnSnapshot: SnapshotResult = {
+      mode: 'full',
+      content: '## Recall\nRecall for current turn.',
+      hashes: new Map([['recall', 456n]]),
+      changedProviders: ['recall'],
+    };
+
+    const currentUserMessage = buildUserMessage('follow-up message', currentTurnSnapshot);
+
+    // Compose final message array
+    const finalMessages = [...messages, currentUserMessage];
+
+    // Verify overall structure: [working-memory-context, previous-user, current-user-with-attachment]
+    expect(finalMessages.length).toBe(3);
+
+    // Index 0: Working memory context
+    expect(finalMessages[0]).toBeDefined();
+    expect(finalMessages[0]!.role).toBe('user');
+    expect(typeof finalMessages[0]!.content).toBe('string');
+    expect((finalMessages[0]!.content as string)).toContain('[Working Memory Context]');
+
+    // Index 1: Previous user message
+    expect(finalMessages[1]).toBeDefined();
+    expect(finalMessages[1]!.role).toBe('user');
+    expect(finalMessages[1]!.content).toBe('first message');
+
+    // Index 2: Current user message with attachment
+    expect(finalMessages[2]).toBeDefined();
+    expect(finalMessages[2]!.role).toBe('user');
+    expect(Array.isArray(finalMessages[2]!.content)).toBe(true);
+    if (!Array.isArray(finalMessages[2]!.content)) throw new Error('Expected array');
+
+    const currentContent = finalMessages[2]!.content;
+    expect(currentContent.length).toBe(2);
+
+    // Attachment block
+    expect(currentContent[0]).toBeDefined();
+    expect(isTextBlock(currentContent[0]!)).toBe(true);
+    if (!isTextBlock(currentContent[0]!)) throw new Error('Expected TextBlock');
+    expect(currentContent[0]!.text).toContain('[Dynamic Context — Full Snapshot]');
+
+    // User message block
+    expect(currentContent[1]).toBeDefined();
+    expect(isTextBlock(currentContent[1]!)).toBe(true);
+    if (!isTextBlock(currentContent[1]!)) throw new Error('Expected TextBlock');
+    expect(currentContent[1]!.text).toBe('follow-up message');
   });
 });

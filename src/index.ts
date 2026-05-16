@@ -88,6 +88,7 @@ import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
 import { createCheckpointStore } from '@/persistence/checkpoint-store.ts';
 import { performCheckpoint, type CheckpointDependencies } from '@/agent/checkpoint-create.ts';
+import { restoreFromCheckpoint, type RestorationDependencies, type RestorationResult } from '@/agent/checkpoint-restore.ts';
 import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
 
 const AGENT_OWNER = 'spirit';
@@ -584,8 +585,39 @@ async function main(): Promise<void> {
 
   const registry = createToolRegistry();
 
+  // Step 1a: Create checkpoint store and load checkpoint for resume (AC6)
+  const checkpointStore = createCheckpointStore(persistence);
+
+  const resumeId = resumeCheckpointId ?? config.agent.resume_checkpoint;
+
+  let loadedCheckpoint:
+    | {
+        checkpoint: Awaited<ReturnType<typeof checkpointStore.load>>;
+        conversationId: string;
+      }
+    | null = null;
+
+  if (resumeId) {
+    const checkpoint = await checkpointStore.load(resumeId);
+    if (!checkpoint) {
+      console.error(`error: checkpoint ${resumeId} not found`);
+      process.exit(1);
+    }
+    console.log(`resuming from checkpoint ${resumeId} (conversation: ${checkpoint.conversationId})`);
+    loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId };
+  } else if (config.agent.auto_resume) {
+    const checkpoint = await checkpointStore.loadLatest(AGENT_OWNER);
+    if (checkpoint) {
+      console.log(`auto-resuming from checkpoint ${checkpoint.id} (conversation: ${checkpoint.conversationId})`);
+      loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId };
+    } else {
+      console.log('auto-resume enabled but no checkpoint found — starting fresh');
+    }
+  }
+
   // Generate conversation ID for main agent upfront so it can be shared with prediction tools
-  const mainConversationId = crypto.randomUUID();
+  // Use resumed conversation ID if available, otherwise generate a new one
+  const mainConversationId = loadedCheckpoint?.conversationId ?? crypto.randomUUID();
 
   const memoryTools = createMemoryTools(memory);
   for (const tool of memoryTools) {
@@ -987,9 +1019,7 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
-  // Step 1b: Set up checkpoint store and state ref
-  const checkpointStore = createCheckpointStore(persistence);
-
+  // Step 1b: Set up state ref and restoration (AC6)
   const agentStateRef: { current: CheckpointAgentState } = {
     current: {
       turnNumber: 0,
@@ -998,6 +1028,36 @@ async function main(): Promise<void> {
       compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
     },
   };
+
+  // Restore from checkpoint if one was loaded (AC6)
+  let restoredState: RestorationResult | null = null;
+  if (loadedCheckpoint && loadedCheckpoint.checkpoint) {
+    const restorationDeps: RestorationDependencies = {
+      persistence,
+      memory,
+      predictionStore,
+      interestRegistry,
+      recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+      owner: AGENT_OWNER,
+    };
+    try {
+      restoredState = await restoreFromCheckpoint(loadedCheckpoint.checkpoint, restorationDeps);
+      // Initialize agent state from restoration (AC6.1-6.3)
+      agentStateRef.current = {
+        turnNumber: restoredState.turnNumber,
+        toolRound: restoredState.toolRound,
+        messageIds: [],
+        compactionMeta: restoredState.compactionMeta,
+      };
+      console.log(
+        `restored: ${restoredState.messageCount} messages, turn ${restoredState.turnNumber}`,
+      );
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`failed to restore checkpoint: ${errorMsg}`);
+      process.exit(1);
+    }
+  }
 
   // Build checkpoint dependencies and bound checkpoint function
   const checkpointDeps: CheckpointDependencies = {

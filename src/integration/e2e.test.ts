@@ -199,6 +199,7 @@ describe('End-to-End Integration Tests', () => {
           max_tool_calls_per_exec: 25,
           recall_enabled: false,
           recall_token_budget: 4096,
+          cache_diagnostics: true,
         },
         registry,
       );
@@ -260,6 +261,7 @@ describe('End-to-End Integration Tests', () => {
           max_tool_calls_per_exec: 25,
           recall_enabled: false,
           recall_token_budget: 4096,
+          cache_diagnostics: true,
         },
         registry,
       );
@@ -452,6 +454,7 @@ describe('End-to-End Integration Tests', () => {
           max_tool_calls_per_exec: 25,
           recall_enabled: false,
           recall_token_budget: 4096,
+          cache_diagnostics: true,
         },
         registry,
       );
@@ -574,6 +577,7 @@ output(JSON.stringify(blocks).substring(0, 100));`,
           max_tool_calls_per_exec: 25,
           recall_enabled: false,
           recall_token_budget: 4096,
+          cache_diagnostics: true,
         },
         registry,
       );

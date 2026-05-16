@@ -28,6 +28,7 @@ export type AgentConfig = {
   skill_threshold?: number; // Minimum similarity threshold for skill inclusion (default: 0.3)
   recall_enabled?: boolean;
   recall_token_budget?: number;
+  cache_diagnostics?: boolean;
 };
 
 export type ConversationMessage = {

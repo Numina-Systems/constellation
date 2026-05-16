@@ -13,6 +13,7 @@ const AgentConfigSchema = z.object({
   max_context_tokens: z.number().int().positive().default(200000),
   recall_enabled: z.boolean().default(false),
   recall_token_budget: z.number().int().positive().default(4096),
+  cache_diagnostics: z.boolean().optional().default(true),
 });
 
 const OpenRouterConfigSchema = z.object({

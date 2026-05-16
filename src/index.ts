@@ -973,6 +973,7 @@ async function main(): Promise<void> {
       skill_threshold: config.skills?.similarity_threshold,
       recall_enabled: config.agent.recall_enabled,
       recall_token_budget: config.agent.recall_token_budget,
+      cache_diagnostics: config.agent.cache_diagnostics,
     },
     getExecutionContext,
     compactor,

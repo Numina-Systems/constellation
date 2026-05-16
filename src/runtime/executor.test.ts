@@ -92,6 +92,7 @@ describe('DenoExecutor Integration Tests', () => {
       max_context_tokens: 200000,
       recall_enabled: false,
       recall_token_budget: 4096,
+      cache_diagnostics: true,
     };
 
     executor = createDenoExecutor(config, createMockRegistry());

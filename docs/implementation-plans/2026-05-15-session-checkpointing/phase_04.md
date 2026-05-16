@@ -1,14 +1,14 @@
-# Session Checkpointing Implementation Plan
+# Session Checkpointing Implementation Plan — Phase 4
 
 **Goal:** Implement checkpoint restoration on startup, reconstructing full agent state from a serialized checkpoint.
 
-**Architecture:** Imperative Shell restoration function that reads a checkpoint from the store and replays state into the agent's subsystems. Integrated into the composition root startup sequence, before the agent loop begins. CLI flag and config-driven resume provide two entry points.
+**Architecture:** Imperative Shell restoration function that reads a checkpoint from the store and replays state into the agent's subsystems. Integrated into the composition root startup sequence, before the agent loop begins. CLI flag (`--resume`) and config-driven resume (`resume_checkpoint`, `auto_resume`) provide entry points.
 
-**Tech Stack:** Bun, TypeScript 5.7+, PostgreSQL, Zod
+**Tech Stack:** Bun (TypeScript), PostgreSQL
 
-**Scope:** Phase 4 of 4
+**Scope:** 4 phases from original design (phase 4 of 4)
 
-**Codebase verified:** 2026-05-15
+**Codebase verified:** 2026-05-16
 
 ---
 
@@ -20,7 +20,7 @@ This phase implements and tests:
 - **session-checkpointing.AC3.1 Success:** Restored agent sees the same conversation history as when checkpointed
 - **session-checkpointing.AC3.2 Success:** Restored agent's working memory matches the checkpoint state (not the current DB state if it diverged)
 - **session-checkpointing.AC3.3 Success:** Restored agent's pending predictions are present and reviewable
-- **session-checkpointing.AC3.4 Success:** Restored agent's active interests resume with their checkpointed engagement scores
+- **session-checkpointing.AC3.4 Success:** Restored agent's active interests resume with their checkpointed decay values
 - **session-checkpointing.AC3.5 Success:** Compaction metadata is restored so the next compaction check uses the correct baseline
 - **session-checkpointing.AC3.6 Failure:** Restoring a checkpoint for a conversation that has been deleted fails with a clear error (not a silent empty state)
 - **session-checkpointing.AC3.7 Edge:** Restoring the same checkpoint twice produces identical state each time (idempotent)
@@ -33,10 +33,12 @@ This phase implements and tests:
 
 ---
 
+<!-- START_SUBCOMPONENT_A (tasks 1-2) -->
+
 <!-- START_TASK_1 -->
 ### Task 1: Restoration function
 
-**Verifies:** session-checkpointing.AC3.1, AC3.2, AC3.3, AC3.4, AC3.5, AC3.6, AC3.7
+**Verifies:** session-checkpointing.AC3.1, session-checkpointing.AC3.2, session-checkpointing.AC3.3, session-checkpointing.AC3.4, session-checkpointing.AC3.5, session-checkpointing.AC3.6, session-checkpointing.AC3.7
 
 **Files:**
 - Create: `src/agent/checkpoint-restore.ts`
@@ -45,8 +47,9 @@ This phase implements and tests:
 
 Create `src/agent/checkpoint-restore.ts` with pattern annotation `// pattern: Imperative Shell`.
 
-Define `RestorationDependencies`:
+Import types from agent, persistence, memory, reflexion, subconscious, and recall modules.
 
+Define `RestorationDependencies`:
 ```typescript
 type RestorationDependencies = {
   readonly persistence: PersistenceProvider;
@@ -59,13 +62,12 @@ type RestorationDependencies = {
 ```
 
 Define `RestorationResult`:
-
 ```typescript
 type RestorationResult = {
   readonly conversationId: string;
   readonly turnNumber: number;
   readonly toolRound: number;
-  readonly compactionMetadata: {
+  readonly compactionMeta: {
     readonly lastCompactedIndex: number;
     readonly summaryCount: number;
   };
@@ -75,149 +77,125 @@ type RestorationResult = {
 
 Export `async function restoreFromCheckpoint(checkpoint: SessionCheckpoint, deps: RestorationDependencies): Promise<RestorationResult>`:
 
-1. **Verify conversation exists (AC3.6):** Query the messages table for the checkpoint's `conversationId`:
+1. **Verify conversation exists (AC3.6):** Query the messages table:
    ```sql
-   SELECT COUNT(*) as count FROM messages WHERE conversation_id = $1
+   SELECT COUNT(*)::int as count FROM messages WHERE conversation_id = $1
    ```
-   If count is `0`, throw an Error: `Cannot restore checkpoint ${checkpoint.id}: conversation ${checkpoint.conversationId} has no messages (deleted or missing)`.
+   If count is 0 AND `checkpoint.messageIds.length > 0`, throw: `"cannot restore checkpoint ${checkpoint.id}: conversation ${checkpoint.conversationId} has no messages (deleted or missing)"`. If the checkpoint itself had no messages (fresh conversation), this is fine.
 
-2. **Verify message coverage (AC3.1):** The checkpoint stores `messageIds`. Verify that the messages exist in the database:
+2. **Verify message coverage (AC3.1):** The checkpoint stores `messageIds`. Query existing message IDs:
    ```sql
-   SELECT id FROM messages WHERE conversation_id = $1 AND id = ANY($2)
+   SELECT id FROM messages WHERE conversation_id = $1
    ```
-   If the count of returned IDs does not match `checkpoint.messageIds.length`, log a warning about missing messages but continue (messages may have been pruned by compaction — this is expected). The conversation history is loaded from the DB by `conversationId`, not by individual message IDs. The `messageIds` in the checkpoint serve as a verification checksum, not a restoration source.
+   Compare against checkpoint's `messageIds`. If some are missing, log a warning (messages may have been pruned by compaction). The conversation history is loaded by `conversationId` on agent creation — `messageIds` serve as a verification checksum, not a data source.
 
-3. **Restore working memory (AC3.2):** The checkpoint's working memory may differ from what's currently in the database (if the DB state diverged after the checkpoint was taken). To restore:
-   - Get current working memory blocks: `deps.memory.getWorkingBlocks()` (owner is baked in at `MemoryManager` construction — no owner parameter needed)
-   - For each checkpoint block, check if a block with that label exists:
-     - If it exists and content differs, update it via `deps.memory.write(block.label, block.content, 'working')`
-     - If it doesn't exist, create it via `deps.memory.write(block.label, block.content, 'working')`
-   - For current DB blocks that are NOT in the checkpoint, delete them via `deps.memory.deleteBlock(blockId)` (they were created after the checkpoint and should be removed to match checkpoint state)
+3. **Restore working memory (AC3.2):** Working memory may have diverged from the checkpoint:
+   - Get current working blocks: `deps.memory.list('working')`
+   - For each checkpoint block (`checkpoint.workingMemory`):
+     - Find matching current block by label
+     - If exists and content differs: `deps.memory.write(block.label, block.content, 'working')`
+     - If doesn't exist: `deps.memory.write(block.label, block.content, 'working')`
+   - For current blocks NOT in checkpoint (created after checkpoint): `deps.memory.deleteBlock(block.id)`
 
-   **Note:** `MemoryManager.write()` goes through the mutation permission enforcement flow. For restoration of known-good checkpoint state, use the lower-level `MemoryStore` directly (via `deps.persistence.query()` or a dedicated store method) to bypass the mutation approval flow. This prevents the agent's memory permission system from rejecting legitimate restoration writes.
+   Note: `MemoryManager.write()` enforces permission checks. Working memory blocks use `readwrite` permission (see `src/memory/types.ts:10`), so writes should succeed. If any block uses `familiar` permission (requires human approval), the write will queue a mutation instead of applying immediately — log a warning if this happens.
 
-   This ensures the working memory exactly matches the checkpoint state (AC3.2).
+4. **Verify pending predictions (AC3.3):** Predictions are persisted in the database and don't need re-creation:
+   - If `deps.predictionStore` exists, call `deps.predictionStore.listPredictions(deps.owner, 'pending')`
+   - Compare against `checkpoint.pendingPredictions` by ID
+   - Log any discrepancies (predictions evaluated or expired since checkpoint)
+   - No re-creation — the DB is the source of truth for prediction lifecycle
 
-4. **Restore pending predictions (AC3.3):** The checkpoint stores prediction snapshots (`id`, `prediction`, `createdAt`). Since predictions are persisted in the database, we verify they still exist rather than re-creating them:
-   - If `deps.predictionStore` is present, call `deps.predictionStore.listPredictions(deps.owner, 'pending')`
-   - Log the count of pending predictions found. If checkpoint has predictions that no longer exist in DB (evaluated or expired since checkpoint), log a warning. This is informational — we don't re-create predictions.
+5. **Restore active interests (AC3.4):** Interest engagement scores may have decayed since checkpoint:
+   - If `deps.interestRegistry` exists, call `deps.interestRegistry.listInterests(deps.owner)`
+   - For each checkpoint interest, find matching DB interest by `id`
+   - If found and `engagementScore` differs: `deps.interestRegistry.updateInterest(id, { engagementScore: interest.engagementScore })`
+   - Log any interests in checkpoint that no longer exist in DB
 
-   Rationale: Predictions have evaluation state and FK constraints. Re-creating them would duplicate data. The checkpoint records what was pending at snapshot time. On restore, the DB is the source of truth for prediction existence — we just verify and log discrepancies.
+6. **Compaction metadata (AC3.5):** Return `checkpoint.compactionMeta` in the `RestorationResult`. The composition root uses this to set the agent's initial compaction baseline. The compactor doesn't expose a "set baseline" API — the agent tracks this via message array indexing internally.
 
-5. **Restore active interests (AC3.4):** Similar to predictions, interests are persisted:
-   - If `deps.interestRegistry` is present, call `deps.interestRegistry.listInterests(deps.owner, { status: 'active' })`
-   - For each interest in the checkpoint, find the matching DB interest by label (name). If found and the engagement score differs from the checkpoint value, update it via `deps.interestRegistry.updateInterest(id, { engagementScore: interest.engagementScore })`
-   - This restores the engagement scores to their checkpointed state (AC3.4)
+7. **Clear recall cache:** If `deps.recallContextState` exists, call `deps.recallContextState.setResult(null)`. The cache is a performance optimization — it will be rebuilt on the next turn via the recall pipeline. Attempting to reconstruct a full `RecallResult` from the checkpoint's summary data would be lossy.
 
-6. **Restore compaction metadata (AC3.5):** Return `compactionMetadata` from the checkpoint in the `RestorationResult`. The caller (composition root) uses this to initialize the agent's compaction baseline. The compaction module doesn't have a "set baseline" API — the agent tracks this internally via message array indexing. Returning it in the result lets the composition root set the initial state.
+8. Return `RestorationResult`.
 
-7. **Warm recall cache (AC3.6 content):** If `deps.recallContextState` is present and `checkpoint.recallCache` is not null:
-   - The recall cache stores a `RecallResult`. We can't fully reconstruct a `RecallResult` from the checkpoint's summary (which only has `decomposition` and `fragmentCount`). Instead, clear the cache by calling `deps.recallContextState.setResult(null)`. The next turn will re-run recall naturally.
-   - This is acceptable because recall is cheap (runs once per turn) and the cache is a performance optimization, not critical state.
+**Idempotency (AC3.7):** Running `restoreFromCheckpoint` twice with the same checkpoint produces identical state:
+- Working memory: idempotent upsert + delete (same labels → same content)
+- Interest scores: set to checkpoint values (same scores each time)
+- Recall cache: cleared (idempotent)
+- Returned metadata: derived from checkpoint (deterministic)
 
-8. Return `RestorationResult` with `conversationId`, `turnNumber`, `toolRound`, `compactionMetadata`, and `messageCount` (from the verification query).
-
-**Idempotency (AC3.7):** Running `restoreFromCheckpoint` twice with the same checkpoint produces the same state because:
-- Working memory is set to match checkpoint (idempotent upsert + delete)
-- Interest scores are set to checkpoint values (idempotent update)
-- Recall cache is cleared (idempotent)
-- Returned metadata is derived from checkpoint (deterministic)
+Export `RestorationDependencies`, `RestorationResult`, and `restoreFromCheckpoint`.
 
 **Verification:**
 Run: `bun run build`
 Expected: Type-check passes
 
-**Commit:** `feat(checkpoint): implement checkpoint restoration function`
+**Commit:** `feat(agent): implement checkpoint restoration function`
+
 <!-- END_TASK_1 -->
 
 <!-- START_TASK_2 -->
 ### Task 2: Restoration integration tests
 
-**Verifies:** session-checkpointing.AC3.1, AC3.2, AC3.3, AC3.4, AC3.5, AC3.6, AC3.7
+**Verifies:** session-checkpointing.AC3.1, session-checkpointing.AC3.2, session-checkpointing.AC3.3, session-checkpointing.AC3.4, session-checkpointing.AC3.5, session-checkpointing.AC3.6, session-checkpointing.AC3.7
 
 **Files:**
-- Test: `src/agent/checkpoint-restore.test.ts` (integration)
+- Create: `src/agent/checkpoint-restore.test.ts`
 
-**Implementation:**
+**Testing:**
 
-Create `src/agent/checkpoint-restore.test.ts` with integration tests against a real PostgreSQL database. These tests require a populated database with messages, memory blocks, predictions, and interests.
+Integration tests against a real PostgreSQL database. Follow setup pattern from `src/persistence/checkpoint-store.test.ts` and `src/skill/postgres-store.test.ts`.
 
-Setup: Connect to test database, run migrations, seed test data before each test, clean up after.
+Setup: Connect to test database, run migrations. Before each test, truncate relevant tables (`session_checkpoints`, working memory blocks, predictions, interests). Use `serializeCheckpoint()` to create test checkpoints.
 
-Test cases:
+Tests:
 
-1. **Full restoration round-trip (AC3.1, AC3.2, AC3.3, AC3.4, AC3.5):**
-   - Seed: Create a conversation with 5 messages, 2 working memory blocks, 1 pending prediction, 1 active interest
-   - Create a checkpoint via `serializeCheckpoint()` with matching state
-   - Save the checkpoint via `CheckpointStore.save()`
-   - Modify the DB state: add a new working memory block, change an interest's engagement score
-   - Call `restoreFromCheckpoint(checkpoint, deps)`
-   - Assert: working memory matches checkpoint (new block removed, original blocks intact)
-   - Assert: interest engagement score matches checkpoint value
-   - Assert: `RestorationResult.compactionMetadata` matches checkpoint
-   - Assert: `RestorationResult.messageCount` equals 5
+- **Full restoration (AC3.1, AC3.2, AC3.4, AC3.5):** Seed DB with messages, working memory blocks, and interests. Create checkpoint capturing this state. Modify DB state (add a memory block, change an engagement score). Call `restoreFromCheckpoint()`. Verify working memory matches checkpoint (new block removed, originals restored). Verify interest engagement score restored. Verify returned `compactionMeta` matches checkpoint.
 
-2. **Deleted conversation fails (AC3.6):**
-   - Create a checkpoint referencing a conversation ID
-   - Delete all messages for that conversation
-   - Call `restoreFromCheckpoint(checkpoint, deps)`
-   - Assert: throws Error with message containing "no messages"
+- **Deleted conversation fails (AC3.6):** Create checkpoint referencing a conversation with messages. Delete all messages. Call `restoreFromCheckpoint()`. Assert throws error containing "no messages".
 
-3. **Idempotent restoration (AC3.7):**
-   - Seed DB with known state
-   - Create and save checkpoint
-   - Call `restoreFromCheckpoint()` twice
-   - After both calls, assert working memory, interests, and returned metadata are identical
+- **Idempotent (AC3.7):** Seed DB. Create checkpoint. Call `restoreFromCheckpoint()` twice. After both calls, verify working memory, interests, and returned metadata are identical.
 
-4. **Empty checkpoint restores cleanly:**
-   - Create checkpoint with empty arrays for all collections
-   - Seed DB with some working memory blocks
-   - Call `restoreFromCheckpoint()`
-   - Assert: all working memory blocks deleted (checkpoint had none)
-   - Assert: result has zero-value compaction metadata
+- **Empty checkpoint restores cleanly:** Create checkpoint with empty arrays. Seed DB with working memory blocks. Call `restoreFromCheckpoint()`. Assert all working memory blocks deleted.
 
-5. **Missing predictions logged but not fatal:**
-   - Create checkpoint with a pending prediction
-   - Delete the prediction from DB (simulate evaluation that happened after checkpoint)
-   - Call `restoreFromCheckpoint()`
-   - Assert: does not throw. Function completes successfully.
+- **Missing predictions logged but not fatal (AC3.3):** Create checkpoint with a pending prediction. Delete the prediction from DB. Call `restoreFromCheckpoint()`. Assert no exception. Function completes.
 
-Stub approach: Use real `PersistenceProvider`, real `MemoryManager` (with `createPostgresMemoryStore`), real `PredictionStore`, real `InterestRegistry`. These are integration tests.
+- **Missing interests logged but not fatal (AC3.4):** Create checkpoint with an active interest. Delete the interest from DB. Call `restoreFromCheckpoint()`. Assert no exception.
 
 **Verification:**
 Run: `bun test src/agent/checkpoint-restore.test.ts`
-Expected: All tests pass (requires running PostgreSQL with migrations)
+Expected: All tests pass (requires PostgreSQL)
 
-**Commit:** `test(checkpoint): add checkpoint restoration integration tests`
+**Commit:** `test(agent): add checkpoint restoration integration tests`
+
 <!-- END_TASK_2 -->
+
+<!-- END_SUBCOMPONENT_A -->
 
 <!-- START_TASK_3 -->
 ### Task 3: CLI resume flag
 
-**Verifies:** session-checkpointing.AC6.1, AC6.4
+**Verifies:** session-checkpointing.AC6.1, session-checkpointing.AC6.4
 
 **Files:**
 - Modify: `src/index.ts`
 
 **Implementation:**
 
-In `src/index.ts`, parse CLI arguments before the composition root runs. Use `process.argv` directly (no need for a CLI framework for a single flag):
+In `src/index.ts`, add a simple CLI argument parser before the composition root runs. No framework needed for a single flag:
 
 ```typescript
 function parseResumeFlag(): string | undefined {
   const idx = process.argv.indexOf('--resume');
-  if (idx === -1 || idx + 1 >= process.argv.length) return undefined;
-  const value = process.argv[idx + 1];
-  if (!value || value.startsWith('--')) {
-    console.error('Error: --resume requires a checkpoint ID');
+  if (idx === -1) return undefined;
+  if (idx + 1 >= process.argv.length || process.argv[idx + 1]!.startsWith('--')) {
+    console.error('error: --resume requires a checkpoint ID');
     process.exit(1);
   }
-  return value;
+  return process.argv[idx + 1];
 }
 ```
 
-Call this early in the startup sequence:
-
+Call early in the startup sequence, before config loading:
 ```typescript
 const resumeCheckpointId = parseResumeFlag();
 ```
@@ -227,87 +205,77 @@ Run: `bun run build`
 Expected: Type-check passes
 
 **Commit:** `feat(checkpoint): add --resume CLI flag parsing`
+
 <!-- END_TASK_3 -->
 
 <!-- START_TASK_4 -->
 ### Task 4: Resume startup integration
 
-**Verifies:** session-checkpointing.AC6.1, AC6.2, AC6.3, AC6.4
+**Verifies:** session-checkpointing.AC6.1, session-checkpointing.AC6.2, session-checkpointing.AC6.3, session-checkpointing.AC6.4
 
 **Files:**
 - Modify: `src/index.ts`
 
 **Implementation:**
 
-After the `CheckpointStore` is created and config is loaded, but before `createAgent()` is called, add the resume logic:
+After `CheckpointStore` is created and config is loaded, but before `createAgent()` is called, add the resume logic:
 
 ```typescript
-// Determine checkpoint to restore (CLI flag > config > auto_resume)
 const resumeId = resumeCheckpointId ?? config.agent.resume_checkpoint;
 
 let restoredState: RestorationResult | null = null;
 let resumeConversationId: string | undefined;
 
 if (resumeId) {
-  // Explicit checkpoint ID — load it or fail
   const checkpoint = await checkpointStore.load(resumeId);
   if (!checkpoint) {
-    console.error(`Error: checkpoint ${resumeId} not found`);
+    console.error(`error: checkpoint ${resumeId} not found`);
     process.exit(1);
   }
-  console.log(`Resuming from checkpoint ${resumeId} (conversation: ${checkpoint.conversationId})`);
+  console.log(`resuming from checkpoint ${resumeId} (conversation: ${checkpoint.conversationId})`);
   restoredState = await restoreFromCheckpoint(checkpoint, restorationDeps);
   resumeConversationId = checkpoint.conversationId;
 } else if (config.agent.auto_resume) {
-  // Auto-resume: load most recent checkpoint for owner
-  const owner = config.agent.owner ?? 'default';
-  const checkpoint = await checkpointStore.loadLatest(owner);
+  const checkpoint = await checkpointStore.loadLatest(AGENT_OWNER);
   if (checkpoint) {
-    console.log(`Auto-resuming from checkpoint ${checkpoint.id} (conversation: ${checkpoint.conversationId})`);
+    console.log(`auto-resuming from checkpoint ${checkpoint.id} (conversation: ${checkpoint.conversationId})`);
     restoredState = await restoreFromCheckpoint(checkpoint, restorationDeps);
     resumeConversationId = checkpoint.conversationId;
   } else {
-    console.log('Auto-resume enabled but no checkpoint found — starting fresh');
+    console.log('auto-resume enabled but no checkpoint found — starting fresh');
   }
 }
 
-// Create agent with restored conversation ID if resuming
-const agent = createAgent(deps, resumeConversationId);
+const mainConversationId = resumeConversationId ?? crypto.randomUUID();
 ```
 
-If `resumeConversationId` is provided to `createAgent()`, it resumes that conversation (this is existing behaviour — `createAgent` already accepts an optional `conversationId`).
+Pass `mainConversationId` to `createAgent(deps, mainConversationId)` — this is existing behaviour, the agent loads history from DB when given an existing conversation ID.
 
-After agent creation, if `restoredState` is present, initialize the agent state ref with restored values:
-
+After agent creation, initialize state from restoration:
 ```typescript
 if (restoredState) {
   agentStateRef.current = {
     turnNumber: restoredState.turnNumber,
     toolRound: restoredState.toolRound,
-    messageIds: [], // Will be populated on next history load
-    compactionMetadata: restoredState.compactionMetadata,
+    messageIds: [],
+    compactionMeta: restoredState.compactionMeta,
   };
-  console.log(`Restored: ${restoredState.messageCount} messages, turn ${restoredState.turnNumber}`);
+  console.log(`restored: ${restoredState.messageCount} messages, turn ${restoredState.turnNumber}`);
 }
 ```
 
 **Error handling (AC6.4):**
-- Explicit `--resume <id>` with invalid/missing ID: `process.exit(1)` with clear error message
-- `resume_checkpoint` config with invalid ID: same
-- `auto_resume` with no checkpoints: log and continue (start fresh)
-- Restoration failure (e.g., deleted conversation): error propagates, prints stack trace, `process.exit(1)`
+- `--resume <id>` with missing checkpoint: `process.exit(1)` with error
+- `resume_checkpoint` config with missing checkpoint: `process.exit(1)` with error
+- `auto_resume` with no checkpoints: log and start fresh
+- Restoration failure (deleted conversation): error propagates, `process.exit(1)`
 
 **Verification:**
 Run: `bun run build`
 Expected: Type-check passes. Application starts without `--resume` flag (no regression).
 
-Test manually:
-1. Start the daemon, have a conversation, trigger `/checkpoint`
-2. Stop the daemon
-3. Start with `bun run start -- --resume <checkpoint_id>`
-4. Verify the conversation resumes with correct state
-
 **Commit:** `feat(checkpoint): wire resume startup with CLI flag and auto_resume`
+
 <!-- END_TASK_4 -->
 
 <!-- START_TASK_5 -->
@@ -316,22 +284,23 @@ Test manually:
 **Verifies:** None (infrastructure + final validation)
 
 **Files:**
-- Modify: `src/agent/index.ts` (ensure restoration exports are present)
+- Modify: `src/agent/index.ts`
 
 **Implementation:**
 
-Add to `src/agent/index.ts`:
+Add exports for Phase 3 and Phase 4 modules to `src/agent/index.ts`:
 
 ```typescript
-export type { RestorationDependencies, RestorationResult } from './checkpoint-restore.js';
-export { restoreFromCheckpoint } from './checkpoint-restore.js';
-export type { CheckpointDependencies, CheckpointAgentState } from './checkpoint-create.js';
-export { performCheckpoint } from './checkpoint-create.js';
+export type { RestorationDependencies, RestorationResult } from './checkpoint-restore.ts';
+export { restoreFromCheckpoint } from './checkpoint-restore.ts';
+export type { CheckpointDependencies, CheckpointAgentState } from './checkpoint-create.ts';
+export { performCheckpoint } from './checkpoint-create.ts';
 ```
 
 **Verification:**
 Run: `bun run build && bun test`
-Expected: Full type-check passes. All tests pass (unit and integration).
+Expected: Full type-check passes. All tests pass (unit and integration, excluding pre-existing PostgreSQL connection failures).
 
-**Commit:** `feat(checkpoint): complete session checkpointing feature`
+**Commit:** `feat(agent): export checkpoint restoration and creation from barrel`
+
 <!-- END_TASK_5 -->

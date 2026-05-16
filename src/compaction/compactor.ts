@@ -655,7 +655,7 @@ export function createCompactor(
         }
 
         // Only retry on timeout specifically
-        if (!(error instanceof ModelError && error.code === 'timeout')) {
+        if (!(error instanceof ModelError && error.code === 'TIMEOUT')) {
           throw error;
         }
 

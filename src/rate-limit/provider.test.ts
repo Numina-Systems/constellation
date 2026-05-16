@@ -374,7 +374,7 @@ describe('createRateLimitedProvider', () => {
       } catch (err) {
         expect(err).toBeInstanceOf(ModelError);
         if (err instanceof ModelError) {
-          expect(err.code).toBe('rate_limit');
+          expect(err.code).toBe('RATE_LIMITED');
         }
       }
     });
@@ -400,7 +400,7 @@ describe('createRateLimitedProvider', () => {
       } catch (err) {
         expect(err).toBeInstanceOf(ModelError);
         if (err instanceof ModelError) {
-          expect(err.code).toBe('api_error');
+          expect(err.code).toBe('INVALID_RESPONSE');
           expect(err.retryable).toBe(true);
         }
       }

@@ -860,7 +860,7 @@ describe("createOpenRouterAdapter", () => {
       expect(events.length).toBeGreaterThan(0);
     });
 
-    it("should handle timeout errors with ModelError code 'timeout' and retryable=true (AC4.3)", async () => {
+    it("should handle timeout errors with ModelError code 'TIMEOUT' and retryable=true (AC4.3)", async () => {
       nextResponseType = "text";
       const config: ModelConfig = {
         provider: "openrouter",

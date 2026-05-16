@@ -1,4 +1,4 @@
-// pattern: Functional Core
+// pattern: Imperative Shell
 
 import type { ConversationMessage } from '@/agent/types.ts';
 import type { PersistenceProvider } from './types.ts';

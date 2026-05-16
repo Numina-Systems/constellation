@@ -9,7 +9,6 @@
 import * as readline from 'readline';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import * as crypto from 'crypto';
 import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
 import { createPostgresProvider } from '@/persistence/postgres';

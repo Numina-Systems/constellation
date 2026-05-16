@@ -14,6 +14,8 @@ import { buildUserMessage } from './messages.ts';
 import { createCacheDiagnostics, serializeTools } from './cache-diagnostics.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
+import { isConstellationError, wrapError } from '@/errors/index.js';
+import { traceError } from '@/errors/trace.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
@@ -201,6 +203,13 @@ export function createAgent(
         } catch (error) {
           console.warn('recall: pipeline failed, continuing without recall', error);
           cachedRecallResult = null;
+
+          if (deps.traceRecorder) {
+            const structured = isConstellationError(error)
+              ? error
+              : wrapError(error, 'RECALL_FAILED', 'agent', {});
+            traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+          }
         }
         deps.recallContextState.setResult(cachedRecallResult);
         // Rebuild system prompt with recall context now set
@@ -233,6 +242,13 @@ export function createAgent(
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
           console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
+
+          if (deps.traceRecorder) {
+            const structured = isConstellationError(error)
+              ? error
+              : wrapError(error, 'TOOL_DISPATCH_FAILED', 'agent', { operation: 'skill_retrieval' });
+            traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+          }
         }
       }
 
@@ -400,6 +416,14 @@ export function createAgent(
             const errorMsg = error instanceof Error ? error.message : String(error);
             toolResult = `Error executing tool ${toolUse.name}: ${errorMsg}`;
             recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, false, errorMsg);
+
+            // Record structured error trace if available
+            if (deps.traceRecorder) {
+              const structured = isConstellationError(error)
+                ? error
+                : wrapError(error, 'TOOL_DISPATCH_FAILED', 'agent', { toolName: toolUse.name });
+              traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+            }
           }
 
           // Persist tool result

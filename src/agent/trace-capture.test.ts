@@ -432,13 +432,20 @@ describe('Trace capture', () => {
     const agent = createAgent(deps);
     await agent.processMessage('Call throwing tool');
 
-    expect(traces.length).toBe(1);
-    const trace = traces[0]!;
-    expect(trace.toolName).toBe('exploding_tool');
-    expect(trace.success).toBe(false);
-    expect(trace.error).toBe('dispatch explosion');
-    expect(trace.outputSummary).toContain('Error executing tool');
-    expect(trace.durationMs).toBeGreaterThanOrEqual(0);
+    // Two traces: recordTrace (tool-level) and traceError (structured error)
+    expect(traces.length).toBe(2);
+    const recordedTrace = traces[0]!;
+    expect(recordedTrace.toolName).toBe('exploding_tool');
+    expect(recordedTrace.success).toBe(false);
+    expect(recordedTrace.error).toBe('dispatch explosion');
+    expect(recordedTrace.outputSummary).toContain('Error executing tool');
+    expect(recordedTrace.durationMs).toBeGreaterThanOrEqual(0);
+
+    // Second trace is structured error trace
+    const errorTrace = traces[1]!;
+    expect(errorTrace.toolName).toBe('agent'); // subsystem is 'agent'
+    expect(errorTrace.success).toBe(false);
+    expect(errorTrace.error).toContain('dispatch explosion');
   });
 
   it('AC2.4: trace recorder error does not block agent loop', async () => {

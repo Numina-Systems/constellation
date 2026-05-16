@@ -69,6 +69,9 @@ function createTestRuntime(registry: ReturnType<typeof createToolRegistry>) {
       recall_enabled: false,
       recall_token_budget: 4096,
       cache_diagnostics: true,
+      checkpoint_interval: 0,
+      checkpoint_retention: 5,
+      auto_resume: false,
     },
     registry,
   );

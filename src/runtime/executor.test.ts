@@ -93,6 +93,9 @@ describe('DenoExecutor Integration Tests', () => {
       recall_enabled: false,
       recall_token_budget: 4096,
       cache_diagnostics: true,
+      checkpoint_interval: 0,
+      checkpoint_retention: 5,
+      auto_resume: false,
     };
 
     executor = createDenoExecutor(config, createMockRegistry());

@@ -29,6 +29,10 @@ export type AgentConfig = {
   recall_enabled?: boolean;
   recall_token_budget?: number;
   cache_diagnostics?: boolean;
+  checkpoint_interval?: number;
+  checkpoint_retention?: number;
+  auto_resume?: boolean;
+  resume_checkpoint?: string;
 };
 
 export type ConversationMessage = {

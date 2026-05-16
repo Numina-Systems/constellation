@@ -1,8 +1,8 @@
 // pattern: Imperative Shell
 
-import { stripAnsi } from './ansi';
-import { truncateOutput } from './truncate';
-import type { ShellConfig, ShellSession, ShellResult } from './types';
+import { stripAnsi } from './ansi.ts';
+import { truncateOutput } from './truncate.ts';
+import type { ShellConfig, ShellSession, ShellResult } from './types.ts';
 import { ShellError } from '@/errors/shell.ts';
 
 const DEFAULT_CONFIG: ShellConfig = {

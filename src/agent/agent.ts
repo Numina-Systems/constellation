@@ -536,7 +536,7 @@ export function createAgent(
     });
 
     // Update checkpoint state with current history (verifies AC3.1, AC3.2)
-    await updateCheckpointStateAndTriggerInterval(turnNumber, history);
+    updateCheckpointStateAndTriggerInterval(turnNumber, history);
 
     return warningMessage;
   }

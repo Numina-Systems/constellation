@@ -6,6 +6,7 @@ import type { PersistenceProvider } from './types.ts';
 export type MessageStore = {
   count(conversationId: string): Promise<number>;
   listIds(conversationId: string): Promise<Array<string>>;
+  /** Returns the N most recent messages, ordered most-recent-first (DESC). */
   getLatest(conversationId: string, limit: number): Promise<Array<ConversationMessage>>;
 };
 

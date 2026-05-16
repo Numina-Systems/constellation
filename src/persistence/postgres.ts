@@ -1,9 +1,18 @@
 // pattern: Imperative Shell
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool } from "pg";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import type { PoolClient } from "pg";
 import type { PersistenceProvider } from "./types.ts";
 import type { DatabaseConfig } from "../config/config.ts";
+
+type TxContext = {
+  client: PoolClient;
+  depth: number;
+};
+
+const txStorage = new AsyncLocalStorage<TxContext>();
 
 export function createPostgresProvider(
   config: DatabaseConfig,

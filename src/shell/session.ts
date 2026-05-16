@@ -39,6 +39,7 @@ export async function createShellSession(
 
   let outputBuffer = '';
   let onData: (() => void) | null = null;
+  const decoder = new TextDecoder('utf-8', { fatal: false });
 
   let proc: ReturnType<typeof Bun.spawn>;
   try {
@@ -47,7 +48,7 @@ export async function createShellSession(
         cols: 80,
         rows: 24,
         data(_terminal, data) {
-          outputBuffer += new TextDecoder().decode(data);
+          outputBuffer += decoder.decode(data, { stream: true });
           onData?.();
         },
       },
@@ -108,8 +109,8 @@ export async function createShellSession(
     }
 
     resetIdleTimer();
-
-    const outputStartIndex = outputBuffer.length;
+    outputBuffer = '';
+    const outputStartIndex = 0;
     // Wrap: run command, save exit code, emit cwd, restore exit code for PS1's \$?
     proc.terminal!.write(`${command}; __x=$?; echo "___CWD___ $(pwd) ___CWD___"; (exit $__x)\n`);
 
@@ -191,6 +192,8 @@ export async function createShellSession(
   }
 
   async function destroy(): Promise<void> {
+    if (!isAliveFlag) return;
+
     if (idleTimer !== null) {
       clearTimeout(idleTimer);
       idleTimer = null;

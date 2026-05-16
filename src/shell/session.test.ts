@@ -132,14 +132,14 @@ describe('createShellSession', () => {
 
       expect(result.output).toContain('test');
       // Marker should be stripped
-      expect(result.output).not.toContain('<MARKER>');
+      expect(result.output).not.toContain('___CSML___');
     });
 
     it('strips marker from output', async () => {
       session = await createShellSession();
       const result = await session.execute('echo hello');
 
-      expect(result.output).not.toContain('<MARKER>');
+      expect(result.output).not.toContain('___CSML___');
     });
   });
 

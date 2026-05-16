@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-05-07
+Last verified: 2026-05-15
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -35,7 +35,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
 - `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
-- `src/agent/` -- Agent loop, context building, compression, context providers, per-turn skill injection, per-turn trace recording
+- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, context providers, per-turn skill injection, per-turn trace recording
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/recall/` -- Reflexive recall pipeline (query decomposition, multi-domain retrieval, context injection)

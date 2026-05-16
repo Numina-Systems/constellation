@@ -17,3 +17,4 @@ export {
 export { createSchedulingContextProvider } from './scheduling-context.ts';
 export type { SnapshotMode, SnapshotResult, SnapshotState } from './snapshot.ts';
 export { createSnapshotState } from './snapshot.ts';
+export { buildUserMessage } from './messages.ts';

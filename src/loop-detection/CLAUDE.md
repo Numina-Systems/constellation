@@ -15,7 +15,7 @@ Identifies consecutive similar responses using token bigram Jaccard similarity o
 - **Exposes:** Pure utilities: `tokenBigrams`, `jaccardSimilarity`, `stripQuotedContent`
 - **Guarantees:** All core logic is pure (Functional Core); no I/O, no side effects
 - **Guarantees:** `check()` returns `LoopDetectionResult` with `triggered`, `similarity`, `consecutiveCount`, `action`
-- **Expects:** Caller strips tool-use content before passing response text (quote stripping handles `<result>` blocks)
+- **Expects:** Caller strips tool-use content before passing response text (quote stripping handles markdown blockquotes and fenced code blocks)
 
 ## Dependencies
 

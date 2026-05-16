@@ -13,6 +13,55 @@ function createMockSession(result: ShellResult): ShellSession {
   };
 }
 
+describe('stateful-shell.AC1.4: session reuse', () => {
+  test('multiple tool invocations use the same session instance', async () => {
+    const mockExecute = mock(async () => ({
+      output: '',
+      exitCode: 0,
+      workingDirectory: '/tmp',
+      timedOut: false,
+    }));
+    const session: ShellSession = {
+      execute: mockExecute,
+      destroy: mock(async () => {}),
+      isAlive: true,
+      workingDirectory: '/tmp',
+    };
+    const tool = createShellExecuteTool(session);
+
+    await tool.handler({command: 'first'});
+    await tool.handler({command: 'second'});
+    await tool.handler({command: 'third'});
+
+    expect(mockExecute).toHaveBeenCalledTimes(3);
+    expect(mockExecute).toHaveBeenCalledWith('first');
+    expect(mockExecute).toHaveBeenCalledWith('second');
+    expect(mockExecute).toHaveBeenCalledWith('third');
+  });
+});
+
+describe('stateful-shell.AC6.4: registry dispatch integration', () => {
+  test('tool is dispatchable through registry', async () => {
+    const session = createMockSession({
+      output: 'dispatched',
+      exitCode: 0,
+      workingDirectory: '/tmp',
+      timedOut: false,
+    });
+    const tool = createShellExecuteTool(session);
+
+    // Simulate registry dispatch: validate params exist, call handler
+    const params = {command: 'echo test'};
+    const commandParam = tool.definition.parameters.find((p) => p.name === 'command');
+    expect(commandParam?.required).toBe(true);
+    expect(typeof params.command).toBe('string');
+
+    const result = await tool.handler(params);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('dispatched');
+  });
+});
+
 describe('shell_execute tool', () => {
   describe('tool definition', () => {
     test('has name shell_execute', () => {

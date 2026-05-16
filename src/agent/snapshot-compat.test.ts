@@ -32,13 +32,13 @@ describe('AC5: Backward Compatibility', () => {
       expect(message.role).toBe('user');
       expect(Array.isArray(message.content)).toBe(true);
       if (Array.isArray(message.content)) {
-        expect(message.content).toHaveLength(2);
-        expect(message.content[0].type).toBe('text');
-        expect(message.content[1].type).toBe('text');
+        expect(message.content.length).toBe(2);
         const attachmentBlock = message.content[0] as any;
         const userBlock = message.content[1] as any;
-        expect(attachmentBlock.text).toContain('Dynamic Context — Full Snapshot');
-        expect(userBlock.text).toBe(userText);
+        expect(attachmentBlock?.type).toBe('text');
+        expect(userBlock?.type).toBe('text');
+        expect(attachmentBlock?.text).toContain('Dynamic Context — Full Snapshot');
+        expect(userBlock?.text).toBe(userText);
       }
     });
 

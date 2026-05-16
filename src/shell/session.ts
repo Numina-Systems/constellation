@@ -60,7 +60,6 @@ export async function createShellSession(
 
   function waitForMarker(
     markerRegex: RegExp,
-    _cwdPattern: RegExp,
     startIndex: number,
     timeoutMs: number,
   ): Promise<{ match: RegExpExecArray; output: string } | null> {
@@ -94,10 +93,9 @@ export async function createShellSession(
   const initMarkerRegex = new RegExp(
     `\\[${promptMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)\\]> `,
   );
-  const initCwdPattern = /___CWD___ (.+?) ___CWD___/;
   proc.terminal!.write(`PS1="[${promptMarker}\\$?]> "\n`);
 
-  const initResult = await waitForMarker(initMarkerRegex, initCwdPattern, 0, 5000);
+  const initResult = await waitForMarker(initMarkerRegex, 0, 5000);
   if (!initResult) {
     proc.kill('SIGKILL');
     throw new ShellError('SHELL_CREATION_FAILED', 'shell initialization timed out waiting for prompt marker', {
@@ -134,7 +132,7 @@ export async function createShellSession(
     proc.terminal!.write(wrappedCommand + '\n');
 
     // Wait for nonce-scoped marker
-    const result = await waitForMarker(markerRegex, cwdPattern, outputStartIndex, commandTimeout);
+    const result = await waitForMarker(markerRegex, outputStartIndex, commandTimeout);
 
     if (result) {
       return buildResult(result.match, result.output, command, cwdPattern, false);
@@ -144,7 +142,7 @@ export async function createShellSession(
     proc.terminal!.write('\x03');
 
     // Grace period: wait for marker after interrupt
-    const graceResult = await waitForMarker(markerRegex, cwdPattern, outputStartIndex, 2000);
+    const graceResult = await waitForMarker(markerRegex, outputStartIndex, 2000);
 
     if (graceResult) {
       return buildResult(graceResult.match, graceResult.output, command, cwdPattern, true);
@@ -177,9 +175,6 @@ export async function createShellSession(
     const exitCode = parseInt(match[1] ?? '0', 10);
     const rawBeforeMarker = segment.substring(0, match.index);
     let output = cleanOutput(rawBeforeMarker, command, cwdPattern);
-
-    // DEBUG
-    // console.error(`DEBUG buildResult: match="${match[0]}", exitCode=${exitCode}, rawBeforeMarker="${rawBeforeMarker.substring(0, 100)}"`);
 
     if (timedOut) {
       output += `\n[timeout after ${commandTimeout / 1000}s]`;
@@ -217,21 +212,13 @@ export async function createShellSession(
         // Exact command match
         continue;
       }
-      if (trimmed.includes('__x=$?')) {
+      if (trimmed === '__x=$?') {
         // Part of the wrapped command
         continue;
       }
-      if (trimmed.includes('(exit ')) {
+      if (trimmed === '(exit $__x)') {
         // Part of the wrapped command
         continue;
-      }
-      // Skip lines that contain the wrapped command pattern
-      // (command followed by __x or echo pattern)
-      if (trimmed.endsWith(';')) {
-        // Likely end of command in a wrapped sequence
-        if (trimmed.includes(`${command};`) || trimmed.includes(';')) {
-          continue;
-        }
       }
 
       cleaned.push(line);

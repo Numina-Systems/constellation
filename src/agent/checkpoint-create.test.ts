@@ -1,3 +1,4 @@
+// pattern: Imperative Shell
 import {expect, test, describe} from 'bun:test';
 import {performCheckpoint, type CheckpointDependencies, type CheckpointAgentState} from './checkpoint-create.ts';
 import type {SessionCheckpoint} from './checkpoint-types.ts';

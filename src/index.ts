@@ -86,6 +86,8 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { createLoopDetector } from '@/loop-detection/index.js';
+import type { LoopDetectionConfig } from '@/loop-detection/types.js';
 
 const AGENT_OWNER = 'spirit';
 
@@ -956,6 +958,24 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
+  // Step 1b: Create loop detector if enabled
+  const loopDetectionConfig: LoopDetectionConfig = {
+    enabled: config.loop_detection.enabled,
+    windowSize: config.loop_detection.window_size,
+    similarityThreshold: config.loop_detection.similarity_threshold,
+    consecutiveTrigger: config.loop_detection.consecutive_trigger,
+    action: config.loop_detection.action,
+  };
+
+  const loopDetector = loopDetectionConfig.enabled
+    ? createLoopDetector({
+        config: loopDetectionConfig,
+        traceRecorder,
+        owner: AGENT_OWNER,
+        conversationId: mainConversationId,
+      })
+    : undefined;
+
   // Step 2: Create agent with source instructions and classified providers
   const agent = createAgent({
     model,
@@ -994,6 +1014,7 @@ async function main(): Promise<void> {
     searchStore: searchStore,
     summarizationModel: summarizationModel,
     summarizationModelName: config.summarization?.name,
+    loopDetector,
   }, mainConversationId);
 
   // Create subconscious agent if enabled

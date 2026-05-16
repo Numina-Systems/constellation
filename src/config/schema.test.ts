@@ -850,6 +850,188 @@ describe("OpenRouterConfigSchema and ModelConfigSchema with openrouter provider"
   });
 });
 
+describe("ShellConfigSchema", () => {
+  describe("stateful-shell.AC1.1: Parse shell config with all fields", () => {
+    it("should parse a complete shell config with all fields specified", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+          shell: "/bin/zsh",
+          command_timeout: 60000,
+          idle_timeout: 300000,
+          max_output_bytes: 131072,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.shell).toBeDefined();
+      expect(result.shell!.enabled).toBe(true);
+      expect(result.shell!.shell).toBe("/bin/zsh");
+      expect(result.shell!.command_timeout).toBe(60000);
+      expect(result.shell!.idle_timeout).toBe(300000);
+      expect(result.shell!.max_output_bytes).toBe(131072);
+    });
+  });
+
+  describe("stateful-shell.AC1.2: Apply defaults when fields omitted", () => {
+    it("should apply defaults when parsing minimal shell config", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.shell).toBeDefined();
+      expect(result.shell!.enabled).toBe(true);
+      expect(typeof result.shell!.shell).toBe('string');
+      expect(result.shell!.shell.length).toBeGreaterThan(0);
+      expect(result.shell!.command_timeout).toBe(30000);
+      expect(result.shell!.idle_timeout).toBe(600000);
+      expect(result.shell!.max_output_bytes).toBe(65536);
+    });
+
+    it("should apply defaults when enabled:false and other fields omitted", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: false,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.shell).toBeDefined();
+      expect(result.shell!.enabled).toBe(false);
+      expect(result.shell!.command_timeout).toBe(30000);
+      expect(result.shell!.idle_timeout).toBe(600000);
+    });
+  });
+
+  describe("stateful-shell.AC1.3: Reject invalid timeout values", () => {
+    it("should reject command_timeout: 0 (zero)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+          command_timeout: 0,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject command_timeout: -1 (negative)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+          command_timeout: -1,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject idle_timeout: 0 (zero)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+          idle_timeout: 0,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject max_output_bytes: -1000 (negative)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+          max_output_bytes: -1000,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject command_timeout: 1.5 (non-integer)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        shell: {
+          enabled: true,
+          command_timeout: 1.5,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+  });
+
+  describe("stateful-shell.AC1.4: Optional [shell] section — omitting entirely is valid", () => {
+    it("should parse config with no [shell] section", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.shell).toBeUndefined();
+    });
+  });
+});
+
 describe("SubconsciousConfigSchema", () => {
   describe("introspection-loop.AC4.2: Introspection config defaults and bounds", () => {
     it("should apply defaults when parsing minimal subconscious config", () => {

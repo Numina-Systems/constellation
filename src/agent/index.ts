@@ -15,3 +15,5 @@ export {
   truncateOldest,
 } from './context.ts';
 export { createSchedulingContextProvider } from './scheduling-context.ts';
+export type { SnapshotMode, SnapshotResult, SnapshotState } from './snapshot.ts';
+export { createSnapshotState } from './snapshot.ts';

@@ -1,6 +1,7 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { createPostgresProvider } from '@/persistence';
 import { createMessageStore } from '@/persistence/message-store.ts';
 import { createMemoryManager, createPostgresMemoryStore } from '@/memory';
@@ -27,7 +28,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
   const TEST_CONVERSATION_ID = 'conv-test-123';
 
   beforeAll(async () => {
-    const databaseUrl = process.env['DATABASE_URL'] || 'postgresql://postgres:postgres@localhost/constellation_test';
+    const databaseUrl = process.env['DATABASE_URL'] || 'postgresql://constellation:constellation@localhost:5432/constellation';
     persistence = createPostgresProvider({ url: databaseUrl });
 
     await persistence.connect();
@@ -51,7 +52,6 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
   afterEach(async () => {
     // Clean up test data
     await persistence.query('DELETE FROM memory_blocks WHERE owner = $1', [AGENT_OWNER]);
-    await persistence.query('DELETE FROM memory_events WHERE owner = $1', [AGENT_OWNER]);
     await persistence.query('DELETE FROM messages WHERE conversation_id = $1', [TEST_CONVERSATION_ID]);
     await persistence.query('DELETE FROM predictions WHERE owner = $1', [AGENT_OWNER]);
     await persistence.query('DELETE FROM interests WHERE owner = $1', [AGENT_OWNER]);
@@ -64,11 +64,12 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
   describe('arch-hardening.AC1.1: Success - full restore completes', () => {
     it('should restore predictions, interests, and memory to checkpoint state', async () => {
       // Setup: create conversation with messages
-      const messageId1 = await persistence.query<{ id: string }>(
-        `INSERT INTO messages (conversation_id, role, content)
-         VALUES ($1, $2, $3) RETURNING id`,
-        [TEST_CONVERSATION_ID, 'user', 'test message'],
-      ).then(rows => rows[0]!.id);
+      const messageId1 = randomUUID();
+      await persistence.query(
+        `INSERT INTO messages (id, conversation_id, role, content)
+         VALUES ($1, $2, $3, $4)`,
+        [messageId1, TEST_CONVERSATION_ID, 'user', 'test message'],
+      );
 
       // Create a working memory block
       const writeResult = await memory.write('session-state', 'active session', 'working');
@@ -126,8 +127,8 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
     it('should reject checkpoint with invalid label and not modify any state', async () => {
       // Setup: create message and initial memory state
       await persistence.query(
-        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-        [TEST_CONVERSATION_ID, 'user', 'test'],
+        `INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)`,
+        [randomUUID(), TEST_CONVERSATION_ID, 'user', 'test'],
       );
 
       const writeResult = await memory.write('existing-block', 'initial content', 'working');
@@ -304,8 +305,8 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
     it('should rollback DB operations when interestRegistry.updateInterest throws', async () => {
       // Setup: create conversation with message
       await persistence.query(
-        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-        [TEST_CONVERSATION_ID, 'user', 'test'],
+        `INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)`,
+        [randomUUID(), TEST_CONVERSATION_ID, 'user', 'test'],
       );
 
       // Create an interest
@@ -387,8 +388,8 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
     it('should clear working memory on write failure and rollback DB', async () => {
       // Setup: create conversation
       await persistence.query(
-        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-        [TEST_CONVERSATION_ID, 'user', 'test'],
+        `INSERT INTO messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)`,
+        [randomUUID(), TEST_CONVERSATION_ID, 'user', 'test'],
       );
 
       // Create an interest

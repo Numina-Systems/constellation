@@ -26,7 +26,7 @@ function createTestCheckpoint(overrides: Partial<SessionCheckpoint> = {}): Sessi
   };
 
   return serializeCheckpoint({
-    id: 'cp-' + crypto.getRandomValues(new Uint8Array(4)).join(''),
+    id: crypto.randomUUID(),
     conversationId: 'conv-test',
     owner: 'agent-1',
     trigger: 'explicit',
@@ -58,7 +58,6 @@ describe('CheckpointStore Integration Tests', () => {
   describe('session-checkpointing.AC5.2: save and load round-trip', () => {
     it('should save checkpoint and load it back with matching fields', async () => {
       const checkpoint = createTestCheckpoint({
-        id: 'cp-roundtrip-1',
         conversationId: 'conv-1',
         owner: 'agent-1',
         trigger: 'explicit',
@@ -92,17 +91,14 @@ describe('CheckpointStore Integration Tests', () => {
       const owner = 'agent-latest-test';
       const now = new Date();
       const checkpoint1 = createTestCheckpoint({
-        id: 'cp-1',
         owner,
         createdAt: new Date(now.getTime() - 2000).toISOString(),
       });
       const checkpoint2 = createTestCheckpoint({
-        id: 'cp-2',
         owner,
         createdAt: new Date(now.getTime() - 1000).toISOString(),
       });
       const checkpoint3 = createTestCheckpoint({
-        id: 'cp-3',
         owner,
         createdAt: now.toISOString(),
       });
@@ -114,7 +110,7 @@ describe('CheckpointStore Integration Tests', () => {
       const latest = await store.loadLatest(owner);
 
       expect(latest).toBeDefined();
-      expect(latest?.id).toBe('cp-3');
+      expect(latest?.id).toBe(checkpoint3.id);
     });
   });
 
@@ -131,7 +127,6 @@ describe('CheckpointStore Integration Tests', () => {
       const now = new Date();
       const checkpoints = Array.from({length: 5}, (_, i) =>
         createTestCheckpoint({
-          id: `cp-prune-${i}`,
           conversationId,
           createdAt: new Date(now.getTime() + i * 1000).toISOString(),
         }),
@@ -147,12 +142,12 @@ describe('CheckpointStore Integration Tests', () => {
 
       // Verify oldest 2 are deleted, newest 3 remain
       for (let i = 0; i < 2; i++) {
-        const loaded = await store.load(`cp-prune-${i}`);
+        const loaded = await store.load(checkpoints[i]!.id);
         expect(loaded).toBeNull();
       }
 
       for (let i = 2; i < 5; i++) {
-        const loaded = await store.load(`cp-prune-${i}`);
+        const loaded = await store.load(checkpoints[i]!.id);
         expect(loaded).toBeDefined();
       }
     });
@@ -162,11 +157,9 @@ describe('CheckpointStore Integration Tests', () => {
     it('should not delete when checkpoint count is below retention', async () => {
       const conversationId = 'conv-few-test';
       const checkpoint1 = createTestCheckpoint({
-        id: 'cp-few-1',
         conversationId,
       });
       const checkpoint2 = createTestCheckpoint({
-        id: 'cp-few-2',
         conversationId,
       });
 
@@ -178,8 +171,8 @@ describe('CheckpointStore Integration Tests', () => {
       expect(deletedCount).toBe(0);
 
       // Both checkpoints should still exist
-      const loaded1 = await store.load('cp-few-1');
-      const loaded2 = await store.load('cp-few-2');
+      const loaded1 = await store.load(checkpoint1.id);
+      const loaded2 = await store.load(checkpoint2.id);
 
       expect(loaded1).toBeDefined();
       expect(loaded2).toBeDefined();
@@ -192,23 +185,26 @@ describe('CheckpointStore Integration Tests', () => {
       const convB = 'conv-b-scope-test';
       const now = new Date();
 
+      const checkpointsA: SessionCheckpoint[] = [];
+      const checkpointsB: SessionCheckpoint[] = [];
+
       // Create 3 checkpoints in conversation A
       for (let i = 0; i < 3; i++) {
         const cp = createTestCheckpoint({
-          id: `cp-a-${i}`,
           conversationId: convA,
           createdAt: new Date(now.getTime() + i * 1000).toISOString(),
         });
+        checkpointsA.push(cp);
         await store.save(cp);
       }
 
       // Create 3 checkpoints in conversation B
       for (let i = 0; i < 3; i++) {
         const cp = createTestCheckpoint({
-          id: `cp-b-${i}`,
           conversationId: convB,
           createdAt: new Date(now.getTime() + i * 1000).toISOString(),
         });
+        checkpointsB.push(cp);
         await store.save(cp);
       }
 
@@ -216,14 +212,14 @@ describe('CheckpointStore Integration Tests', () => {
       await store.prune(convA, 1);
 
       // Conversation A: oldest 2 should be deleted
-      expect(await store.load('cp-a-0')).toBeNull();
-      expect(await store.load('cp-a-1')).toBeNull();
-      expect(await store.load('cp-a-2')).toBeDefined();
+      expect(await store.load(checkpointsA[0]!.id)).toBeNull();
+      expect(await store.load(checkpointsA[1]!.id)).toBeNull();
+      expect(await store.load(checkpointsA[2]!.id)).toBeDefined();
 
       // Conversation B: all 3 should remain
-      expect(await store.load('cp-b-0')).toBeDefined();
-      expect(await store.load('cp-b-1')).toBeDefined();
-      expect(await store.load('cp-b-2')).toBeDefined();
+      expect(await store.load(checkpointsB[0]!.id)).toBeDefined();
+      expect(await store.load(checkpointsB[1]!.id)).toBeDefined();
+      expect(await store.load(checkpointsB[2]!.id)).toBeDefined();
     });
   });
 });

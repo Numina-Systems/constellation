@@ -22,18 +22,25 @@ export type CheckpointStore = {
 
 export function createCheckpointStore(persistence: PersistenceProvider): CheckpointStore {
   async function save(checkpoint: SessionCheckpoint): Promise<void> {
-    await persistence.query(
-      `INSERT INTO session_checkpoints (id, conversation_id, owner, trigger, checkpoint_data, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        checkpoint.id,
-        checkpoint.conversationId,
-        checkpoint.owner,
-        checkpoint.trigger,
-        JSON.stringify(checkpoint),
-        checkpoint.createdAt,
-      ],
-    );
+    try {
+      await persistence.query(
+        `INSERT INTO session_checkpoints (id, conversation_id, owner, trigger, checkpoint_data, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          checkpoint.id,
+          checkpoint.conversationId,
+          checkpoint.owner,
+          checkpoint.trigger,
+          JSON.stringify(checkpoint),
+          checkpoint.createdAt,
+        ],
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `failed to save checkpoint ${checkpoint.id} for conversation ${checkpoint.conversationId}: ${message}`,
+      );
+    }
   }
 
   async function load(id: string): Promise<SessionCheckpoint | null> {
@@ -68,6 +75,10 @@ export function createCheckpointStore(persistence: PersistenceProvider): Checkpo
   }
 
   async function prune(conversationId: string, retainCount: number): Promise<number> {
+    // conversationId is passed to both outer WHERE and inner subquery WHERE
+    // because PostgreSQL subqueries cannot reference outer scope parameters.
+    // $1 filters the outer DELETE rows; $2 filters the subquery to identify
+    // which checkpoints to keep (most recent N by created_at).
     const rows = await persistence.query<{id: string}>(
       `DELETE FROM session_checkpoints
        WHERE conversation_id = $1

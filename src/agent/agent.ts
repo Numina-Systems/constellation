@@ -11,6 +11,7 @@ import { toSql } from 'pgvector/utils';
 import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
 import { createSnapshotState } from './snapshot.ts';
 import { buildUserMessage } from './messages.ts';
+import { createCacheDiagnostics } from './cache-diagnostics.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
@@ -106,8 +107,16 @@ export function createAgent(
   // Create snapshot state for batch-anchored snapshots (Phase 4)
   const snapshotState = createSnapshotState();
 
+  // Create cache diagnostics instance if enabled
+  const cacheDiagnostics = deps.config.cache_diagnostics !== false
+    ? createCacheDiagnostics()
+    : null;
+
   // Build dynamic providers map once (providers don't change, but their state does each turn)
   const dynamicProviders = buildDynamicProviderMap(deps.classifiedProviders);
+
+  let turnNumber = 0;
+  let previousToolsHash: bigint | null = null;
 
   function recordTrace(
     toolName: string,
@@ -135,6 +144,8 @@ export function createAgent(
   }
 
   async function processMessage(userMessage: string): Promise<string> {
+    turnNumber++;
+
     // Step 1: Persist user message
     await persistMessage({
       conversation_id: id,
@@ -149,11 +160,13 @@ export function createAgent(
     const preliminarySystemPrompt = await buildSystemPrompt(deps.memory);
     const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, deps.registry.toModelTools(), maxTokens);
 
+    let compactionOccurredThisTurn = false;
     if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
       const result = await deps.compactor.compress(history, id);
       history = Array.from(result.history);
       // Reset snapshot state after compaction so next turn gets full snapshot
       snapshotState.reset();
+      compactionOccurredThisTurn = result.messagesCompressed > 0;
     }
 
     // Step 4 & 5: Build context and call model
@@ -253,6 +266,51 @@ export function createAgent(
         finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
       }
 
+      // Detect tool changes for cache diagnostics
+      const currentToolsSerialized = JSON.stringify(
+        Array.from(modelTools).sort((a: unknown, b: unknown) =>
+          ((a as { name?: string }).name ?? '').localeCompare(
+            (b as { name?: string }).name ?? '',
+          ),
+        ),
+      );
+      const currentToolsHash = BigInt(Bun.hash(currentToolsSerialized));
+      const toolsChangedThisTurn = previousToolsHash !== null && currentToolsHash !== previousToolsHash;
+      previousToolsHash = currentToolsHash;
+
+      // Call cache diagnostics before model.complete()
+      if (cacheDiagnostics) {
+        const cacheBustEvents = cacheDiagnostics.checkForCacheBust({
+          systemPrompt,
+          tools: modelTools,
+          messages: finalMessages,
+          betaHeaders: undefined,
+          turn: turnNumber,
+          flags: {
+            compactionOccurred: compactionOccurredThisTurn,
+            toolsChanged: toolsChangedThisTurn,
+            isFirstTurn: turnNumber === 1 && roundCount === 1,
+          },
+        });
+
+        for (const event of cacheBustEvents) {
+          const summary = `${event.dimension} changed: ${event.previousSize} chars → ${event.currentSize} chars (${event.delta >= 0 ? '+' : ''}${event.delta})`;
+          console.warn(`cache bust detected (turn ${event.turn}): ${summary}`);
+          recordTrace(
+            'cache_diagnostics',
+            { dimension: event.dimension, turn: event.turn },
+            summary,
+            0,
+            true,
+            null,
+          );
+        }
+
+        // Reset after consumption so subsequent tool rounds in the same turn
+        // don't carry the flag forward (unless compaction happens again in the tool round).
+        compactionOccurredThisTurn = false;
+      }
+
       // Call the model with current context
       const modelRequest = {
         messages: finalMessages,
@@ -323,6 +381,7 @@ export function createAgent(
                 history = Array.from(compactionResult.history);
                 // Reset snapshot state after compaction so next tool round gets full snapshot
                 snapshotState.reset();
+                compactionOccurredThisTurn = compactionResult.messagesCompressed > 0;
 
                 toolResult = JSON.stringify({
                   messagesCompressed: compactionResult.messagesCompressed,

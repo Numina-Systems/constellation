@@ -236,7 +236,7 @@ describe('arch-hardening.AC3: History loading per turn', () => {
     };
 
     const deps: AgentDependencies = {
-      model: createMockModelProvider() as any,
+      model: createMockModelProvider(),
       memory: createMockMemoryManager() as MemoryManager,
       registry: createMockToolRegistry() as ToolRegistry,
       runtime: createMockCodeRuntime() as CodeRuntime,
@@ -263,7 +263,7 @@ describe('arch-hardening.AC3: History loading per turn', () => {
     };
 
     const deps: AgentDependencies = {
-      model: createMockModelProvider() as any,
+      model: createMockModelProvider(),
       memory: createMockMemoryManager() as MemoryManager,
       registry: createMockToolRegistry() as ToolRegistry,
       runtime: createMockCodeRuntime() as CodeRuntime,

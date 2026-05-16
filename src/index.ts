@@ -80,12 +80,16 @@ import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
-import type { ContextProvider, ClassifiedProvider } from '@/agent/types';
+import type { ContextProvider, ClassifiedProvider, CheckpointAgentState } from '@/agent/types';
+import type { CheckpointTrigger } from '@/agent/checkpoint-types.ts';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { createCheckpointStore } from '@/persistence/checkpoint-store.ts';
+import { performCheckpoint, type CheckpointDependencies } from '@/agent/checkpoint-create.ts';
+import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
 
 const AGENT_OWNER = 'spirit';
 
@@ -243,12 +247,20 @@ export function createShutdownHandler(
   scheduler?: { stop(): void } | null,
   activityManager?: ActivityManager | null,
   mcpClients?: ReadonlyArray<McpClient>,
+  checkpointFn?: () => Promise<string | null>,
 ): () => Promise<void> {
   let shuttingDown = false;
   return async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\nShutting down...');
+    if (checkpointFn) {
+      try {
+        await checkpointFn();
+      } catch (err) {
+        console.warn('[checkpoint] shutdown checkpoint failed:', (err as Error).message);
+      }
+    }
     if (scheduler) {
       scheduler.stop();
       console.log('scheduler stopped');
@@ -956,6 +968,38 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
+  // Step 1b: Set up checkpoint store and state ref
+  const checkpointStore = createCheckpointStore(persistence);
+
+  const agentStateRef: { current: CheckpointAgentState } = {
+    current: {
+      turnNumber: 0,
+      toolRound: 0,
+      messageIds: [],
+      compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+    },
+  };
+
+  // Build checkpoint dependencies and bound checkpoint function
+  const checkpointDeps: CheckpointDependencies = {
+    checkpointStore,
+    memory,
+    predictionStore,
+    interestRegistry,
+    recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+    owner: AGENT_OWNER,
+    conversationId: mainConversationId,
+    retentionCount: config.agent.checkpoint_retention ?? 5,
+  };
+
+  const checkpointFn = async (trigger: CheckpointTrigger) => {
+    return performCheckpoint(trigger, agentStateRef.current, checkpointDeps);
+  };
+
+  // Register checkpoint tool
+  const checkpointTool = createCheckpointTool(checkpointDeps, () => agentStateRef.current);
+  registry.register(checkpointTool);
+
   // Step 2: Create agent with source instructions and classified providers
   const agent = createAgent({
     model,
@@ -998,6 +1042,8 @@ async function main(): Promise<void> {
     searchStore: searchStore,
     summarizationModel: summarizationModel,
     summarizationModelName: config.summarization?.name,
+    checkpointFn,
+    checkpointStateRef: agentStateRef,
   }, mainConversationId);
 
   // Create subconscious agent if enabled
@@ -1464,7 +1510,17 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager, mcpClients);
+  const shutdownHandler = createShutdownHandler(
+    rl,
+    persistence,
+    dataSourceRegistry,
+    schedulerWrapper,
+    activityManager,
+    mcpClients,
+    async () => {
+      return checkpointFn('shutdown');
+    },
+  );
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

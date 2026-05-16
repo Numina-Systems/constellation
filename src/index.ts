@@ -365,6 +365,21 @@ export function createInteractionLoop(deps: InteractionLoopDeps): (input: string
 }
 
 /**
+ * Parse --resume CLI flag from process.argv.
+ * Returns the checkpoint ID if provided, undefined otherwise.
+ * Exits with error code 1 if flag is present but missing its argument.
+ */
+function parseResumeFlag(): string | undefined {
+  const idx = process.argv.indexOf('--resume');
+  if (idx === -1) return undefined;
+  if (idx + 1 >= process.argv.length || process.argv[idx + 1]!.startsWith('--')) {
+    console.error('error: --resume requires a checkpoint ID');
+    process.exit(1);
+  }
+  return process.argv[idx + 1];
+}
+
+/**
  * Seed core memory blocks on first run.
  * If the database is empty (no core blocks exist), load persona from persona.md
  * and create three core memory blocks: system, persona, and familiar.
@@ -470,6 +485,11 @@ Use execute_code for anything beyond basic memory operations — API calls, file
  */
 async function main(): Promise<void> {
   console.log('constellation daemon starting...\n');
+
+  // Parse CLI resume flag (must be before config loading)
+  // Used in Task 4 for restoration integration
+  // @ts-ignore TS6133: used in checkpoint restoration (Task 4)
+  const resumeCheckpointId = parseResumeFlag();
 
   // Load configuration
   const config = loadConfig();

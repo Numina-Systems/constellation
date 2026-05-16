@@ -5,11 +5,11 @@ import { truncateOutput } from './truncate';
 import type { ShellConfig, ShellSession, ShellResult } from './types';
 
 const DEFAULT_CONFIG: ShellConfig = {
-  shell: process.env['SHELL'] || '/bin/bash',
+  shell: '/bin/bash',
   commandTimeout: 30_000,
   idleTimeout: 10 * 60 * 1000,
-  maxOutputBytes: 1024 * 1024,
-  promptMarker: '___MARKER___',
+  maxOutputBytes: 64 * 1024,
+  promptMarker: '___CSML___',
 };
 
 export class ShellCreationError extends Error {
@@ -23,35 +23,32 @@ function resolveConfig(partial?: Partial<ShellConfig>): ShellConfig {
   return { ...DEFAULT_CONFIG, ...partial };
 }
 
-function checkNotRoot(): void {
+export async function createShellSession(
+  partial?: Partial<ShellConfig>,
+): Promise<ShellSession> {
   const getuid = process.getuid;
   if (getuid?.() === 0) {
     throw new ShellCreationError(
-      'cannot create shell session while running as root'
+      'cannot create shell session while running as root',
     );
   }
-}
-
-async function createShellSession(
-  partial?: Partial<ShellConfig>
-): Promise<ShellSession> {
-  checkNotRoot();
 
   const config = resolveConfig(partial);
   const { shell, idleTimeout, commandTimeout, maxOutputBytes, promptMarker } =
     config;
 
-  let proc: ReturnType<typeof Bun.spawn>;
   let outputBuffer = '';
+  let onData: (() => void) | null = null;
 
+  let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn([shell, '-i'], {
+    proc = Bun.spawn([shell, '--norc', '--noprofile', '-i'], {
       terminal: {
         cols: 80,
         rows: 24,
         data(_terminal, data) {
-          const text = new TextDecoder().decode(data);
-          outputBuffer += text;
+          outputBuffer += new TextDecoder().decode(data);
+          onData?.();
         },
       },
     });
@@ -62,65 +59,46 @@ async function createShellSession(
   let isAliveFlag = true;
   let currentWorkingDirectory = process.cwd();
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  let commandTimeout_: ReturnType<typeof setTimeout> | null = null;
-  let commandGraceTimer_: ReturnType<typeof setTimeout> | null = null;
-  let pendingResolve: ((result: ShellResult) => void) | null = null;
-  let pendingReject: ((error: Error) => void) | null = null;
 
-  // Pattern for marker: [MARKER<exitcode>]>
-  const markerEscaped = promptMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const markerRegex = new RegExp(
+    `\\[${promptMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)\\]> `,
+  );
+
+  function waitForMarker(startIndex: number, timeoutMs: number): Promise<{ match: RegExpExecArray; output: string } | null> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        onData = null;
+        resolve(null);
+      }, timeoutMs);
+
+      const check = () => {
+        const segment = outputBuffer.substring(startIndex);
+        const m = markerRegex.exec(segment);
+        if (m) {
+          clearTimeout(timer);
+          onData = null;
+          resolve({ match: m, output: segment });
+        }
+      };
+
+      onData = check;
+      check();
+    });
+  }
 
   function resetIdleTimer(): void {
-    if (idleTimer !== null) {
-      clearTimeout(idleTimer);
-    }
-    idleTimer = setTimeout(() => {
-      destroy();
-    }, idleTimeout);
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => void destroy(), idleTimeout);
   }
 
-  function clearIdleTimer(): void {
-    if (idleTimer !== null) {
-      clearTimeout(idleTimer);
-      idleTimer = null;
-    }
+  // Initialize: set PS1 to our marker format and wait for first prompt
+  proc.terminal!.write(`PS1="[${promptMarker}\\$?]> "\n`);
+
+  const initResult = await waitForMarker(0, 5000);
+  if (!initResult) {
+    proc.kill('SIGKILL');
+    throw new ShellCreationError('timeout waiting for shell prompt');
   }
-
-  function clearCommandTimers(): void {
-    if (commandTimeout_ !== null) {
-      clearTimeout(commandTimeout_);
-      commandTimeout_ = null;
-    }
-    if (commandGraceTimer_ !== null) {
-      clearTimeout(commandGraceTimer_);
-      commandGraceTimer_ = null;
-    }
-  }
-
-  // Initialize shell with PS1 that includes marker and exit code
-  // Format: [MARKER<exitcode>]>
-  const initSequence = `PS1="[${promptMarker}\\$?]> "\n`;
-  proc.terminal!.write(initSequence);
-
-  // Wait for the first prompt
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(
-        new ShellCreationError('timeout waiting for shell prompt')
-      );
-    }, 5000);
-
-    const checkPrompt = () => {
-      if (outputBuffer.includes(`[${promptMarker}`)) {
-        clearTimeout(timeout);
-        clearInterval(interval);
-        resolve();
-      }
-    };
-
-    const interval = setInterval(checkPrompt, 50);
-    checkPrompt();
-  });
 
   resetIdleTimer();
 
@@ -129,168 +107,101 @@ async function createShellSession(
       throw new Error('shell session is not alive');
     }
 
-    // Remember the buffer length when command starts
-    const outputStartIndex = outputBuffer.length;
-    clearCommandTimers();
     resetIdleTimer();
 
-    let timedOut = false;
-    let exitCode: number | null = null;
-    let commandTimeoutFired = false;
+    const outputStartIndex = outputBuffer.length;
+    // Wrap: run command, save exit code, emit cwd, restore exit code for PS1's \$?
+    proc.terminal!.write(`${command}; __x=$?; echo "___CWD___ $(pwd) ___CWD___"; (exit $__x)\n`);
 
-    // Write command to terminal
-    proc.terminal!.write(`${command}\n`);
+    // Wait for marker (command completion)
+    const result = await waitForMarker(outputStartIndex, commandTimeout);
 
-    // Create promise that resolves when marker appears
-    const executePromise = new Promise<ShellResult>((resolve, reject) => {
-      pendingResolve = resolve;
-      pendingReject = reject;
-
-      // Command timeout handler
-      commandTimeout_ = setTimeout(() => {
-        if (commandTimeoutFired) return;
-        commandTimeoutFired = true;
-        timedOut = true;
-
-        // Send SIGINT to try graceful shutdown
-        proc.kill('SIGINT');
-
-        // Wait for grace period to see if marker appears
-        commandGraceTimer_ = setTimeout(() => {
-          // Grace period expired, escalate to SIGKILL
-          proc.kill('SIGKILL');
-          isAliveFlag = false;
-
-          clearCommandTimers();
-
-          if (pendingReject) {
-            pendingReject(
-              new Error(
-                'command timeout: process killed after ignoring SIGINT'
-              )
-            );
-            pendingReject = null;
-          }
-        }, 5000);
-      }, commandTimeout);
-
-      // Poll for marker in outputBuffer using async polling
-      const checkForMarker = async (): Promise<void> => {
-        while (pendingResolve !== null) {
-          // Look for markers AFTER the output started (re-check each time)
-          const newOutput = outputBuffer.substring(outputStartIndex);
-
-          // Find LAST marker in the new output
-          // Reset regex so exec() starts from beginning
-          const markerRegex = new RegExp(
-            `\\[${markerEscaped}(\\d+)\\]>`,
-            'g'
-          );
-          let match: RegExpExecArray | null;
-          let lastMatch: RegExpExecArray | null = null;
-
-          // eslint-disable-next-line no-cond-assign
-          while ((match = markerRegex.exec(newOutput)) !== null) {
-            lastMatch = match;
-          }
-
-          if (lastMatch) {
-            clearCommandTimers();
-
-            // Parse exit code from last marker
-            exitCode = lastMatch[1] ? parseInt(lastMatch[1], 10) : 0;
-
-            // Extract output BEFORE the last marker
-            // The index in lastMatch is relative to newOutput
-            const markerPosInNew = lastMatch.index || 0;
-            let outputText = newOutput.substring(0, markerPosInNew);
-
-            // Clean: strip ANSI, remove command echo, trim
-            outputText = stripAnsi(outputText);
-
-            // Remove the echoed command line
-            // The command will typically appear on its own line right after we send it
-            const lines = outputText.split('\n');
-            const outputLines: Array<string> = [];
-
-            for (const line of lines) {
-              const trimmed = (line ?? '').trim();
-
-              // Skip the command echo (the command itself as a line)
-              if (trimmed === command) {
-                continue;
-              }
-              // Skip shell-specific noise
-              if (trimmed.startsWith('bash') || trimmed.startsWith('PS1=')) {
-                continue;
-              }
-              // Skip empty lines and pure prompts
-              if (trimmed === '' || trimmed.match(/^[%#$>]\s*$/)) {
-                continue;
-              }
-
-              outputLines.push(line ?? '');
-            }
-
-            let cleanOutput = outputLines.join('\n').trim();
-            cleanOutput = truncateOutput(cleanOutput, maxOutputBytes);
-
-            // Append timeout message if applicable
-            if (timedOut) {
-              cleanOutput += `\n[timeout after ${commandTimeout / 1000}s]`;
-            }
-
-            const result: ShellResult = {
-              output: cleanOutput,
-              exitCode,
-              workingDirectory: currentWorkingDirectory,
-              timedOut,
-            };
-
-            if (pendingResolve) {
-              pendingResolve(result);
-              pendingResolve = null;
-            }
-            return;
-          }
-
-          // Wait a bit before checking again
-          await new Promise(r => setTimeout(r, 10));
-        }
-      };
-
-      // Start the polling task
-      void checkForMarker();
-    });
-
-    try {
-      return await executePromise;
-    } finally {
-      clearCommandTimers();
-      pendingResolve = null;
-      pendingReject = null;
+    if (result) {
+      return buildResult(result.match, result.output, command, false);
     }
+
+    // Timeout — send Ctrl+C via terminal (SIGINT to foreground process group)
+    proc.terminal!.write('\x03');
+
+    // Grace period: wait for marker after interrupt
+    const graceResult = await waitForMarker(outputStartIndex, 2000);
+
+    if (graceResult) {
+      return buildResult(graceResult.match, graceResult.output, command, true);
+    }
+
+    // SIGKILL escalation — process ignored interrupt
+    proc.kill('SIGKILL');
+    isAliveFlag = false;
+
+    const partialOutput = cleanOutput(
+      outputBuffer.substring(outputStartIndex),
+      command,
+    );
+    return {
+      output: `${partialOutput}\n[timeout after ${commandTimeout / 1000}s]`,
+      exitCode: null,
+      workingDirectory: currentWorkingDirectory,
+      timedOut: true,
+    };
+  }
+
+  function buildResult(
+    match: RegExpExecArray,
+    segment: string,
+    command: string,
+    timedOut: boolean,
+  ): ShellResult {
+    const exitCode = parseInt(match[1] ?? '0', 10);
+    const rawBeforeMarker = segment.substring(0, match.index);
+    let output = cleanOutput(rawBeforeMarker, command);
+
+    if (timedOut) {
+      output += `\n[timeout after ${commandTimeout / 1000}s]`;
+    }
+
+    output = truncateOutput(output, maxOutputBytes);
+
+    return { output, exitCode, workingDirectory: currentWorkingDirectory, timedOut };
+  }
+
+  const cwdPattern = /___CWD___ (.+?) ___CWD___/;
+
+  function cleanOutput(raw: string, command: string): string {
+    const text = stripAnsi(raw);
+    const lines = text.split('\n');
+    const cleaned: Array<string> = [];
+    const wrappedCommand = `${command}; __x=$?; echo "___CWD___ $(pwd) ___CWD___"; (exit $__x)`;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Extract cwd from our injected echo
+      const cwdMatch = cwdPattern.exec(trimmed);
+      if (cwdMatch) {
+        currentWorkingDirectory = cwdMatch[1] ?? currentWorkingDirectory;
+        continue;
+      }
+      if (trimmed === command || trimmed === wrappedCommand) continue;
+      if (trimmed === '' || /^[%#$>]\s*$/.test(trimmed)) continue;
+      if (markerRegex.test(trimmed)) continue;
+      cleaned.push(line);
+    }
+
+    return cleaned.join('\n').trim();
   }
 
   async function destroy(): Promise<void> {
-    clearIdleTimer();
-    clearCommandTimers();
-
-    if (pendingReject) {
-      pendingReject(new Error('session destroyed'));
-      pendingReject = null;
+    if (idleTimer !== null) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
     }
 
     isAliveFlag = false;
+    onData = null;
 
-    // Try graceful shutdown with SIGTERM
     if (!proc.killed) {
       proc.kill('SIGTERM');
-
-      // Wait a bit for clean exit
-      await new Promise(r => setTimeout(r, 100));
-
-      // If still alive, force kill
+      await Bun.sleep(100);
       if (!proc.killed) {
         proc.kill('SIGKILL');
       }
@@ -299,12 +210,11 @@ async function createShellSession(
     proc.terminal?.close();
   }
 
-  // Monitor process exit
-  void proc.exited.catch(() => {
+  void proc.exited.then(() => {
     isAliveFlag = false;
   });
 
-  const session: ShellSession = {
+  return {
     execute,
     destroy,
     get isAlive() {
@@ -314,8 +224,4 @@ async function createShellSession(
       return currentWorkingDirectory;
     },
   };
-
-  return session;
 }
-
-export { createShellSession };

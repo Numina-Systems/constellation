@@ -24,18 +24,20 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `docker compose up -d` -- Start pgvector PostgreSQL
 
 ## Project Structure
+- `src/errors/` -- Structured error hierarchy (ConstellationError base, subsystem errors, trace integration, utilities)
 - `src/config/` -- TOML config loading, Zod schemas
-- `src/persistence/` -- PostgreSQL adapter, migrations
+- `src/persistence/` -- PostgreSQL adapter, migrations, MessageStore, transparent nested transactions (AsyncLocalStorage)
 - `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama, OpenRouter)
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
 - `src/search/` -- Hybrid search (semantic + keyword + RRF) across memory and conversations
-- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search, subconscious)
+- `src/shell/` -- Persistent PTY shell session (stateful across commands), ANSI stripping, output truncation, nonce-based command markers
+- `src/tool/` -- Tool registry, built-in tools (memory, code, compaction, web, scheduling, search, subconscious, shell)
 - `src/web/` -- Web search and fetch pipeline (Brave, Tavily, SearXNG, DuckDuckGo)
 - `src/runtime/` -- Deno sandbox executor with IPC bridge
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
 - `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
-- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording
+- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording, session checkpointing, checkpoint restore
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/recall/` -- Reflexive recall pipeline (query decomposition, multi-domain retrieval, context injection)
@@ -55,6 +57,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - **Barrel exports**: Each module has `index.ts` exporting public API
 - **Factory functions over classes**: `createFoo()` returns interface, no `new`
 - **Path aliases**: `@/*` maps to `./src/*` (tsconfig paths)
+- **Structured errors**: Subsystem errors extend `ConstellationError` from `src/errors/`. Domain modules re-export their error type from `src/errors/` (e.g., `src/model/types.ts` re-exports `ModelError`). Errors carry `code`, `subsystem`, `context`, and optional `suggestion`. Use `traceError()` to record errors as operation traces in catch blocks.
 - **Environment overrides**: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_COMPAT_API_KEY`, `OPENROUTER_API_KEY`, `EMBEDDING_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` override config.toml values
 
 ## Boundaries

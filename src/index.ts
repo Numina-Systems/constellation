@@ -9,6 +9,7 @@
 import * as readline from 'readline';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import * as crypto from 'crypto';
 import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
 import { createPostgresProvider } from '@/persistence/postgres';
@@ -86,6 +87,9 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { createShellSession, ShellCreationError } from '@/shell/index';
+import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
+import type { ShellSession } from '@/shell/types';
 
 const AGENT_OWNER = 'spirit';
 
@@ -243,6 +247,7 @@ export function createShutdownHandler(
   scheduler?: { stop(): void } | null,
   activityManager?: ActivityManager | null,
   mcpClients?: ReadonlyArray<McpClient>,
+  shellSession?: ShellSession | null,
 ): () => Promise<void> {
   let shuttingDown = false;
   return async (): Promise<void> => {
@@ -277,6 +282,14 @@ export function createShutdownHandler(
         }),
       );
       console.log(`[mcp] ${mcpClients.length} server(s) disconnected`);
+    }
+    if (shellSession) {
+      try {
+        await shellSession.destroy();
+        console.log('shell session destroyed');
+      } catch (error) {
+        console.error('error destroying shell session:', error);
+      }
     }
     await performShutdown(rl, persistence);
     process.exit(0);
@@ -633,6 +646,29 @@ async function main(): Promise<void> {
       registry.register(tool);
     }
     console.log('email tools registered');
+  }
+
+  // Shell session (optional, config-gated)
+  let shellSession: ShellSession | null = null;
+  if (config.shell?.enabled) {
+    try {
+      shellSession = await createShellSession({
+        shell: config.shell.shell,
+        commandTimeout: config.shell.command_timeout,
+        idleTimeout: config.shell.idle_timeout,
+        maxOutputBytes: config.shell.max_output_bytes,
+        promptMarker: crypto.randomUUID(),
+      });
+      registry.register(createShellExecuteTool(shellSession));
+      console.log('shell session created and tool registered');
+    } catch (error) {
+      if (error instanceof ShellCreationError) {
+        console.error(`[shell] Failed to create session: ${error.message}`);
+        // Agent continues without shell — AC1.5
+      } else {
+        throw error;
+      }
+    }
   }
 
   // Search tools (always available — uses existing persistence and embedding providers)
@@ -1460,7 +1496,7 @@ async function main(): Promise<void> {
       systemScheduler.stop();
     },
   };
-  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager, mcpClients);
+  const shutdownHandler = createShutdownHandler(rl, persistence, dataSourceRegistry, schedulerWrapper, activityManager, mcpClients, shellSession);
 
   process.on('SIGINT', shutdownHandler);
   process.on('SIGTERM', shutdownHandler);

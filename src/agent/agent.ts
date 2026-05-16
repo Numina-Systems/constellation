@@ -352,7 +352,15 @@ export function createAgent(
         if (loopResult.triggered) {
           if (loopResult.action === 'halt') {
             // End the turn with an error message
-            return 'I appear to be stuck in a repetitive loop and cannot make progress. Please try rephrasing your request or providing additional context.';
+            const haltMessage = 'I appear to be stuck in a repetitive loop and cannot make progress. Please try rephrasing your request or providing additional context.';
+
+            await persistMessage({
+              conversation_id: id,
+              role: 'assistant',
+              content: haltMessage,
+            });
+
+            return haltMessage;
           }
 
           // For warn/redirect, inject a system message before the next round
@@ -364,7 +372,7 @@ export function createAgent(
           // Inject as system context for next model call
           // Implementation: append to conversation history as a system-injected message
           history.push({
-            id: `system-${Date.now()}`,
+            id: crypto.randomUUID(),
             conversation_id: id,
             role: 'user',
             content: `[System: ${warningMessage}${redirectHint}]`,

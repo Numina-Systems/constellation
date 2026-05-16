@@ -10,6 +10,7 @@ import type { RecallResult } from './types.js';
 
 export type RecallContextState = {
   setResult(result: RecallResult | null): void;
+  getResult(): RecallResult | null;
 };
 
 /**
@@ -54,6 +55,8 @@ export function createRecallContextProvider(): ContextProvider & RecallContextSt
   provider.setResult = (result: RecallResult | null) => {
     currentResult = result;
   };
+
+  provider.getResult = () => currentResult;
 
   return provider;
 }

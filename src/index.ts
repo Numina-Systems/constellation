@@ -11,7 +11,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
-import { createPostgresProvider } from '@/persistence/postgres';
+import { createPostgresProvider, createMessageStore } from '@/persistence';
 import { createModelProvider } from '@/model/factory';
 import { createEmbeddingProvider } from '@/embedding/factory';
 import { createPostgresMemoryStore } from '@/memory/postgres-store';
@@ -550,6 +550,10 @@ async function main(): Promise<void> {
   // Create reflexion stores
   const predictionStore = createPredictionStore(persistence);
   const traceRecorder: TraceStore = createTraceRecorder(persistence);
+
+  // Create message store (Phase 4: checkpoint-restore will use this)
+  // @ts-expect-error - intentionally unused until Phase 4
+  const messageStore = createMessageStore(persistence);
 
   const registry = createToolRegistry();
 

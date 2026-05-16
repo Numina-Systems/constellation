@@ -1863,9 +1863,18 @@ describe('Cache Diagnostics Integration', () => {
   });
 
   it('AC4.1: trace shape verification — cache_diagnostics traces contain required fields', async () => {
-    // Create a mock memory manager that returns different system prompts on each call
-    // to simulate a cache bust condition
-    let callCount = 0;
+    // Create a mock memory manager that returns different system prompts on each turn
+    // to simulate a cache bust condition.
+    //
+    // Key insight: buildSystemPrompt may be called multiple times per turn (preliminary check + model.complete).
+    // We want the first turn to return prompt A, and the second turn to return prompt B.
+    // We track which turn we're in via an external counter that we manually increment after each processMessage.
+    const systemPrompts = [
+      'Base system prompt.',
+      'Base system prompt with additional context added.',
+    ];
+    let currentTurnIndex = 0; // Tracks which turn we're in (manually incremented after each processMessage)
+
     const mockMemoryWithChanges: MemoryManager = {
       async getCoreBlocks() {
         return [];
@@ -1874,10 +1883,9 @@ describe('Cache Diagnostics Integration', () => {
         return [];
       },
       async buildSystemPrompt() {
-        // First call returns base prompt, second call returns different prompt
-        // to trigger a cache bust detection
-        callCount++;
-        return callCount === 1 ? 'Base system prompt.' : 'Base system prompt with additional context added.';
+        // Return the prompt for the current turn
+        const idx = Math.min(currentTurnIndex, systemPrompts.length - 1);
+        return systemPrompts[idx]!;
       },
       async read() {
         return [];
@@ -1976,7 +1984,7 @@ describe('Cache Diagnostics Integration', () => {
 
     // First message establishes baseline
     await agent.processMessage('First message');
-    callCount = 0; // Reset counter to simulate the second turn getting different prompt
+    currentTurnIndex++;
 
     // Second message — system prompt has changed, should trigger cache bust trace
     await agent.processMessage('Second message');
@@ -1984,12 +1992,12 @@ describe('Cache Diagnostics Integration', () => {
     // Find cache_diagnostics traces
     const cacheDiagnosticsTraces = recordedTraces.filter((t) => t.toolName === 'cache_diagnostics');
 
-    // We should have at least one trace (from the second turn when system prompt changed)
-    // (Note: first turn typically doesn't produce a trace since there's no previous state to compare)
-    // The test focuses on verifying the trace shape when a trace is recorded.
+    // We expect at least one cache_diagnostics trace from the second turn when the system prompt changed.
+    // The first turn doesn't produce a trace since there's no previous snapshot to compare against.
+    expect(cacheDiagnosticsTraces.length).toBeGreaterThanOrEqual(1);
 
     // For this test, we verify the shape of cache diagnostics traces by checking
-    // that if any exist, they have the required fields
+    // that all traces have the required fields
     for (const trace of cacheDiagnosticsTraces) {
       // Verify trace shape per AC4.1
       expect(trace.toolName).toBe('cache_diagnostics');
@@ -2008,9 +2016,6 @@ describe('Cache Diagnostics Integration', () => {
       expect(trace.conversationId).toBe(agent.conversationId);
       expect(trace.owner).toBe('test-owner');
     }
-
-    // Verify we captured at least the traces from both turns (even if no cache bust)
-    expect(recordedTraces.length).toBeGreaterThanOrEqual(0);
   });
 
   it('AC4.2: no trace recorded on first turn (no previous state to compare)', async () => {

@@ -1,10 +1,8 @@
-// pattern: Imperative Shell
-
 import {describe, it, expect, beforeAll, afterEach, afterAll} from 'bun:test';
 import {restoreFromCheckpoint, type RestorationDependencies} from './checkpoint-restore.ts';
 import {serializeCheckpoint} from './checkpoint-serializer.ts';
 import {createPostgresProvider} from '@/persistence/postgres.ts';
-import type {SessionCheckpoint, AgentCheckpointState, CheckpointCompactionMeta} from './checkpoint-types.ts';
+import type {SessionCheckpoint, AgentCheckpointState, CheckpointCompactionMeta, CheckpointTrigger} from './checkpoint-types.ts';
 import type {MemoryBlock} from '@/memory/types.ts';
 import type {Prediction} from '@/reflexion/types.ts';
 import type {Interest} from '@/subconscious/types.ts';
@@ -36,7 +34,14 @@ async function cleanupTables(): Promise<void> {
 }
 
 function createTestCheckpoint(
-  overrides: Partial<SessionCheckpoint> = {},
+  stateOverrides: Partial<AgentCheckpointState> = {},
+  metaOverrides: Partial<{
+    id: string;
+    conversationId: string;
+    owner: string;
+    trigger: CheckpointTrigger;
+    createdAt: string;
+  }> = {},
 ): SessionCheckpoint {
   const now = new Date().toISOString();
   const state: AgentCheckpointState = {
@@ -48,6 +53,7 @@ function createTestCheckpoint(
     activeInterests: [],
     compactionMeta: {lastCompactedIndex: 0, summaryCount: 0},
     recallCache: null,
+    ...stateOverrides,
   };
 
   return serializeCheckpoint({
@@ -57,7 +63,7 @@ function createTestCheckpoint(
     trigger: 'explicit',
     state,
     createdAt: now,
-    ...overrides,
+    ...metaOverrides,
   });
 }
 
@@ -83,10 +89,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
   describe('session-checkpointing.AC3.6: Deleted conversation fails', () => {
     it('should throw error when conversation has no messages but checkpoint references them', async () => {
       const conversationId = 'conv-deleted';
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: ['msg-1', 'msg-2'],
-      });
+      const checkpoint = createTestCheckpoint(
+        {messageIds: ['msg-1', 'msg-2']},
+        {conversationId},
+      );
 
       // Create checkpoint but don't create messages
 
@@ -118,34 +124,28 @@ describe('restoreFromCheckpoint Integration Tests', () => {
       // Create only some messages
       await createTestMessages(conversationId, ['msg-1', 'msg-3']);
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: checkpointMessageIds,
-      });
-
-      let loggedWarning = '';
-      const originalWarn = console.warn;
-      console.warn = (...args: unknown[]) => {
-        loggedWarning = String(args[0]);
-      };
+      const checkpoint = createTestCheckpoint(
+        {messageIds: checkpointMessageIds},
+        {conversationId},
+      );
 
       const mockMemory = {
         list: async () => [] as Array<MemoryBlock>,
       };
 
+      let loggedWarning = '';
       const deps: RestorationDependencies = {
         persistence,
         memory: mockMemory as any,
         owner: 'agent-1',
+        log: (msg: string) => {
+          loggedWarning = msg;
+        },
       };
 
-      try {
-        const result = await restoreFromCheckpoint(checkpoint, deps);
-        expect(result?.messageCount).toBe(2);
-        expect(loggedWarning).toContain('1 message(s) from checkpoint are missing');
-      } finally {
-        console.warn = originalWarn;
-      }
+      const result = await restoreFromCheckpoint(checkpoint, deps);
+      expect(result?.messageCount).toBe(2);
+      expect(loggedWarning).toContain('1 message(s) from checkpoint are missing');
     });
   });
 
@@ -157,11 +157,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         {label: 'status', content: 'Current investigation status'},
       ];
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        workingMemory: checkpointBlocks,
-      } as any);
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], workingMemory: checkpointBlocks},
+        {conversationId},
+      );
 
       let writtenBlocks: Array<{label: string; content: string}> = [];
       let deletedBlockIds: Array<string> = [];
@@ -207,11 +206,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         {id: 'int-1', name: 'Pattern Analysis', engagementScore: 0.75, status: 'active' as const, lastEngagedAt: new Date().toISOString()},
       ];
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        activeInterests: checkpointInterests,
-      } as any);
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], activeInterests: checkpointInterests},
+        {conversationId},
+      );
 
       let restoredInterests: Array<{id: string; engagementScore: number}> = [];
 
@@ -259,17 +257,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         {id: 'int-missing', name: 'Deleted Interest', engagementScore: 0.8, status: 'active' as const, lastEngagedAt: new Date().toISOString()},
       ];
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        activeInterests: checkpointInterests,
-      } as any);
-
-      let loggedWarning = '';
-      const originalWarn = console.warn;
-      console.warn = (...args: unknown[]) => {
-        loggedWarning = String(args[0]);
-      };
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], activeInterests: checkpointInterests},
+        {conversationId},
+      );
 
       const mockInterestRegistry = {
         listInterests: async () => [] as Array<Interest>,
@@ -279,19 +270,19 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         list: async () => [] as Array<MemoryBlock>,
       };
 
+      let loggedWarning = '';
       const deps: RestorationDependencies = {
         persistence,
         memory: mockMemory as any,
         interestRegistry: mockInterestRegistry as any,
         owner: 'agent-1',
+        log: (msg: string) => {
+          loggedWarning = msg;
+        },
       };
 
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-        expect(loggedWarning).toContain('interest int-missing from checkpoint no longer exists');
-      } finally {
-        console.warn = originalWarn;
-      }
+      await restoreFromCheckpoint(checkpoint, deps);
+      expect(loggedWarning).toContain('interest int-missing from checkpoint no longer exists');
     });
   });
 
@@ -302,17 +293,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         {id: 'pred-missing', predictionText: 'Will happen', domain: null, confidence: null, createdAt: new Date().toISOString()},
       ];
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        pendingPredictions: checkpointPredictions,
-      } as any);
-
-      let loggedWarning = '';
-      const originalWarn = console.warn;
-      console.warn = (...args: unknown[]) => {
-        loggedWarning = String(args[0]);
-      };
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], pendingPredictions: checkpointPredictions},
+        {conversationId},
+      );
 
       const mockPredictionStore = {
         listPredictions: async () => [] as Array<Prediction>,
@@ -322,19 +306,19 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         list: async () => [] as Array<MemoryBlock>,
       };
 
+      let loggedWarning = '';
       const deps: RestorationDependencies = {
         persistence,
         memory: mockMemory as any,
         predictionStore: mockPredictionStore as any,
         owner: 'agent-1',
+        log: (msg: string) => {
+          loggedWarning = msg;
+        },
       };
 
-      try {
-        await restoreFromCheckpoint(checkpoint, deps);
-        expect(loggedWarning).toContain('pending prediction(s) from checkpoint are no longer in database');
-      } finally {
-        console.warn = originalWarn;
-      }
+      await restoreFromCheckpoint(checkpoint, deps);
+      expect(loggedWarning).toContain('pending prediction(s) from checkpoint are no longer in database');
     });
   });
 
@@ -346,11 +330,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         summaryCount: 3,
       };
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        compactionMeta,
-      } as any);
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], compactionMeta},
+        {conversationId},
+      );
 
       const mockMemory = {
         list: async () => [] as Array<MemoryBlock>,
@@ -379,11 +362,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         {label: 'memory-2', content: 'Content 2'},
       ];
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        workingMemory: checkpointBlocks,
-      } as any);
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], workingMemory: checkpointBlocks},
+        {conversationId},
+      );
 
       const writtenBlocks: Array<{label: string; content: string}> = [];
 
@@ -427,11 +409,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
     it('should delete existing working blocks when checkpoint has none', async () => {
       const conversationId = 'conv-empty';
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: [],
-        workingMemory: [],
-      } as any);
+      const checkpoint = createTestCheckpoint(
+        {messageIds: [], workingMemory: []},
+        {conversationId},
+      );
 
       const deletedBlockIds: Array<string> = [];
 
@@ -474,11 +455,10 @@ describe('restoreFromCheckpoint Integration Tests', () => {
         {label: 'context', content: 'Session context'},
       ];
 
-      const checkpoint = createTestCheckpoint({
-        conversationId,
-        messageIds: ['msg-1'],
-        workingMemory: checkpointBlocks,
-      } as any);
+      const checkpoint = createTestCheckpoint(
+        {messageIds: ['msg-1'], workingMemory: checkpointBlocks},
+        {conversationId},
+      );
 
       // Create the message so conversation exists
       await createTestMessages(conversationId, ['msg-1']);

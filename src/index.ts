@@ -80,7 +80,7 @@ import type { EmbeddingProvider } from '@/embedding/types';
 import type { PendingMutation } from '@/memory/types';
 import type { ModelProvider } from '@/model/types';
 import type { TraceStore } from '@/reflexion';
-import type { ContextProvider, ClassifiedProvider, CheckpointAgentState, CheckpointTrigger } from '@/agent';
+import type { ContextProvider, ClassifiedProvider, CheckpointAgentState, CheckpointTrigger, SessionCheckpoint } from '@/agent';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
@@ -488,8 +488,6 @@ async function main(): Promise<void> {
   console.log('constellation daemon starting...\n');
 
   // Parse CLI resume flag (must be before config loading)
-  // Used in Task 4 for restoration integration
-  // @ts-ignore TS6133: used in checkpoint restoration (Task 4)
   const resumeCheckpointId = parseResumeFlag();
 
   // Load configuration
@@ -590,12 +588,7 @@ async function main(): Promise<void> {
 
   const resumeId = resumeCheckpointId ?? config.agent.resume_checkpoint;
 
-  let loadedCheckpoint:
-    | {
-        checkpoint: Awaited<ReturnType<typeof checkpointStore.load>>;
-        conversationId: string;
-      }
-    | null = null;
+  let loadedCheckpoint: {checkpoint: SessionCheckpoint; conversationId: string} | null = null;
 
   if (resumeId) {
     const checkpoint = await checkpointStore.load(resumeId);

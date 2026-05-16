@@ -20,6 +20,7 @@ export type RestorationDependencies = {
   readonly interestRegistry?: InterestRegistry;
   readonly recallContextState?: RecallContextState;
   readonly owner: string;
+  readonly log?: (message: string) => void;
 };
 
 export type RestorationResult = {
@@ -37,6 +38,8 @@ export async function restoreFromCheckpoint(
   checkpoint: SessionCheckpoint,
   deps: RestorationDependencies,
 ): Promise<RestorationResult> {
+  const logWarning = deps.log ?? console.warn;
+
   // AC3.6: Verify conversation exists
   const countResult = await deps.persistence.query<{readonly count: number}>(
     'SELECT COUNT(*)::int as count FROM messages WHERE conversation_id = $1',
@@ -62,7 +65,7 @@ export async function restoreFromCheckpoint(
     const missingIds = checkpoint.messageIds.filter(id => !existingIds.has(id));
 
     if (missingIds.length > 0) {
-      console.warn(
+      logWarning(
         `[checkpoint] ${missingIds.length} message(s) from checkpoint are missing from conversation ${checkpoint.conversationId} (may have been pruned by compaction)`,
       );
     }
@@ -94,7 +97,7 @@ export async function restoreFromCheckpoint(
       .filter(id => !dbPredictionIds.has(id));
 
     if (missingPredictionIds.length > 0) {
-      console.warn(
+      logWarning(
         `[checkpoint] ${missingPredictionIds.length} pending prediction(s) from checkpoint are no longer in database (may have been evaluated or expired)`,
       );
     }
@@ -115,7 +118,7 @@ export async function restoreFromCheckpoint(
           });
         }
       } else {
-        console.warn(
+        logWarning(
           `[checkpoint] interest ${checkpointInterest.id} from checkpoint no longer exists in database`,
         );
       }

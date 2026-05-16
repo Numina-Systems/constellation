@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import { describe, test, expect } from 'bun:test';
 import { buildSystemPrompt } from './context.ts';
 import { buildUserMessage } from './messages.ts';
@@ -46,21 +44,25 @@ describe('AC1: System Prompt Stability', () => {
 
   test('AC1.3: changing memory content does NOT change system prompt hash', async () => {
     // Create two separate memory instances with different internal state
-    const mockMemory1 = createMockMemory('Base persona and memory content.');
-    const mockMemory2 = createMockMemory('Base persona and memory content.');
+    const mockMemory1 = createMockMemory('You are a helpful assistant focused on analysis.');
+    const mockMemory2 = createMockMemory('You are a thorough assistant skilled in reasoning.');
 
-    // Even though internal memory state might differ, the system prompt output is stable
+    // Build system prompts from both memory managers
     const prompt1 = await buildSystemPrompt(mockMemory1);
     const prompt2 = await buildSystemPrompt(mockMemory2);
 
-    // System prompts should be identical since buildSystemPrompt only returns memory output
-    expect(prompt1).toBe(prompt2);
+    // System prompts should be different (reflecting different base content)
+    expect(prompt1).not.toBe(prompt2);
 
-    // Hashes should match
-    const hash1 = Bun.hash(prompt1);
-    const hash2 = Bun.hash(prompt2);
+    // Verify neither includes any injected dynamic context beyond what the mock returns
+    expect(prompt1).not.toContain('[Recalled Context]');
+    expect(prompt1).not.toContain('[Recall');
+    expect(prompt2).not.toContain('[Recalled Context]');
+    expect(prompt2).not.toContain('[Recall');
 
-    expect(hash1).toBe(hash2);
+    // Both should be exactly what the mock returned (no extra appended content)
+    expect(prompt1).toBe('You are a helpful assistant focused on analysis.');
+    expect(prompt2).toBe('You are a thorough assistant skilled in reasoning.');
   });
 
   test('AC1.4: changing recall results does NOT change system prompt hash', async () => {

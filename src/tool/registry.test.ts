@@ -550,4 +550,184 @@ describe('ToolRegistry', () => {
       expect(modelTools[0]?.name).toBe('mock_tool');
     });
   });
+
+  describe('unregistration', () => {
+    it('should return true when unregistering an existing tool', () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+      const result = registry.unregister('test_tool');
+
+      expect(result).toBe(true);
+    });
+
+    it('should return false when unregistering a nonexistent tool', () => {
+      const registry = createToolRegistry();
+
+      const result = registry.unregister('nonexistent_tool');
+
+      expect(result).toBe(false);
+    });
+
+    it('should remove tool from getDefinitions after unregistration', () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+      expect(registry.getDefinitions().length).toBe(1);
+
+      registry.unregister('test_tool');
+      expect(registry.getDefinitions().length).toBe(0);
+    });
+
+    it('should return error when dispatching unregistered tool', async () => {
+      const registry = createToolRegistry();
+
+      const mockTool: Tool = {
+        definition: {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(mockTool);
+      registry.unregister('test_tool');
+
+      const result = await registry.dispatch('test_tool', {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('unknown tool');
+    });
+
+    it('should exclude unregistered tool from generateStubs', () => {
+      const registry = createToolRegistry();
+
+      const tool1: Tool = {
+        definition: {
+          name: 'tool1',
+          description: 'Tool 1',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      const tool2: Tool = {
+        definition: {
+          name: 'tool2',
+          description: 'Tool 2',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(tool1);
+      registry.register(tool2);
+      registry.unregister('tool1');
+
+      const stubs = registry.generateStubs();
+
+      expect(stubs).not.toContain('async function tool1');
+      expect(stubs).toContain('async function tool2');
+    });
+
+    it('should exclude unregistered tool from toModelTools', () => {
+      const registry = createToolRegistry();
+
+      const tool1: Tool = {
+        definition: {
+          name: 'tool1',
+          description: 'Tool 1',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      const tool2: Tool = {
+        definition: {
+          name: 'tool2',
+          description: 'Tool 2',
+          parameters: [],
+        },
+        handler: async () => ({ success: true, output: 'ok' }),
+      };
+
+      registry.register(tool1);
+      registry.register(tool2);
+      registry.unregister('tool1');
+
+      const modelTools = registry.toModelTools();
+
+      expect(modelTools.length).toBe(1);
+      expect(modelTools[0]?.name).toBe('tool2');
+    });
+
+    it('should support full lifecycle: register → use → unregister → re-register with different handler', async () => {
+      const registry = createToolRegistry();
+
+      let callCount = 0;
+
+      const tool: Tool = {
+        definition: {
+          name: 'lifecycle_tool',
+          description: 'Lifecycle test tool',
+          parameters: [],
+        },
+        handler: async () => {
+          callCount++;
+          return { success: true, output: 'first handler' };
+        },
+      };
+
+      registry.register(tool);
+
+      let result = await registry.dispatch('lifecycle_tool', {});
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('first handler');
+      expect(callCount).toBe(1);
+
+      registry.unregister('lifecycle_tool');
+      result = await registry.dispatch('lifecycle_tool', {});
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('unknown tool');
+
+      let secondCallCount = 0;
+      const updatedTool: Tool = {
+        definition: {
+          name: 'lifecycle_tool',
+          description: 'Lifecycle test tool',
+          parameters: [],
+        },
+        handler: async () => {
+          secondCallCount++;
+          return { success: true, output: 'second handler' };
+        },
+      };
+
+      registry.register(updatedTool);
+
+      result = await registry.dispatch('lifecycle_tool', {});
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('second handler');
+      expect(secondCallCount).toBe(1);
+    });
+  });
 });

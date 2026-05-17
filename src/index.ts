@@ -101,6 +101,8 @@ import { restoreFromCheckpoint, type RestorationDependencies, type RestorationRe
 import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
 import { createLoopDetector } from '@/loop-detection/index.js';
 import type { LoopDetectionConfig } from '@/loop-detection/types.js';
+import { createPostgresCustomToolStore, createCustomToolManager } from '@/custom-tool';
+import { createCustomToolTools } from '@/tool/builtin/custom-tools';
 
 const AGENT_OWNER = 'spirit';
 
@@ -801,6 +803,16 @@ async function main(): Promise<void> {
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
 
+  // Custom tools system
+  const customToolStore = createPostgresCustomToolStore(persistence);
+  const customToolManager = createCustomToolManager({
+    store: customToolStore,
+    registry,
+    runtime,
+    secretResolver,
+    owner: AGENT_OWNER,
+  });
+
   // Skills system (optional)
   let skillRegistry: SkillRegistry | undefined;
 
@@ -1176,6 +1188,17 @@ async function main(): Promise<void> {
   // Register checkpoint tool
   const checkpointTool = createCheckpointTool(checkpointDeps, () => agentStateRef.current);
   registry.register(checkpointTool);
+
+  // Load persisted custom tools
+  await customToolManager.loadAll();
+  console.log('custom tools loaded');
+
+  // Register custom tool management tools
+  const customToolTools = createCustomToolTools(customToolManager);
+  for (const tool of customToolTools) {
+    registry.register(tool);
+  }
+  console.log('custom tool management tools registered');
 
   // Create loop detector if enabled
   const loopDetectionConfig: LoopDetectionConfig = {

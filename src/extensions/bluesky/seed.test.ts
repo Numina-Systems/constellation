@@ -12,6 +12,7 @@ function createMockMemoryStore(): MemoryStore {
     getBlock: async () => null,
     getBlocksByTier: async () => [],
     getBlockByLabel: async () => null,
+    getBlocksByLabelPrefix: async () => [],
     createBlock: async (block) => {
       const fullBlock: MemoryBlock = {
         ...block,

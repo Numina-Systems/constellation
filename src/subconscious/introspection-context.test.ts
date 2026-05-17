@@ -28,6 +28,11 @@ function createMockMemoryStore(
       return blockToReturn;
     },
 
+    async getBlocksByLabelPrefix(owner: string, prefix: string, tier?: string) {
+      calls.push({ method: 'getBlocksByLabelPrefix', args: [owner, prefix, tier] });
+      return [];
+    },
+
     async createBlock(block) {
       calls.push({ method: 'createBlock', args: [block] });
       return {
@@ -408,6 +413,9 @@ describe('createIntrospectionContextProvider', () => {
           return null;
         },
         async getBlocksByTier() {
+          return [];
+        },
+        async getBlocksByLabelPrefix() {
           return [];
         },
         async createBlock(block) {

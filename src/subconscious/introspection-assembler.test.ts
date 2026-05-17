@@ -162,6 +162,10 @@ function createMockMemoryStore(): MemoryStore {
       return null;
     },
 
+    async getBlocksByLabelPrefix() {
+      return [];
+    },
+
     async createBlock() {
       return mockBlock;
     },

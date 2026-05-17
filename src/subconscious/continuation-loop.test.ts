@@ -17,6 +17,7 @@ function buildMockDeps(overrides?: Partial<ContinuationLoopDeps>): ContinuationL
   const capturedContexts: Array<ContinuationJudgeContext> = [];
   const assembledEvents: Array<ExternalEvent> = [];
   const processedResponses: Array<string> = [];
+  const logMessages: Array<string> = [];
 
   // Create base budget behavior
   let canContinueImpl: (() => boolean) | undefined;
@@ -105,6 +106,10 @@ function buildMockDeps(overrides?: Partial<ContinuationLoopDeps>): ContinuationL
     return response;
   };
 
+  const mockLog = (message: string): void => {
+    logMessages.push(message);
+  };
+
   const deps: ContinuationLoopDeps = {
     judge,
     budget,
@@ -114,6 +119,7 @@ function buildMockDeps(overrides?: Partial<ContinuationLoopDeps>): ContinuationL
     processEvent: processEventImpl,
     eventType: overrides?.eventType ?? 'impulse',
     onHousekeeping: overrides?.onHousekeeping,
+    log: mockLog,
   };
 
   // Attach tracking info for tests (use getters to capture current values)
@@ -135,6 +141,9 @@ function buildMockDeps(overrides?: Partial<ContinuationLoopDeps>): ContinuationL
     },
     get processedResponses() {
       return processedResponses;
+    },
+    get logMessages() {
+      return logMessages;
     },
   };
 
@@ -331,6 +340,145 @@ describe('impulse-continuation.AC4: Impulse continuation loop', () => {
 
       // Housekeeping called once (after the one continuation round)
       expect(housekeepingCount).toBe(1);
+    });
+  });
+
+  describe('continuation-refinements.AC3: Injectable logger in continuation loop', () => {
+    describe('continuation-refinements.AC3.1: When log dep is provided, all output goes through it', () => {
+      it('captures log messages via provided logger', async () => {
+        let callCount = 0;
+
+        const deps = buildMockDeps({
+          judge: {
+            async evaluate() {
+              callCount += 1;
+              if (callCount === 1) {
+                return {shouldContinue: true, reason: 'momentum'};
+              }
+              return {shouldContinue: false, reason: 'done'};
+            },
+          },
+        });
+
+        await runContinuationLoop(deps, 'initial', new Date());
+
+        const tracking = (deps as any).__tracking__;
+        expect(tracking.logMessages.length).toBeGreaterThan(0);
+        // First message is the "continue" decision
+        expect(tracking.logMessages[0]).toContain('[continuation]');
+        expect(tracking.logMessages[0]).toContain('continuation round');
+        // Second message is the "stop" decision
+        expect(tracking.logMessages[1]).toContain('[continuation]');
+        expect(tracking.logMessages[1]).toContain('continuation stopped');
+      });
+
+      it('uses provided logger instead of console.log', async () => {
+        const customLogMessages: Array<string> = [];
+        const customLog = (message: string): void => {
+          customLogMessages.push(message);
+        };
+
+        const deps = buildMockDeps();
+        (deps as any).log = customLog;
+
+        await runContinuationLoop(deps, 'initial', new Date());
+
+        // Custom logger was called
+        expect(customLogMessages.length).toBeGreaterThan(0);
+        // All messages are captured by custom logger
+        expect(customLogMessages[0]).toContain('[continuation]');
+        expect(customLogMessages[0]).toContain('continuation stopped');
+      });
+    });
+
+    describe('continuation-refinements.AC3.2: When log dep is omitted, falls back to console.log', () => {
+      it('works without error when log is undefined', async () => {
+        const deps = buildMockDeps();
+        // Remove the log function
+        (deps as any).log = undefined;
+
+        let threw = false;
+        try {
+          await runContinuationLoop(deps, 'initial', new Date());
+        } catch (e) {
+          threw = true;
+        }
+
+        expect(threw).toBe(false);
+      });
+    });
+
+    describe('continuation-refinements.AC3.3: Error catch block includes stack trace', () => {
+      it('includes stack trace when processEvent throws', async () => {
+        const deps = buildMockDeps({
+          processEvent: async () => {
+            const err = new Error('test error message');
+            throw err;
+          },
+          judge: {
+            async evaluate() {
+              return {shouldContinue: true, reason: 'continue'};
+            },
+          },
+        });
+
+        await runContinuationLoop(deps, 'initial', new Date());
+
+        const tracking = (deps as any).__tracking__;
+        const errorLogs = tracking.logMessages.filter((msg: string) => msg.includes('loop error'));
+        expect(errorLogs.length).toBeGreaterThan(0);
+
+        const errorMessage = errorLogs[0];
+        expect(errorMessage).toContain('test error message');
+        expect(errorMessage).toContain('Error');
+        // Stack trace includes newline separator
+        expect(errorMessage).toContain('\n');
+      });
+    });
+
+    describe('continuation-refinements.AC3.4: All log messages have [continuation] prefix', () => {
+      it('prefixes all messages with [continuation]', async () => {
+        let callCount = 0;
+
+        const deps = buildMockDeps({
+          judge: {
+            async evaluate() {
+              callCount += 1;
+              if (callCount === 1) {
+                return {shouldContinue: true, reason: 'test'};
+              }
+              return {shouldContinue: false, reason: 'test'};
+            },
+          },
+        });
+
+        await runContinuationLoop(deps, 'initial', new Date());
+
+        const tracking = (deps as any).__tracking__;
+        for (const message of tracking.logMessages) {
+          expect(message).toMatch(/^\[continuation\]/);
+        }
+      });
+
+      it('prefixes error messages with [continuation]', async () => {
+        const deps = buildMockDeps({
+          processEvent: async () => {
+            throw new Error('test error');
+          },
+          judge: {
+            async evaluate() {
+              return {shouldContinue: true, reason: 'continue'};
+            },
+          },
+        });
+
+        await runContinuationLoop(deps, 'initial', new Date());
+
+        const tracking = (deps as any).__tracking__;
+        const errorLogs = tracking.logMessages.filter((msg: string) => msg.includes('loop error'));
+        expect(errorLogs.length).toBeGreaterThan(0);
+        expect(errorLogs[0]).toMatch(/^\[continuation\]/);
+      });
     });
   });
 });

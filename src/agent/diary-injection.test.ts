@@ -118,6 +118,9 @@ function createMockMemoryManager(): MemoryManager {
 function createMockToolRegistry(): ToolRegistry {
   return {
     register() {},
+    unregister() {
+      return true;
+    },
     getDefinitions() {
       return [];
     },

@@ -123,6 +123,9 @@ function createMockMemoryManager(): MemoryManager {
 function createMockToolRegistry(): ToolRegistry {
   return {
     register() {},
+    unregister() {
+      return true;
+    },
     getDefinitions() {
       return [];
     },
@@ -314,6 +317,9 @@ describe('Trace capture', () => {
 
     const failingRegistry: ToolRegistry = {
       register() {},
+      unregister() {
+        return true;
+      },
       getDefinitions() {
         return [];
       },
@@ -381,6 +387,9 @@ describe('Trace capture', () => {
 
     const throwingRegistry: ToolRegistry = {
       register() {},
+      unregister() {
+        return true;
+      },
       getDefinitions() {
         return [];
       },

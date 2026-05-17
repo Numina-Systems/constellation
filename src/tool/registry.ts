@@ -69,6 +69,10 @@ export function createToolRegistry(): ToolRegistry {
       tools.set(tool.definition.name, tool);
     },
 
+    unregister(name: string): boolean {
+      return tools.delete(name);
+    },
+
     getDefinitions(): Array<ToolDefinition> {
       return Array.from(tools.values()).map((tool) => tool.definition);
     },

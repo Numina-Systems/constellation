@@ -36,6 +36,7 @@ export type Tool = {
 
 export interface ToolRegistry {
   register(tool: Tool): void;
+  unregister(name: string): boolean;
   getDefinitions(): Array<ToolDefinition>;
   dispatch(name: string, params: Record<string, unknown>): Promise<ToolResult>;
   generateStubs(): string;

@@ -35,6 +35,9 @@ function createMockRegistry(): ToolRegistry {
     register() {
       // noop
     },
+    unregister() {
+      return true;
+    },
     getDefinitions() {
       return [];
     },

@@ -244,6 +244,10 @@ const LoopDetectionConfigSchema = z.object({
   action: z.enum(['warn', 'redirect', 'halt']).default('warn'),
 });
 
+const SecretsConfigSchema = z.object({
+  agent_managed: z.boolean().default(false),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -260,6 +264,7 @@ const AppConfigSchema = z.object({
   subconscious: SubconsciousConfigSchema.optional(),
   shell: ShellConfigSchema.optional(),
   loop_detection: LoopDetectionConfigSchema.default({}),
+  secrets: SecretsConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -279,5 +284,6 @@ export type McpConfig = z.infer<typeof McpConfigSchema>;
 export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
 export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export type LoopDetectionSchemaConfig = z.infer<typeof LoopDetectionConfigSchema>;
+export type SecretsConfig = z.infer<typeof SecretsConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema, ShellConfigSchema, LoopDetectionConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema, ShellConfigSchema, LoopDetectionConfigSchema, SecretsConfigSchema };

@@ -80,7 +80,7 @@ export function sleepTaskCron(sleepSchedule: string, offsetHours: number, timezo
   return `${minute} ${hour} * * *`;
 }
 
-export const SLEEP_TASK_NAMES = ['sleep-compaction', 'sleep-prediction-review', 'sleep-pattern-analysis'] as const;
+export const SLEEP_TASK_NAMES = ['sleep-compaction', 'sleep-prediction-review', 'sleep-pattern-analysis', 'sleep-archivist'] as const;
 
 export const TRANSITION_TASK_NAMES = ['transition-to-sleep', 'transition-to-wake'] as const;
 

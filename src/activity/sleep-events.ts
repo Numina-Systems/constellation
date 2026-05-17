@@ -80,6 +80,33 @@ export function buildPatternAnalysisEvent(
   };
 }
 
+export function buildArchivistEvent(
+  flaggedEvents: ReadonlyArray<QueuedEvent>,
+  timestamp: Date,
+): SleepTaskEvent {
+  const lines = [
+    'Sleep task: Knowledge Archivist (Full Pipeline)',
+    '',
+    'Run the full archivist pipeline to maintain knowledge health:',
+    '- Scan all mutable memory blocks',
+    '- Identify and merge near-duplicate blocks',
+    '- Cross-reference related blocks',
+    '- Prune empty blocks',
+    '- Write a reflection on memory health',
+    '',
+    'This is a background maintenance task. Focus on knowledge quality and organization.',
+  ];
+
+  appendFlaggedSummary(lines, flaggedEvents);
+
+  return {
+    source: 'sleep-task',
+    content: lines.join('\n'),
+    metadata: { taskType: 'archivist', sleepTask: true },
+    timestamp,
+  };
+}
+
 function appendFlaggedSummary(
   lines: Array<string>,
   flaggedEvents: ReadonlyArray<QueuedEvent>,

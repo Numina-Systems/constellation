@@ -208,7 +208,8 @@ describe('schedule helpers', () => {
       expect(SLEEP_TASK_NAMES).toContain('sleep-compaction');
       expect(SLEEP_TASK_NAMES).toContain('sleep-prediction-review');
       expect(SLEEP_TASK_NAMES).toContain('sleep-pattern-analysis');
-      expect(SLEEP_TASK_NAMES.length).toBe(3);
+      expect(SLEEP_TASK_NAMES).toContain('sleep-archivist');
+      expect(SLEEP_TASK_NAMES.length).toBe(4);
     });
 
     it('should have all transition task names in TRANSITION_TASK_NAMES', () => {

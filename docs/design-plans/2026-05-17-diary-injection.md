@@ -10,7 +10,7 @@ The design deliberately avoids semantic retrieval. Where recall dynamically surf
 
 1. At session start, the harness reads the most recent diary entries from working-tier memory blocks (labelled `diary:YYYY-MM-DD`) and injects them into the system prompt after core memory blocks.
 2. Injection is static per session — fetched once at startup, never re-fetched during the session.
-3. Entry selection is by date (most recent first), capped by both entry count (default 3) and token budget (default 1500 tokens).
+3. Entry selection is by date (most recent first), capped by both entry count (default 3) and token budget (default 3000 tokens).
 4. No new write tool required — the agent uses existing `memory_write` to create diary entries.
 5. No embeddings or decomposition involved — retrieval is a simple prefix match + date sort.
 6. Zero diary entries produces no injected section (graceful absence).
@@ -27,7 +27,7 @@ The design deliberately avoids semantic retrieval. Where recall dynamically surf
 - **diary-injection.AC1.5 Edge:** Single diary entry returns that entry alone
 
 ### diary-injection.AC2: Token budget
-- **diary-injection.AC2.1 Success:** Total injected content is <= configured `diary_token_budget` (default 1500)
+- **diary-injection.AC2.1 Success:** Total injected content is <= configured `diary_token_budget` (default 3000)
 - **diary-injection.AC2.2 Success:** If final entry exceeds remaining budget, it's truncated (not dropped)
 - **diary-injection.AC2.3 Edge:** Entry exactly at budget limit is included in full
 - **diary-injection.AC2.4 Edge:** Single entry larger than entire budget is truncated to budget

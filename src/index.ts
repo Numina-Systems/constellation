@@ -11,7 +11,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
-import { createPostgresProvider } from '@/persistence/postgres';
+import { createPostgresProvider, createMessageStore } from '@/persistence';
 import { createModelProvider } from '@/model/factory';
 import { createEmbeddingProvider } from '@/embedding/factory';
 import { createPostgresMemoryStore } from '@/memory/postgres-store';
@@ -86,7 +86,7 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
-import { createShellSession, ShellCreationError } from '@/shell/index';
+import { createShellSession } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
 import type { ShellSession } from '@/shell/types';
 import { createCheckpointStore } from '@/persistence/checkpoint-store.ts';
@@ -595,6 +595,9 @@ async function main(): Promise<void> {
   const predictionStore = createPredictionStore(persistence);
   const traceRecorder: TraceStore = createTraceRecorder(persistence);
 
+  // Create message store (used for checkpoint restoration)
+  const messageStore = createMessageStore(persistence);
+
   const registry = createToolRegistry();
 
   // Step 1a: Create checkpoint store and load checkpoint for resume (AC6)
@@ -719,8 +722,9 @@ async function main(): Promise<void> {
       registry.register(createShellExecuteTool(shellSession));
       console.log('shell session created and tool registered');
     } catch (error) {
-      if (error instanceof ShellCreationError) {
-        console.error(`[shell] Failed to create session: ${error.message}`);
+      const err = error instanceof Error ? error : new Error(String(error));
+      if (err.name === 'ShellError' || (err instanceof Error && err.message.includes('shell'))) {
+        console.error(`[shell] Failed to create session: ${err.message}`);
         // Agent continues without shell — AC1.5
       } else {
         throw error;
@@ -1065,9 +1069,11 @@ async function main(): Promise<void> {
     const restorationDeps: RestorationDependencies = {
       persistence,
       memory,
+      messageStore,
       predictionStore,
       interestRegistry,
       recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
+      traceRecorder,
       owner: AGENT_OWNER,
     };
     try {

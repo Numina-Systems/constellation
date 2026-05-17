@@ -18,5 +18,9 @@ export type { AgentErrorCode } from './agent.js';
 export { ConfigError } from './config.js';
 export type { ConfigErrorCode } from './config.js';
 
+// Phase 3 (arch-hardening): Shell
+export { ShellError } from './shell.js';
+export type { ShellErrorCode } from './shell.js';
+
 // Phase 4: Trace integration
 export { traceError } from './trace.js';

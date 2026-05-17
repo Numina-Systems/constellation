@@ -9,16 +9,59 @@
 import type {SessionCheckpoint} from './checkpoint-types.ts';
 import type {PersistenceProvider} from '@/persistence/types.ts';
 import type {MemoryManager} from '@/memory/manager.ts';
-import type {PredictionStore} from '@/reflexion/types.ts';
+import type {PredictionStore, TraceRecorder} from '@/reflexion/types.ts';
 import type {InterestRegistry} from '@/subconscious/types.ts';
 import type {RecallContextState} from '@/recall/context.ts';
+import type {MessageStore} from '@/persistence/message-store.ts';
+import { AgentError } from '@/errors/agent.ts';
+import { traceError } from '@/errors/trace.ts';
+
+// ── Memory Constraint Constants ──
+const MAX_WORKING_BLOCKS = 20;
+const MAX_BLOCK_CONTENT_LENGTH = 10000;
+const LABEL_PATTERN = /^[a-z][a-z0-9_-]*$/;
+
+// ── Pre-flight Validation (Tier 0) ──
+type PreflightResult =
+  | { readonly valid: true }
+  | { readonly valid: false; readonly reason: string };
+
+function validateMemoryConstraints(
+  workingMemory: ReadonlyArray<{ readonly label: string; readonly content: string }>,
+): PreflightResult {
+  if (workingMemory.length > MAX_WORKING_BLOCKS) {
+    return {
+      valid: false,
+      reason: `working memory block count ${workingMemory.length} exceeds limit of ${MAX_WORKING_BLOCKS}`,
+    };
+  }
+
+  for (const block of workingMemory) {
+    if (!LABEL_PATTERN.test(block.label)) {
+      return {
+        valid: false,
+        reason: `invalid memory block label "${block.label}": must match pattern ${LABEL_PATTERN.source}`,
+      };
+    }
+    if (block.content.length > MAX_BLOCK_CONTENT_LENGTH) {
+      return {
+        valid: false,
+        reason: `memory block "${block.label}" content length ${block.content.length} exceeds limit of ${MAX_BLOCK_CONTENT_LENGTH}`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
 
 export type RestorationDependencies = {
   readonly persistence: PersistenceProvider;
   readonly memory: MemoryManager;
+  readonly messageStore: MessageStore;
   readonly predictionStore?: PredictionStore;
   readonly interestRegistry?: InterestRegistry;
   readonly recallContextState?: RecallContextState;
+  readonly traceRecorder: TraceRecorder;
   readonly owner: string;
   readonly log?: (message: string) => void;
 };
@@ -38,104 +81,112 @@ export async function restoreFromCheckpoint(
   checkpoint: SessionCheckpoint,
   deps: RestorationDependencies,
 ): Promise<RestorationResult> {
-  const logWarning = deps.log ?? console.warn;
+  const log = deps.log ?? console.log;
 
-  // AC3.6: Verify conversation exists
-  const countResult = await deps.persistence.query<{readonly count: number}>(
-    'SELECT COUNT(*)::int as count FROM messages WHERE conversation_id = $1',
-    [checkpoint.conversationId],
-  );
-
-  const messageCount = countResult[0]?.count ?? 0;
-
-  if (messageCount === 0 && checkpoint.messageIds.length > 0) {
-    throw new Error(
-      `cannot restore checkpoint ${checkpoint.id}: conversation ${checkpoint.conversationId} has no messages (deleted or missing)`,
+  // ── Tier 0: Pre-flight Validation ──
+  const preflight = validateMemoryConstraints(checkpoint.workingMemory);
+  if (!preflight.valid) {
+    const error = new AgentError(
+      'CHECKPOINT_FAILED',
+      `pre-flight validation failed: ${preflight.reason}`,
+      { conversationId: checkpoint.conversationId, checkpointId: checkpoint.id },
     );
+    traceError(error, deps.traceRecorder, deps.owner, checkpoint.conversationId);
+    throw error;
   }
 
-  // AC3.1: Verify message coverage (log warning if some are missing)
-  if (checkpoint.messageIds.length > 0) {
-    const existingMessages = await deps.persistence.query<{readonly id: string}>(
-      'SELECT id FROM messages WHERE conversation_id = $1',
-      [checkpoint.conversationId],
-    );
+  // ── Tier 1 + Tier 2: DB writes then memory writes, all inside transaction ──
+  return await deps.persistence.withTransaction(async () => {
+    // Tier 1: DB operations (rolled back on any failure)
 
-    const existingIds = new Set(existingMessages.map(m => m.id));
-    const missingIds = checkpoint.messageIds.filter(id => !existingIds.has(id));
-
-    if (missingIds.length > 0) {
-      logWarning(
-        `[checkpoint] ${missingIds.length} message(s) from checkpoint are missing from conversation ${checkpoint.conversationId} (may have been pruned by compaction)`,
+    // Verify conversation exists via MessageStore
+    const messageCount = await deps.messageStore.count(checkpoint.conversationId);
+    if (messageCount === 0 && checkpoint.messageIds.length > 0) {
+      const error = new AgentError(
+        'CHECKPOINT_FAILED',
+        'cannot restore checkpoint: conversation has no messages (deleted or missing)',
+        { conversationId: checkpoint.conversationId, checkpointId: checkpoint.id },
       );
+      traceError(error, deps.traceRecorder, deps.owner, checkpoint.conversationId);
+      throw error;
     }
-  }
 
-  // AC3.2: Restore working memory
-  const currentWorkingBlocks = await deps.memory.list('working');
-
-  // Update or create blocks from checkpoint
-  for (const block of checkpoint.workingMemory) {
-    await deps.memory.write(block.label, block.content, 'working');
-  }
-
-  // Delete blocks that existed in current state but not in checkpoint
-  const checkpointLabels = new Set(checkpoint.workingMemory.map(b => b.label));
-  for (const currentBlock of currentWorkingBlocks) {
-    if (!checkpointLabels.has(currentBlock.label)) {
-      await deps.memory.deleteBlock(currentBlock.id);
+    // Verify message coverage
+    const existingIds = await deps.messageStore.listIds(checkpoint.conversationId);
+    const existingIdSet = new Set(existingIds);
+    const missingMessages = checkpoint.messageIds.filter(id => !existingIdSet.has(id));
+    if (missingMessages.length > 0) {
+      log(`checkpoint restore: ${missingMessages.length} messages no longer in conversation (likely compacted)`);
     }
-  }
 
-  // AC3.3: Verify pending predictions (log any discrepancies)
-  if (deps.predictionStore) {
-    const dbPredictions = await deps.predictionStore.listPredictions(deps.owner, 'pending');
-    const dbPredictionIds = new Set(dbPredictions.map(p => p.id));
-
-    const missingPredictionIds = checkpoint.pendingPredictions
-      .map(p => p.id)
-      .filter(id => !dbPredictionIds.has(id));
-
-    if (missingPredictionIds.length > 0) {
-      logWarning(
-        `[checkpoint] ${missingPredictionIds.length} pending prediction(s) from checkpoint are no longer in database (may have been evaluated or expired)`,
-      );
+    // Verify predictions (read-only check, no writes)
+    if (deps.predictionStore && checkpoint.pendingPredictions.length > 0) {
+      const pending = await deps.predictionStore.listPredictions(deps.owner, 'pending');
+      const pendingIds = new Set(pending.map(p => p.id));
+      const missingPredictions = checkpoint.pendingPredictions.filter(p => !pendingIds.has(p.id));
+      if (missingPredictions.length > 0) {
+        log(`checkpoint restore: ${missingPredictions.length} predictions no longer pending`);
+      }
     }
-  }
 
-  // AC3.4: Restore active interests
-  if (deps.interestRegistry) {
-    const dbInterests = await deps.interestRegistry.listInterests(deps.owner);
-    const dbInterestsById = new Map(dbInterests.map(i => [i.id, i]));
-
-    for (const checkpointInterest of checkpoint.activeInterests) {
-      const dbInterest = dbInterestsById.get(checkpointInterest.id);
-      if (dbInterest) {
-        // Restore engagement score to checkpoint value if different
+    // Restore interest engagement scores (DB writes)
+    if (deps.interestRegistry && checkpoint.activeInterests.length > 0) {
+      const dbInterests = await deps.interestRegistry.listInterests(deps.owner);
+      const dbInterestMap = new Map(dbInterests.map(i => [i.id, i]));
+      for (const checkpointInterest of checkpoint.activeInterests) {
+        const dbInterest = dbInterestMap.get(checkpointInterest.id);
+        if (!dbInterest) {
+          log(`checkpoint restore: interest "${checkpointInterest.name}" no longer exists`);
+          continue;
+        }
         if (dbInterest.engagementScore !== checkpointInterest.engagementScore) {
           await deps.interestRegistry.updateInterest(checkpointInterest.id, {
             engagementScore: checkpointInterest.engagementScore,
           });
         }
-      } else {
-        logWarning(
-          `[checkpoint] interest ${checkpointInterest.id} from checkpoint no longer exists in database`,
-        );
       }
     }
-  }
 
-  // AC3.7 (idempotency): recall cache is just cleared, no state to restore
-  // AC3.5: Clear recall cache (it will be rebuilt on next turn)
-  if (deps.recallContextState) {
-    deps.recallContextState.setResult(null);
-  }
+    // ── Tier 2: Memory writes (last, inside transaction) ──
+    try {
+      const currentBlocks = await deps.memory.list('working');
+      const checkpointLabels = new Set(checkpoint.workingMemory.map(b => b.label));
 
-  return {
-    conversationId: checkpoint.conversationId,
-    turnNumber: checkpoint.turnNumber,
-    toolRound: checkpoint.toolRound,
-    compactionMeta: checkpoint.compactionMeta,
-    messageCount,
-  };
+      // Write all checkpoint blocks
+      for (const block of checkpoint.workingMemory) {
+        await deps.memory.write(block.label, block.content, 'working');
+      }
+
+      // Delete blocks not in checkpoint
+      for (const existing of currentBlocks) {
+        if (!checkpointLabels.has(existing.label)) {
+          await deps.memory.deleteBlock(existing.id);
+        }
+      }
+    } catch (memoryError) {
+      // Best-effort clear working memory before rethrowing
+      try {
+        const remainingBlocks = await deps.memory.list('working');
+        for (const block of remainingBlocks) {
+          await deps.memory.deleteBlock(block.id);
+        }
+      } catch {
+        // Ignore cleanup failures — the DB rollback is what matters
+      }
+      throw memoryError; // Propagates to withTransaction, triggers ROLLBACK
+    }
+
+    // Clear recall cache
+    if (deps.recallContextState) {
+      deps.recallContextState.setResult(null);
+    }
+
+    return {
+      conversationId: checkpoint.conversationId,
+      turnNumber: checkpoint.turnNumber,
+      toolRound: checkpoint.toolRound,
+      compactionMeta: checkpoint.compactionMeta,
+      messageCount,
+    };
+  });
 }

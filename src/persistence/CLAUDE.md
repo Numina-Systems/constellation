@@ -6,8 +6,8 @@ Last verified: 2026-05-16
 Provides a PostgreSQL adapter behind a port interface so all database access flows through a single abstraction. Owns schema migrations and the checkpoint store for session persistence.
 
 ## Contracts
-- **Exposes**: `PersistenceProvider` interface (`connect`, `disconnect`, `runMigrations`, `query`, `withTransaction`), `createPostgresProvider(config)`, `CheckpointStore` interface (`save`, `load`, `loadLatest`, `prune`), `createCheckpointStore(persistence)`
-- **Guarantees**: Migrations run in order, inside transactions, and are idempotent (tracked in `schema_migrations` table). `withTransaction` rolls back on error.
+- **Exposes**: `PersistenceProvider` interface (`connect`, `disconnect`, `runMigrations`, `query`, `withTransaction`), `createPostgresProvider(config)`, `CheckpointStore` interface (`save`, `load`, `loadLatest`, `prune`), `createCheckpointStore(persistence)`, `MessageStore` type (`count`, `listIds`, `getLatest`), `createMessageStore(persistence)`
+- **Guarantees**: Migrations run in order, inside transactions, and are idempotent (tracked in `schema_migrations` table). `withTransaction` rolls back on error. Nested `withTransaction` calls use savepoints transparently via `AsyncLocalStorage` (same connection, depth-tracked). `MessageStore` provides typed read access to the `messages` table.
 - **Expects**: PostgreSQL with pgvector extension available at configured URL.
 
 ## Dependencies
@@ -18,6 +18,8 @@ Provides a PostgreSQL adapter behind a port interface so all database access flo
 ## Key Decisions
 - Connection pooling via `pg.Pool`: Handles concurrent queries without manual management
 - SQL migration files: Plain `.sql` in `migrations/`, sorted by filename prefix
+- Transparent nested transactions via AsyncLocalStorage: Callers don't need to know if they're already in a transaction; inner `withTransaction` calls use savepoints automatically
+- MessageStore as separate factory: Read-only typed queries for messages, keeps `PersistenceProvider` interface minimal
 
 ## Invariants
 - Existing migration files are immutable (append new files only)
@@ -26,8 +28,9 @@ Provides a PostgreSQL adapter behind a port interface so all database access flo
 
 ## Key Files
 - `types.ts` -- `PersistenceProvider` and `QueryFunction` port interfaces
-- `postgres.ts` -- PostgreSQL adapter implementation
-- `migrate.ts` -- Standalone migration runner entry point
+- `postgres.ts` -- PostgreSQL adapter implementation (includes AsyncLocalStorage transaction context for nested transactions)
+- `message-store.ts` -- `MessageStore` type and `createMessageStore` factory (typed read-only access to messages table)
 - `checkpoint-store.ts` -- `CheckpointStore` implementation (save, load, loadLatest, prune)
+- `migrate.ts` -- Standalone migration runner entry point
 - `index.ts` -- Barrel exports for persistence module
 - `migrations/*.sql` -- Schema migration files (append-only, includes `010_session_checkpoints.sql`)

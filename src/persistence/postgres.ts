@@ -1,9 +1,18 @@
 // pattern: Imperative Shell
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool } from "pg";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import type { PoolClient } from "pg";
 import type { PersistenceProvider } from "./types.ts";
 import type { DatabaseConfig } from "../config/config.ts";
+
+type TxContext = {
+  client: PoolClient;
+  depth: number;
+};
+
+const txStorage = new AsyncLocalStorage<TxContext>();
 
 export function createPostgresProvider(
   config: DatabaseConfig,
@@ -68,6 +77,11 @@ export function createPostgresProvider(
     sql: string,
     params?: ReadonlyArray<unknown>,
   ): Promise<Array<T>> {
+    const ctx = txStorage.getStore();
+    if (ctx) {
+      const result = await ctx.client.query(sql, params as Array<unknown>);
+      return result.rows as Array<T>;
+    }
     const result = await pool.query(sql, params as Array<unknown>);
     return result.rows as Array<T>;
   }
@@ -75,17 +89,32 @@ export function createPostgresProvider(
   async function withTransaction<T>(
     fn: (queryFn: typeof query) => Promise<T>,
   ): Promise<T> {
+    const existing = txStorage.getStore();
+
+    if (existing) {
+      const depth = existing.depth + 1;
+      const savepoint = `sp_${depth}`;
+      await existing.client.query(`SAVEPOINT ${savepoint}`);
+      try {
+        const result = await txStorage.run(
+          { client: existing.client, depth },
+          () => fn(query),
+        );
+        await existing.client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        return result;
+      } catch (error) {
+        await existing.client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        throw error;
+      }
+    }
+
     const client = await pool.connect();
-    const txQuery = async <R extends Record<string, unknown>>(
-      sql: string,
-      params?: ReadonlyArray<unknown>,
-    ): Promise<Array<R>> => {
-      const result = await client.query(sql, params as Array<unknown>);
-      return result.rows as Array<R>;
-    };
     try {
       await client.query("BEGIN");
-      const result = await fn(txQuery);
+      const result = await txStorage.run(
+        { client, depth: 0 },
+        () => fn(query),
+      );
       await client.query("COMMIT");
       return result;
     } catch (error) {

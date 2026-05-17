@@ -1,46 +1,35 @@
-# Errors Module
+# Errors
 
 Last verified: 2026-05-16
 
-Structured error hierarchy for Constellation. Cross-cutting concern consumed by all subsystems.
-
 ## Purpose
-
-Replace raw Error throws with typed, traceable errors that carry subsystem context, machine-readable codes, and optional recovery suggestions.
+Provides a structured error hierarchy so all subsystems throw typed, traceable errors with consistent shape. Enables structured logging, trace recording, and actionable error messages.
 
 ## Contracts
-
-### Exposes
-- `ConstellationError` -- Base class. All subsystem errors extend this.
-- `MemoryError`, `ModelError`, `PersistenceError`, `AgentError`, `ConfigError` -- Subsystem error classes
-- `isConstellationError(e)` -- Type guard (works across realms)
-- `wrapError(e, subsystem, code, context)` -- Wraps unknown caught values into ConstellationError
-- `traceError(error, recorder, owner, conversationId)` -- Records error as operation trace (fire-and-forget)
-- `sanitizeQuery(sql)` -- Strips literal values from SQL for safe logging
-
-### Guarantees
-- Every ConstellationError has: `code` (string), `subsystem` (string), `context` (Record), optional `suggestion`
-- `toDisplayString()` produces `[subsystem:code] message` format
-- `toJSON()` safely serializes context (unserializable values become strings or are dropped)
-- `traceError` never throws -- recorder failures are caught and logged to console
-
-### Expects
-- Subsystem modules import their error type from here (canonical source)
-- Domain `types.ts` files re-export error types for backward compatibility
-- Catch blocks in agent loop call `traceError()` for ConstellationErrors
+- **Exposes**: `ConstellationError` (base class), subsystem errors (`MemoryError`, `ModelError`, `PersistenceError`, `AgentError`, `ConfigError`, `ShellError`), `isConstellationError(e)`, `wrapError(e, code, subsystem, context)`, `traceError(recorder, error, operation)`, `sanitizeQuery(sql)`
+- **Guarantees**: All subsystem errors extend `ConstellationError` and carry `code` (string enum per subsystem), `subsystem` (identifier), `context` (serializable metadata), and optional `suggestion`. `toJSON()` safely serializes context (skipping unserializable values). `toDisplayString()` produces `[subsystem:code] message` format. `traceError()` records errors as operation traces fire-and-forget.
+- **Expects**: Subsystem modules import their error class from here and throw it. Catch blocks use `traceError()` when a `TraceRecorder` is available. Domain `types.ts` files re-export error types for backward compatibility.
 
 ## Dependencies
+- **Uses**: `src/reflexion/` (optional, `TraceRecorder` type for `traceError`)
+- **Used by**: All domain modules (`src/agent/`, `src/persistence/`, `src/shell/`, `src/model/`, `src/memory/`, `src/config/`, `src/compaction/`, `src/rate-limit/`)
+- **Boundary**: This module defines error types only. No business logic, no I/O (except trace recording which is fire-and-forget).
 
-- **Uses:** `@/reflexion/types.js` (TraceRecorder interface for trace.ts)
-- **Used by:** `src/model/`, `src/memory/`, `src/persistence/`, `src/agent/`, `src/compaction/`, `src/rate-limit/`
+## Key Decisions
+- Class hierarchy over union types: Enables `instanceof` checks and preserves stack traces via `Error.cause` chaining
+- Per-subsystem error codes as string enums: Type-safe error matching without numeric magic constants
+- `sanitizeQuery`: Strips query parameters from SQL before including in error context (prevents leaking sensitive data)
 
 ## Invariants
-
+- All `ConstellationError` instances have non-empty `code` and `subsystem`
+- `toJSON()` never throws (unserializable context values are stringified or skipped)
+- `traceError()` never throws (fire-and-forget, swallows recorder failures)
 - Error codes are string literals scoped per subsystem (e.g., `RATE_LIMITED`, `CONNECTION_FAILED`)
 - Context must never contain secrets -- `sanitizeQuery` exists for SQL; callers responsible for other data
 - `cause` chain preserved via standard `Error.cause` (ES2022)
 
-## Key Decisions
-
-- **Classes, not factory functions:** Errors are the one exception to the factory-function convention because `instanceof` checks and `Error.captureStackTrace` semantics require real inheritance.
-- **Re-export migration:** Domain modules re-export from `src/errors/` rather than defining their own, keeping a single source of truth while preserving import paths.
+## Key Files
+- `base.ts` -- `ConstellationError` base class
+- `utils.ts` -- `isConstellationError`, `wrapError` utilities
+- `trace.ts` -- `traceError` integration with reflexion traces
+- `agent.ts`, `config.ts`, `memory.ts`, `model.ts`, `persistence.ts`, `shell.ts` -- Subsystem error classes

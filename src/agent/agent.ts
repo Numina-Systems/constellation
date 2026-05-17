@@ -17,7 +17,7 @@ import { performRecall } from '../recall/index.js';
 import { isConstellationError, wrapError } from '@/errors/index.js';
 import { traceError } from '@/errors/trace.js';
 import { stripQuotedContent } from '@/loop-detection/strip-quotes.js';
-import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider } from './types.ts';
+import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider, CheckpointState } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
 import type { MemoryManager } from '../memory/manager.ts';
@@ -33,6 +33,14 @@ const DEFAULT_MAX_TOKENS = 24576; // Default token limit per request
 function getCoreLabels(_memory: MemoryManager): ReadonlyArray<string> {
   return [];
 }
+
+/**
+ * Checkpoint state reference for tracking agent state across turns.
+ * Holds the minimal checkpoint data needed for periodic checkpoint creation.
+ */
+type CheckpointStateRef = {
+  current: CheckpointState | null;
+};
 
 /**
  * Format an external event as a structured user message with metadata header.
@@ -118,46 +126,13 @@ export function createAgent(
   // Build dynamic providers map once (providers don't change, but their state does each turn)
   const dynamicProviders = buildDynamicProviderMap(deps.classifiedProviders);
 
+  // Checkpoint state reference for tracking agent state (Phase 5)
+  const checkpointStateRef: CheckpointStateRef = { current: null };
+
   let turnNumber = 0;
   let previousToolsHash: bigint | null = null;
-
-  // Track compaction state for checkpoint serialization
   let lastCompactionMessageCount = 0;
   let lastCompactionSummaryCount = 0;
-
-  /**
-   * Helper to update checkpoint state ref and trigger interval-based checkpoint.
-   * Centralizes the duplicate checkpoint state update and interval-trigger logic
-   * that appears at multiple exit points of processMessage.
-   */
-  async function updateCheckpointStateAndTriggerInterval(
-    currentTurnNumber: number,
-  ): Promise<void> {
-    // Update checkpoint state ref (AC1.4, AC1.5)
-    if (deps.checkpointStateRef) {
-      const currentHistory = await loadConversationHistory(id);
-      const messageIds = currentHistory.map(m => m.id);
-      deps.checkpointStateRef.current = {
-        turnNumber: currentTurnNumber,
-        toolRound: 0,
-        messageIds,
-        compactionMeta: {
-          lastCompactedIndex: Math.max(0, lastCompactionMessageCount - 1),
-          summaryCount: lastCompactionSummaryCount,
-        },
-      };
-    }
-
-    // Turn-interval checkpoint (AC1.4, AC1.5)
-    if (
-      deps.checkpointFn &&
-      deps.config.checkpoint_interval &&
-      deps.config.checkpoint_interval > 0 &&
-      currentTurnNumber % deps.config.checkpoint_interval === 0
-    ) {
-      await deps.checkpointFn('interval');
-    }
-  }
 
   function recordTrace(
     toolName: string,
@@ -182,6 +157,29 @@ export function createAgent(
     }).catch(() => {
       // Silently ignore errors per AC2.4
     });
+  }
+
+  /**
+   * Update checkpoint state with current turn information and message history.
+   * Does not load conversation history from the database; instead uses the in-memory
+   * history array passed by the caller (already kept in sync via manual pushes).
+   * Verifies: arch-hardening.AC3.1 (single load per turn)
+   */
+  function updateCheckpointStateAndTriggerInterval(
+    currentTurnNumber: number,
+    currentHistory: ReadonlyArray<ConversationMessage>,
+  ): void {
+    const messageIds = currentHistory.map(m => m.id);
+    checkpointStateRef.current = {
+      turnNumber: currentTurnNumber,
+      toolRound: 0,
+      messageIds,
+      compactionMeta: {
+        lastCompactedIndex: Math.max(0, lastCompactionMessageCount - 1),
+        summaryCount: lastCompactionSummaryCount,
+      },
+    };
+    // Future: trigger checkpoint creation at configured intervals
   }
 
   async function processMessage(userMessage: string): Promise<string> {
@@ -217,9 +215,11 @@ export function createAgent(
       snapshotState.reset();
       compactionOccurredThisTurn = result.messagesCompressed > 0;
 
-      // Track compaction state for checkpoints
-      lastCompactionMessageCount = result.messagesCompressed;
-      lastCompactionSummaryCount = result.batchesCreated;
+      // Track compaction metadata for checkpoint state
+      if (compactionOccurredThisTurn) {
+        lastCompactionMessageCount = history.length;
+        lastCompactionSummaryCount = result.batchesCreated ?? 0;
+      }
     }
 
     // Step 4 & 5: Build context and call model
@@ -435,15 +435,27 @@ export function createAgent(
         const text = textContent?.text || '';
 
         // Persist assistant message
-        await persistMessage({
+        const assistantMessageId = await persistMessage({
           conversation_id: id,
           role: 'assistant',
           content: text,
           reasoning_content: response.reasoning_content,
         });
 
-        // Update checkpoint state and trigger interval checkpoint if needed
-        await updateCheckpointStateAndTriggerInterval(turnNumber);
+        // Push assistant message onto history before checkpoint update (verifies AC3.2)
+        history.push({
+          id: assistantMessageId,
+          conversation_id: id,
+          role: 'assistant',
+          content: text,
+          tool_calls: undefined,
+          tool_call_id: undefined,
+          reasoning_content: response.reasoning_content ?? undefined,
+          created_at: new Date(),
+        });
+
+        // Update checkpoint state with current history (verifies AC3.1, AC3.2)
+        updateCheckpointStateAndTriggerInterval(turnNumber, history);
 
         return text;
       }
@@ -496,10 +508,11 @@ export function createAgent(
                 // Reset snapshot state after compaction so next tool round gets full snapshot
                 snapshotState.reset();
                 compactionOccurredThisTurn = compactionResult.messagesCompressed > 0;
-
-                // Track compaction state for checkpoints
-                lastCompactionMessageCount = compactionResult.messagesCompressed;
-                lastCompactionSummaryCount = compactionResult.batchesCreated;
+                // Track compaction metadata for checkpoint state
+                if (compactionOccurredThisTurn) {
+                  lastCompactionMessageCount = history.length;
+                  lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
+                }
 
                 toolResult = JSON.stringify({
                   messagesCompressed: compactionResult.messagesCompressed,
@@ -580,14 +593,26 @@ export function createAgent(
     // Max rounds exceeded
     const warningMessage = `[Warning: max tool rounds (${maxRounds}) reached. Stopping tool execution.]`;
 
-    await persistMessage({
+    const warningMessageId = await persistMessage({
       conversation_id: id,
       role: 'assistant',
       content: warningMessage,
     });
 
-    // Update checkpoint state and trigger interval checkpoint if needed
-    await updateCheckpointStateAndTriggerInterval(turnNumber);
+    // Push warning message onto history before checkpoint update
+    history.push({
+      id: warningMessageId,
+      conversation_id: id,
+      role: 'assistant',
+      content: warningMessage,
+      tool_calls: undefined,
+      tool_call_id: undefined,
+      reasoning_content: undefined,
+      created_at: new Date(),
+    });
+
+    // Update checkpoint state with current history (verifies AC3.1, AC3.2)
+    updateCheckpointStateAndTriggerInterval(turnNumber, history);
 
     return warningMessage;
   }
@@ -601,10 +626,15 @@ export function createAgent(
     return processMessage(formattedMessage);
   }
 
+  function getCheckpointState(): CheckpointState | null {
+    return checkpointStateRef.current;
+  }
+
   return {
     processMessage,
     processEvent,
     getConversationHistory,
+    getCheckpointState,
     conversationId: id,
   };
 

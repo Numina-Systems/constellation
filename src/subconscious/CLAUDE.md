@@ -1,6 +1,6 @@
 # Subconscious
 
-Last verified: 2026-04-15
+Last verified: 2026-05-17
 
 ## Purpose
 Autonomous curiosity system that gives the agent an inner life of interests, curiosity threads, and self-directed exploration. Runs on a separate conversation with periodic impulse events that prompt reflection, idea generation, and tool-assisted exploration. Engagement scores decay over time to surface genuinely sustained interests. An introspection loop periodically reviews recent conversation and observations, formalizing worthy ones into tracked interests while maintaining an unformalised digest.

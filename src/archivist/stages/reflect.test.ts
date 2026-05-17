@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'bun:test';
 import { reflect } from './reflect.js';
-import type { PipelineResult, ReflectResult } from '../types.js';
+import type { PipelineResult } from '../types.js';
 import type { ModelProvider } from '@/model/types.js';
 
 describe('reflect', () => {
@@ -98,10 +98,10 @@ describe('reflect', () => {
     });
 
     expect(capturedRequest).not.toBeNull();
-    expect(capturedRequest).toContain('Memory maintenance pipeline completed');
-    expect(capturedRequest).toContain('full mode');
-    expect(capturedRequest).toContain('Scanned: 10');
-    expect(capturedRequest).toContain('Consolidated: 2');
+    expect(capturedRequest!.includes('Memory maintenance pipeline completed')).toBe(true);
+    expect(capturedRequest!.includes('full mode')).toBe(true);
+    expect(capturedRequest!.includes('Scanned: 10')).toBe(true);
+    expect(capturedRequest!.includes('Consolidated: 2')).toBe(true);
   });
 
   test('includes full, incremental, and empty modes in prompt', async () => {
@@ -142,7 +142,7 @@ describe('reflect', () => {
       tokensUsedSoFar: 0,
     });
 
-    expect(capturedRequest).toContain('incremental mode');
+    expect(capturedRequest!.includes('incremental mode')).toBe(true);
   });
 
   test('estimates token usage for reflection', async () => {

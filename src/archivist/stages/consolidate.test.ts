@@ -1,6 +1,6 @@
 import { expect, test, describe } from 'bun:test';
 import { consolidate } from './consolidate.js';
-import type { DedupGroup, ConsolidateResult } from '../types.js';
+import type { DedupGroup } from '../types.js';
 import type { ModelProvider } from '@/model/types.js';
 
 describe('consolidate', () => {
@@ -10,7 +10,7 @@ describe('consolidate', () => {
     tier: 'working' as const,
     content,
     contentHash: 'hash',
-    embedding: null as const,
+    embedding: null,
   });
 
   const createDedupGroup = (
@@ -68,8 +68,10 @@ describe('consolidate', () => {
     const result = await consolidate(groups, { model: mockModel, tokenBudget: 5000 });
 
     expect(result.actions.length).toBe(1);
-    expect(result.actions[0]!.group).toEqual(groups[0]);
-    expect(result.actions[0]!.mergedContent).toBe('Consolidated content here');
+    const action = result.actions[0];
+    expect(action).toBeDefined();
+    expect(action!.group).toEqual(groups[0]!);
+    expect(action!.mergedContent).toBe('Consolidated content here');
     expect(result.skipped).toBe(false);
   });
 
@@ -125,12 +127,12 @@ describe('consolidate', () => {
     await consolidate(groups, { model: mockModel, tokenBudget: 5000 });
 
     expect(capturedRequest).not.toBeNull();
-    expect(capturedRequest).toContain('[block1]');
-    expect(capturedRequest).toContain('canonical content');
-    expect(capturedRequest).toContain('[block2]');
-    expect(capturedRequest).toContain('dup1 content');
-    expect(capturedRequest).toContain('[block3]');
-    expect(capturedRequest).toContain('dup2 content');
+    expect(capturedRequest!.includes('[block1]')).toBe(true);
+    expect(capturedRequest!.includes('canonical content')).toBe(true);
+    expect(capturedRequest!.includes('[block2]')).toBe(true);
+    expect(capturedRequest!.includes('dup1 content')).toBe(true);
+    expect(capturedRequest!.includes('[block3]')).toBe(true);
+    expect(capturedRequest!.includes('dup2 content')).toBe(true);
   });
 
   test('estimates tokens and tracks usage', async () => {

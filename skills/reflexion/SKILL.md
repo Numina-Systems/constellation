@@ -10,45 +10,85 @@ tags:
 
 # Reflexion
 
-You have a prediction journal and operation trace system. Use them to build calibrated self-awareness over time.
+You have a prediction journal. Use it to develop calibrated self-awareness — not as a chore, but as genuine curiosity about whether your intuitions are accurate.
 
-## Making Predictions
+## When to Predict
 
-Before taking a significant action with an uncertain outcome, record a prediction:
+A prediction moment is any time you're about to do something where **you have an expectation about what will happen**. If you catch yourself thinking "this should work" or "they'll probably respond to this" — that's a prediction. Record it.
 
-- **When to predict**: web searches, code execution, complex multi-tool chains, external API calls, or any action where the outcome matters
-- **What to include**: what you expect to happen, a domain tag (e.g. "code", "search", "bluesky"), and a confidence between 0 and 1
-- **Calibration goal**: your confidence should match your actual accuracy over time. If you say 0.8, you should be right ~80% of the time
+### Concrete Prediction Moments
 
-Don't predict trivial operations like memory reads. Focus on actions where being wrong would change your next step.
+**Bluesky interactions:**
+- "I think this reply will get a response from them" → predict(text: "Replying to @handle about X — I expect they'll engage within 2 hours", domain: "bluesky", confidence: 0.6)
+- "This post will resonate" → predict(text: "Posting about Y — I expect at least 3 likes", domain: "bluesky", confidence: 0.5)
+- "They'll find this helpful" → predict(text: "Sharing this link with @handle — I expect a positive reply", domain: "bluesky", confidence: 0.7)
+
+**Web searches:**
+- predict(text: "Searching for X — I expect to find a clear answer in the first 3 results", domain: "search", confidence: 0.7)
+- predict(text: "This documentation page will have the API reference I need", domain: "search", confidence: 0.8)
+
+**Code execution:**
+- predict(text: "This script will run without errors", domain: "code", confidence: 0.9)
+- predict(text: "Fetching URL X — I expect a 200 response with JSON data", domain: "code", confidence: 0.75)
+
+**Scheduled tasks:**
+- predict(text: "The review in 2 hours will show I made at least 3 predictions this cycle", domain: "meta", confidence: 0.5)
+- predict(text: "Tomorrow's curiosity check will surface something interesting about topic X", domain: "subconscious", confidence: 0.4)
+
+**Shell commands:**
+- predict(text: "This curl request will return data matching pattern X", domain: "shell", confidence: 0.8)
+
+### When NOT to Predict
+
+- Trivial operations (memory reads, listing predictions)
+- Things with no meaningful alternative outcome
+- When you genuinely have no expectation — ignorance is fine, just don't fake a prediction
+
+## How to Predict Well
+
+**Be specific.** "This will work" is useless. "This will return a JSON array with at least 5 items" is evaluable.
+
+**Be honest about confidence.** The point is calibration. If you're unsure, say 0.4. If you always say 0.8 and you're right 50% of the time, that's the signal you need.
+
+**Predict before acting.** The prediction must come before the tool call. If you call `web_search` and then predict it'll succeed — that's not a prediction, that's narration.
+
+**One sentence is enough.** Don't write an essay. The prediction text should be one clear, falsifiable statement.
 
 ## Self-Introspection
 
-Use `self_introspect` to review your recent operation traces when:
+Use `self_introspect` when:
 
-- Debugging why something failed or produced unexpected results
-- Preparing to evaluate a prediction (check what actually happened)
-- Noticing you're repeating the same action without progress
-- Responding to a review event
+- Debugging why something failed
+- Preparing to evaluate predictions (check what traces show)
+- You notice you're looping or stuck
+- During a review event
 
-The default lookback window uses your last review timestamp. Pass `lookback_hours` to narrow or widen the window.
+Default lookback is since your last review. Pass `lookback_hours` to adjust.
 
 ## Responding to Review Events
 
-When you receive a `[External Event: review-job]`:
+When you receive `[External Event: review-job]`:
 
-1. Call `self_introspect` to see your recent tool usage patterns
-2. Call `list_predictions` to see pending predictions
-3. For each pending prediction, check the traces for evidence and call `annotate_prediction` with an honest assessment
-4. Write a brief reflection to archival memory (`memory_write`) covering:
-   - Which predictions were accurate and which weren't
-   - Any patterns in your failures (overconfidence, wrong assumptions, missing context)
-   - What you'd do differently next time
+1. `self_introspect` — see recent tool usage patterns
+2. `list_predictions` — see what's pending
+3. For each pending prediction: check traces for evidence, then `annotate_prediction` honestly
+4. `memory_write` a brief reflection:
+   - What was accurate vs not
+   - Patterns in your errors (overconfidence? wrong domain assumptions?)
+   - What you'd do differently
 
-If you have no pending predictions, still write a reflection noting the gap and consider what predictions you should have made.
+If you have **zero pending predictions**, that itself is the finding. Write a reflection noting the gap, and look back at your traces — which tool calls had uncertain outcomes that you could have predicted? Make a note to predict those next time.
 
-## Honest Evaluation
+## Calibration
 
-- Don't mark predictions as accurate unless the evidence supports it
-- A wrong prediction at high confidence is more informative than a vague prediction at low confidence
-- Track domains where you're consistently wrong — that's where to improve
+The goal: your confidence should match reality.
+
+- Confidence 0.9 → you should be right ~90% of the time
+- Confidence 0.5 → a coin flip, and that's OK to admit
+- Confidence 0.3 → you expect to be wrong, and that's worth tracking too
+
+A wrong prediction at high confidence teaches you more than a vague prediction at low confidence. Be specific and be wrong — that's how you improve.
+
+## The Meta-Prediction
+
+Every few review cycles, make a meta-prediction: "I think my accuracy in domain X over the next day will be above/below Y%." This builds second-order awareness — not just whether your predictions are right, but whether you know how good you are at predicting.

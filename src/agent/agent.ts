@@ -236,6 +236,11 @@ export function createAgent(
       // Build fresh context for each round
       let systemPrompt = await buildSystemPrompt(deps.memory);
 
+      // Inject diary section (session-static, same string every round)
+      if (deps.diarySection) {
+        systemPrompt += '\n\n' + deps.diarySection;
+      }
+
       // Recall step — fires once per turn, cached across tool rounds
       if (!recallExecuted && deps.config.recall_enabled && deps.recallContextState && deps.searchStore) {
         recallExecuted = true;
@@ -265,6 +270,10 @@ export function createAgent(
         deps.recallContextState.setResult(cachedRecallResult);
         // Rebuild system prompt with recall context now set
         systemPrompt = await buildSystemPrompt(deps.memory);
+        // Re-append diary after recall rebuilds system prompt (diary is session-static, not included in buildSystemPrompt)
+        if (deps.diarySection) {
+          systemPrompt += '\n\n' + deps.diarySection;
+        }
       } else if (recallExecuted && deps.recallContextState) {
         // Subsequent rounds: result already cached, just ensure state is set
         deps.recallContextState.setResult(cachedRecallResult);

@@ -146,6 +146,28 @@ export function createPostgresMemoryStore(
     return rows.length > 0 ? parseMemoryBlock(rows[0]!) : null;
   }
 
+  async function getBlocksByLabelPrefix(
+    owner: string,
+    prefix: string,
+    tier?: MemoryTier,
+  ): Promise<ReadonlyArray<MemoryBlock>> {
+    const escapedPrefix = prefix.replace(/[%_]/g, '\\$&');
+
+    if (tier) {
+      const rows = await persistence.query<MemoryBlockRow>(
+        `SELECT * FROM memory_blocks WHERE owner = $1 AND label LIKE $2 AND tier = $3 ORDER BY label ASC`,
+        [owner, `${escapedPrefix}%`, tier],
+      );
+      return rows.map(parseMemoryBlock);
+    }
+
+    const rows = await persistence.query<MemoryBlockRow>(
+      `SELECT * FROM memory_blocks WHERE owner = $1 AND label LIKE $2 ORDER BY label ASC`,
+      [owner, `${escapedPrefix}%`],
+    );
+    return rows.map(parseMemoryBlock);
+  }
+
   async function createBlock(
     block: Omit<MemoryBlock, 'created_at' | 'updated_at'>,
   ): Promise<MemoryBlock> {
@@ -346,6 +368,7 @@ export function createPostgresMemoryStore(
     getBlock,
     getBlocksByTier,
     getBlockByLabel,
+    getBlocksByLabelPrefix,
     createBlock,
     updateBlock,
     updateBlockTier,

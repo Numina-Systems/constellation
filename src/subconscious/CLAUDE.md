@@ -56,7 +56,7 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 - `introspection-assembler.ts` -- Gathers messages/interests/digest, delegates to `buildIntrospectionEvent` (Imperative Shell)
 - `introspection-context.ts` -- Cached context provider injecting `[Unformalised Observations]` from introspection-digest (Imperative Shell)
 - `continuation.ts` -- Continuation decision types, prompt builder, response parser (Functional Core)
-- `continuation-budget.ts` -- In-memory per-event/per-cycle budget counter (Imperative Shell)
+- `continuation-budget.ts` -- In-memory per-event/per-cycle budget counter (Functional Core)
 - `continuation-judge.ts` -- LLM-backed continuation judge adapter using ModelProvider (Imperative Shell)
 - `continuation-loop.ts` -- Orchestrates judge+budget into a while-loop for impulse/introspection events (Imperative Shell)
 - `index.ts` -- Barrel export

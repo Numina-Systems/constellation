@@ -10,7 +10,7 @@ The design deliberately avoids semantic retrieval. Where recall dynamically surf
 
 1. At session start, the harness reads the most recent diary entries from working-tier memory blocks (labelled `diary:YYYY-MM-DD`) and injects them into the system prompt after core memory blocks.
 2. Injection is static per session — fetched once at startup, never re-fetched during the session.
-3. Entry selection is by date (most recent first), capped by both entry count (default 3) and token budget (default 1500 tokens).
+3. Entry selection is by date (most recent first), capped by both entry count (default 3) and token budget (default 3000 tokens).
 4. No new write tool required — the agent uses existing `memory_write` to create diary entries.
 5. No embeddings or decomposition involved — retrieval is a simple prefix match + date sort.
 6. Zero diary entries produces no injected section (graceful absence).
@@ -27,7 +27,7 @@ The design deliberately avoids semantic retrieval. Where recall dynamically surf
 - **diary-injection.AC1.5 Edge:** Single diary entry returns that entry alone
 
 ### diary-injection.AC2: Token budget
-- **diary-injection.AC2.1 Success:** Total injected content is <= configured `diary_token_budget` (default 1500)
+- **diary-injection.AC2.1 Success:** Total injected content is <= configured `diary_token_budget` (default 3000)
 - **diary-injection.AC2.2 Success:** If final entry exceeds remaining budget, it's truncated (not dropped)
 - **diary-injection.AC2.3 Edge:** Entry exactly at budget limit is included in full
 - **diary-injection.AC2.4 Edge:** Single entry larger than entire budget is truncated to budget
@@ -275,3 +275,5 @@ No divergence from existing patterns. This design uses existing storage, existin
 **No deletion pressure:** Old diary entries don't need cleanup. They naturally fall out of the injection window (only most recent N are shown). They remain searchable via existing memory tools and recall. The working tier is the right home — these aren't archival summaries, they're active continuity context that decays in relevance over time.
 
 **Relationship to recall:** Recall and diary are independent. Recall is per-turn semantic retrieval. Diary is per-session temporal injection. They may surface the same content through different paths — a diary entry could also appear in recall results if semantically relevant to the current message. This is fine; slight redundancy is better than missed context.
+
+**Scheduled tasks and diary authorship:** Scheduled tasks (e.g. the daily briefing) already have access to `memory_write`. If a scheduled task writes a block with a `diary:` label, the injection plumbing picks it up automatically — no design changes needed. However, the diary is conceived as a first-person reflective practice, not a system log. Whether scheduled tasks should leave diary entries is a policy decision for the agent, not an architectural one. The mechanism supports it; the default expectation is that the agent writes her own entries and scheduled tasks contribute through their existing channels (scheduled context provider, working memory).

@@ -18,7 +18,7 @@ export function createMockEmbeddingProvider(): EmbeddingProvider {
         return acc * 31 + char.charCodeAt(0);
       }, 0);
       const seed = Math.abs(hash) % 1000;
-      const result = Array.from({ length: 768 }, (_, i) => {
+      const result = Array.from({ length: 1536 }, (_, i) => {
         const val = Math.sin(seed + i) * 0.5 + 0.5;
         return Number.isFinite(val) ? val : 0.5;
       });
@@ -28,6 +28,6 @@ export function createMockEmbeddingProvider(): EmbeddingProvider {
       const provider = createMockEmbeddingProvider();
       return Promise.all(texts.map((text) => provider.embed(text)));
     },
-    dimensions: 768,
+    dimensions: 1536,
   };
 }

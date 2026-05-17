@@ -64,14 +64,14 @@ export function createMockSkillStore(): MockSkillStoreType {
 export function createMockEmbeddingProvider(): EmbeddingProvider & { callCount: number } {
   const provider: EmbeddingProvider & { callCount: number } = {
     callCount: 0,
-    dimensions: 768,
+    dimensions: 1536,
     async embed(text: string) {
       provider.callCount += 1;
       const hash = Array.from(text).reduce((acc, char) => {
         return (acc * 31 + char.charCodeAt(0)) >>> 0;
       }, 0);
       const seed = Math.abs(hash) % 1000;
-      return Array.from({ length: 768 }, (_, i) => {
+      return Array.from({ length: 1536 }, (_, i) => {
         const val = Math.sin(seed + i) * 0.5 + 0.5;
         return Number.isFinite(val) ? val : 0.5;
       });

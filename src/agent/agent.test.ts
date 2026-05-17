@@ -1628,7 +1628,7 @@ describe('Skill integration', () => {
         async embedBatch(_texts: ReadonlyArray<string>): Promise<Array<Array<number>>> {
           throw new Error('Embedding service unavailable');
         },
-        dimensions: 768,
+        dimensions: 1536,
       };
 
       const deps: AgentDependencies = {

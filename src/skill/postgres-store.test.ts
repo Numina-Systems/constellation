@@ -16,7 +16,7 @@ async function cleanupTables(): Promise<void> {
 
 // Create deterministic test embeddings
 function createTestEmbedding(seed: number): Array<number> {
-  return Array.from({ length: 768 }, (_, i) => {
+  return Array.from({ length: 1536 }, (_, i) => {
     const val = Math.sin(seed + i) * 0.5 + 0.5;
     return Number.isFinite(val) ? val : 0.5;
   });

@@ -258,7 +258,7 @@ describe('MemoryManager', () => {
       if (result.applied) {
         expect(result.block.embedding).not.toBeNull();
         expect(Array.isArray(result.block.embedding)).toBe(true);
-        expect((result.block.embedding as Array<number>).length).toBe(768);
+        expect((result.block.embedding as Array<number>).length).toBe(1536);
       }
     });
   });
@@ -459,7 +459,7 @@ describe('MemoryManager', () => {
         embedBatch: async (): Promise<Array<Array<number>>> => {
           throw new Error('Embedding provider is down');
         },
-        dimensions: 768,
+        dimensions: 1536,
       };
 
       const manager = createMemoryManager(store, failingEmbedding, TEST_OWNER);

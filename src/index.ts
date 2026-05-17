@@ -89,6 +89,7 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { buildDiarySection } from '@/diary';
 import { createShellSession } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
 import type { ShellSession } from '@/shell/types';
@@ -593,6 +594,27 @@ async function main(): Promise<void> {
 
   // Create domain modules
   const memory = createMemoryManager(memoryStore, embedding, AGENT_OWNER);
+
+  // Retrieve diary section (session-static, fetched once at init)
+  let diarySection: string | undefined;
+  if (config.agent.diary_enabled !== false) {
+    try {
+      const diaryBlocks = await memoryStore.getBlocksByLabelPrefix(
+        AGENT_OWNER,
+        'diary:',
+        'working',
+      );
+      if (diaryBlocks.length > 0) {
+        const result = buildDiarySection(diaryBlocks, {
+          tokenBudget: config.agent.diary_token_budget ?? 3000,
+          maxEntries: config.agent.diary_max_entries ?? 3,
+        });
+        diarySection = result?.section;
+      }
+    } catch (error) {
+      console.warn('diary: retrieval failed, continuing without diary', error);
+    }
+  }
 
   // Create reflexion stores
   const predictionStore = createPredictionStore(persistence);
@@ -1181,6 +1203,7 @@ async function main(): Promise<void> {
     checkpointFn,
     checkpointStateRef: agentStateRef,
     loopDetector,
+    diarySection,
   }, mainConversationId);
 
   // Create subconscious agent if enabled

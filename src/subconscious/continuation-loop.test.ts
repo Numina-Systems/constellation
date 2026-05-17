@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { runContinuationLoop } from './continuation-loop';
 import type { ContinuationLoopDeps } from './continuation-loop';
 import type { ContinuationJudge, ContinuationJudgeContext } from './continuation';
@@ -397,6 +397,11 @@ describe('impulse-continuation.AC4: Impulse continuation loop', () => {
         // Remove the log function
         (deps as any).log = undefined;
 
+        // Spy on console.log to verify fallback is used
+        const originalLog = console.log;
+        const consoleSpy = mock(originalLog);
+        (console as any).log = consoleSpy;
+
         let threw = false;
         try {
           await runContinuationLoop(deps, 'initial', new Date());
@@ -404,7 +409,12 @@ describe('impulse-continuation.AC4: Impulse continuation loop', () => {
           threw = true;
         }
 
+        // Restore console.log
+        (console as any).log = originalLog;
+
         expect(threw).toBe(false);
+        // Verify console.log was called as the fallback
+        expect(consoleSpy.mock.calls.length).toBeGreaterThan(0);
       });
     });
 

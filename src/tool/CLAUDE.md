@@ -6,8 +6,9 @@ Last verified: 2026-05-16
 Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, agent scheduling, unified search, subconscious interest/curiosity management, and session checkpointing.
 
 ## Contracts
-- **Exposes**: `ToolRegistry` interface (`register`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `createSubconsciousTools(deps)`, `createCheckpointTool(deps, getAgentState)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
+- **Exposes**: `ToolRegistry` interface (`register`, `unregister`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `createSubconsciousTools(deps)`, `createCheckpointTool(deps, getAgentState)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
 - **Guarantees**:
+  - `unregister(name)` returns `true` if a tool was removed, `false` if no tool existed with that name; unregistered tools are immediately invisible to `getDefinitions`, `dispatch`, `generateStubs`, and `toModelTools`
   - `dispatch` validates required params, types, and enum values before calling handler
   - `dispatch` returns `ToolResult` (never throws); errors captured in `error` field
   - `generateStubs()` produces TypeScript function stubs that call `__callTool__` for the Deno IPC bridge

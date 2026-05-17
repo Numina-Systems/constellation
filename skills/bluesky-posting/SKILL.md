@@ -7,9 +7,6 @@ tags:
   - posting
   - facets
   - embeds
-companions:
-  - atproto
-  - scheduling
 ---
 
 # Bluesky Posting

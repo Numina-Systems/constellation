@@ -1,5 +1,6 @@
 // pattern: Imperative Shell
 
+import { SecretsError } from '@/errors/secrets.js';
 import type { SecretStore } from './types.js';
 
 export type SecretResolver = {
@@ -18,25 +19,39 @@ export function createSecretResolver(options: SecretResolverOptions): SecretReso
 
   return {
     async resolve(keys) {
-      const result: Record<string, string> = {};
-      for (const key of keys) {
-        if (key in configSecrets) {
-          result[key] = configSecrets[key]!;
-          continue;
+      try {
+        const result: Record<string, string> = {};
+        for (const key of keys) {
+          if (key in configSecrets) {
+            result[key] = configSecrets[key]!;
+            continue;
+          }
+          const stored = await store.get(owner, key);
+          if (stored !== null) {
+            result[key] = stored;
+          }
         }
-        const stored = await store.get(owner, key);
-        if (stored !== null) {
-          result[key] = stored;
+        return result;
+      } catch (error) {
+        if (error instanceof SecretsError) {
+          throw error;
         }
+        throw new SecretsError('RESOLVE_FAILED', `failed to resolve secrets`, { keyCount: keys.length }, { cause: error as Error });
       }
-      return result;
     },
 
     async listKeys() {
-      const storedKeys = await store.listKeys(owner);
-      const configKeys = Object.keys(configSecrets);
-      const allKeys = new Set([...configKeys, ...storedKeys]);
-      return [...allKeys].sort();
+      try {
+        const storedKeys = await store.listKeys(owner);
+        const configKeys = Object.keys(configSecrets);
+        const allKeys = new Set([...configKeys, ...storedKeys]);
+        return [...allKeys].sort();
+      } catch (error) {
+        if (error instanceof SecretsError) {
+          throw error;
+        }
+        throw new SecretsError('RESOLVE_FAILED', `failed to list secret keys`, {}, { cause: error as Error });
+      }
     },
   };
 }

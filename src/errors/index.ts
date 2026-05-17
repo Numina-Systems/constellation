@@ -24,3 +24,7 @@ export type { ShellErrorCode } from './shell.js';
 
 // Phase 4: Trace integration
 export { traceError } from './trace.js';
+
+// Phase 5: Secrets
+export { SecretsError } from './secrets.js';
+export type { SecretsErrorCode } from './secrets.js';

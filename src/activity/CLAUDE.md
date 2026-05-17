@@ -6,7 +6,7 @@ Last verified: 2026-03-07
 Implements a circadian sleep/wake cycle for the agent. During sleep, external events are queued instead of dispatched, and the agent runs reflective tasks (compaction, prediction review, pattern analysis). On wake, queued events trickle-drain back into the agent loop.
 
 ## Contracts
-- **Exposes**: `ActivityManager` port interface (`getState`, `isActive`, `transitionTo`, `queueEvent`, `flagEvent`, `drainQueue`, `getFlaggedEvents`), `createActivityManager(persistence, scheduleConfig, owner)`, `createActivityContextProvider(activityManager)`, `createActivityDispatch(options)`, `createActivityInterceptor(options)`, `createWakeHandler(options)`, schedule utilities (`currentMode`, `nextTransitionTime`, `validateCron`, `sleepTaskCron`, `isSleepTask`, `isTransitionTask`), sleep event builders (`buildCompactionEvent`, `buildPredictionReviewEvent`, `buildPatternAnalysisEvent`), `queuedEventToExternal`
+- **Exposes**: `ActivityManager` port interface (`getState`, `isActive`, `transitionTo`, `queueEvent`, `flagEvent`, `drainQueue`, `getFlaggedEvents`), `createActivityManager(persistence, scheduleConfig, owner)`, `createActivityContextProvider(activityManager)`, `createActivityDispatch(options)`, `createActivityInterceptor(options)`, `createWakeHandler(options)`, schedule utilities (`currentMode`, `nextTransitionTime`, `validateCron`, `sleepTaskCron`, `isSleepTask`, `isTransitionTask`), sleep event builders (`buildCompactionEvent`, `buildPredictionReviewEvent`, `buildPatternAnalysisEvent`, `buildArchivistEvent`), `queuedEventToExternal`
 - **Guarantees**: `drainQueue` yields events in priority order (high first, then FIFO). Transition tasks and sleep tasks always execute regardless of mode. Non-activity tasks are queued during sleep, dispatched during active. Activity interceptor wraps event handlers transparently and flags events matching a configurable `highPriorityFilter` predicate (generic event filter, not Bluesky-specific). Context provider caches state with 60s TTL. Dispatch falls through to original handler on error (never loses events).
 - **Expects**: `PersistenceProvider` with migration 006 applied. Valid cron expressions in `ScheduleConfig`. Owner string for isolation.
 
@@ -25,7 +25,7 @@ Implements a circadian sleep/wake cycle for the agent. During sleep, external ev
 - `activity_state` has exactly one row per owner (PRIMARY KEY constraint)
 - `event_queue` priority is always `normal` or `high` (CHECK constraint)
 - `activity_state` mode is always `active` or `sleeping` (CHECK constraint)
-- Sleep tasks (`sleep-compaction`, `sleep-prediction-review`, `sleep-pattern-analysis`) always execute, even during sleep
+- Sleep tasks (`sleep-compaction`, `sleep-prediction-review`, `sleep-pattern-analysis`, `sleep-archivist`) always execute, even during sleep
 - Transition tasks (`transition-to-sleep`, `transition-to-wake`) always execute, never queued
 - Single daemon process per owner -- drainQueue and dispatch assume no concurrent consumers
 

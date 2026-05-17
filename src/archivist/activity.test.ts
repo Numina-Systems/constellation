@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { buildArchivistEvent } from '@/activity/sleep-events.ts';
 import { SLEEP_TASK_NAMES, sleepTaskCron } from '@/activity/schedule.ts';
-import type { QueuedEvent } from '@/activity/types.js';
+import type { QueuedEvent } from '@/activity/types.ts';
 
 describe('archivist activity integration', () => {
   describe('buildArchivistEvent()', () => {
@@ -101,13 +101,7 @@ describe('archivist activity integration', () => {
   });
 
   describe('activity task integration', () => {
-    it('archivist-incremental should be recognized as a valid task name', () => {
-      const taskName = 'archivist-incremental';
-      expect(typeof taskName).toBe('string');
-      expect(taskName.length).toBeGreaterThan(0);
-    });
-
-    it('sleep-archivist event should route to archivist agent', () => {
+    it('sleep-archivist event has correct metadata for agent routing', () => {
       const timestamp = new Date();
       const event = buildArchivistEvent([], timestamp);
 
@@ -115,10 +109,6 @@ describe('archivist activity integration', () => {
       expect(event.metadata['sleepTask']).toBe(true);
       expect(typeof event.content).toBe('string');
       expect(event.content.length).toBeGreaterThan(0);
-    });
-
-    it('SLEEP_TASK_NAMES constant includes sleep-archivist', () => {
-      expect(SLEEP_TASK_NAMES as readonly string[]).toContain('sleep-archivist');
     });
   });
 });

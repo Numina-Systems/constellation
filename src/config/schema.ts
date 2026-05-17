@@ -248,6 +248,16 @@ const SecretsConfigSchema = z.object({
   agent_managed: z.boolean().default(false),
 });
 
+const ArchivistConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  inner_conversation_id: z.string().optional(),
+  dedup_threshold: z.number().min(0).max(1).default(0.92),
+  crossref_threshold: z.number().min(0).max(1).default(0.75),
+  token_budget: z.number().int().positive().default(50000),
+  incremental_cron: z.string().default('0 */3 * * *'),
+  sleep_offset_hours: z.number().int().nonnegative().default(3),
+});
+
 const AppConfigSchema = z.object({
   agent: AgentConfigSchema.default({}),
   model: ModelConfigSchema,
@@ -265,6 +275,7 @@ const AppConfigSchema = z.object({
   shell: ShellConfigSchema.optional(),
   loop_detection: LoopDetectionConfigSchema.default({}),
   secrets: SecretsConfigSchema.optional(),
+  archivist: ArchivistConfigSchema.optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -285,5 +296,6 @@ export type SubconsciousConfig = z.infer<typeof SubconsciousConfigSchema>;
 export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export type LoopDetectionSchemaConfig = z.infer<typeof LoopDetectionConfigSchema>;
 export type SecretsConfig = z.infer<typeof SecretsConfigSchema>;
+export type ArchivistConfig = z.infer<typeof ArchivistConfigSchema>;
 
-export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema, ShellConfigSchema, LoopDetectionConfigSchema, SecretsConfigSchema };
+export { AppConfigSchema, AgentConfigSchema, ModelConfigSchema, OpenRouterConfigSchema, EmbeddingConfigSchema, DatabaseConfigSchema, RuntimeConfigSchema, BlueskyConfigSchema, SummarizationConfigSchema, WebConfigSchema, SkillConfigSchema, EmailConfigSchema, ActivityConfigSchema, McpConfigSchema, SubconsciousConfigSchema, ShellConfigSchema, LoopDetectionConfigSchema, SecretsConfigSchema, ArchivistConfigSchema };

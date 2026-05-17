@@ -4,6 +4,9 @@
  * Archivist pipeline orchestrator.
  * Coordinates six stages: scan → dedup → consolidate → crossref → prune → reflect
  * Supports incremental (no LLM) and full (all stages) modes.
+ *
+ * TODO: Replace console.warn/error with structured logging once a logging dependency is added.
+ * For now, console output is used for diagnostic messages during pipeline execution.
  */
 
 import type { MemoryStore } from '@/memory/store.js';

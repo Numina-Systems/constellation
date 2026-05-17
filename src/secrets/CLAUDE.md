@@ -3,7 +3,7 @@
 Last verified: 2026-05-17
 
 ## Purpose
-Provides encrypted-at-rest secret storage with owner isolation, enabling the agent to persist API keys and credentials that are injected into Deno sandbox code execution as TypeScript constants.
+Provides secret storage with owner isolation, enabling the agent to persist API keys and credentials that are injected into Deno sandbox code execution as TypeScript constants.
 
 ## Contracts
 - **Exposes**: `SecretStore` port interface (`get`, `set`, `delete`, `listKeys`, `getAll`), `createPostgresSecretStore(persistence)`, `SecretResolver` interface (`resolve(keys)`, `listKeys()`), `createSecretResolver(options)`

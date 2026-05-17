@@ -50,7 +50,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/email/` -- Email sending via Mailgun with recipient allowlist (send_email tool)
 - `src/extensions/` -- Extension interfaces (DataSource, Coordinator, Scheduler, ToolProvider), DataSource registry factory, and implementations
 - `src/extensions/bluesky/` -- Bluesky DataSource (Jetstream firehose, AT Protocol)
-- `src/secrets/` -- Encrypted-at-rest secret storage with owner isolation, two-tier resolution (config + database), SecretResolver for sandbox injection
+- `src/secrets/` -- Secret storage with owner isolation, two-tier resolution (config + database), SecretResolver for sandbox injection
 - `src/custom-tool/` -- Runtime custom tool creation with persistence, registry integration, and Deno sandbox execution
 - `src/ingest/` -- File ingestion pipeline (markdown-aware chunking, path validation, atomic re-ingestion into archival memory)
 - `src/archivist/` -- Six-stage memory maintenance pipeline (scan, dedup, consolidate, crossref, prune, reflect) with incremental and full modes

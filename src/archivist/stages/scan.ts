@@ -1,4 +1,4 @@
-// pattern: Imperative Shell
+// pattern: Mixed (pure helpers tightly coupled to scan I/O)
 
 import type { MemoryStore } from '@/memory/store.js';
 import type { MemoryBlock } from '@/memory/types.js';

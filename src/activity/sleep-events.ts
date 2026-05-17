@@ -87,14 +87,14 @@ export function buildArchivistEvent(
   const lines = [
     'Sleep task: Knowledge Archivist (Full Pipeline)',
     '',
-    'Run the full archivist pipeline to maintain knowledge health:',
-    '- Scan all mutable memory blocks',
-    '- Identify and merge near-duplicate blocks',
-    '- Cross-reference related blocks',
-    '- Prune empty blocks',
-    '- Write a reflection on memory health',
+    'Full archivist pipeline maintenance is running to maintain knowledge health:',
+    '- Scanning all mutable memory blocks',
+    '- Identifying and merging near-duplicate blocks',
+    '- Cross-referencing related blocks',
+    '- Pruning empty blocks',
+    '- Writing a reflection on memory health',
     '',
-    'This is a background maintenance task. Focus on knowledge quality and organization.',
+    'This is a background maintenance task. Knowledge quality and organization are being reviewed.',
   ];
 
   appendFlaggedSummary(lines, flaggedEvents);

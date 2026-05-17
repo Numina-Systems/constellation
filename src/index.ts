@@ -957,13 +957,28 @@ async function main(): Promise<void> {
     }
   }
 
+  // Cached secrets with 60-second TTL to reduce DB round-trips
+  let cachedSecrets: Record<string, string> | null = null;
+  let secretsCacheExpiry = 0;
+  const SECRET_CACHE_TTL_MS = 60000; // 60 seconds
+
   // Getter reads fresh tokens from the DataSource at execution time.
   // Shared by both REPL and Bluesky agents so either can post to Bluesky.
   // Returns undefined when bluesky is not connected, so the sandbox
   // simply won't have BSKY_* constants available.
   const getExecutionContext = async (): Promise<ExecutionContext> => {
-    const allKeys = await secretResolver.listKeys();
-    const secrets = await secretResolver.resolve(allKeys);
+    // Return cached secrets if still valid
+    const now = Date.now();
+    let secrets: Record<string, string>;
+    if (cachedSecrets && now < secretsCacheExpiry) {
+      secrets = cachedSecrets;
+    } else {
+      // Fetch and cache secrets
+      const allKeys = await secretResolver.listKeys();
+      secrets = await secretResolver.resolve(allKeys);
+      cachedSecrets = secrets;
+      secretsCacheExpiry = now + SECRET_CACHE_TTL_MS;
+    }
 
     const context: ExecutionContext = { secrets };
 

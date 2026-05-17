@@ -21,6 +21,8 @@ export function createPostgresCustomToolStore(persistence: PersistenceProvider):
       const values: Array<unknown> = [];
       let paramIndex = 1;
 
+      // Dynamically build SET clauses with parameter indices ($1, $2, ...)
+      // based on which fields are present in the patch.
       if (patch.description !== undefined) {
         setClauses.push(`description = $${paramIndex++}`);
         values.push(patch.description);
@@ -34,6 +36,8 @@ export function createPostgresCustomToolStore(persistence: PersistenceProvider):
         values.push(patch.code);
       }
 
+      // Append owner and name to values array after all patch fields.
+      // Their indices are paramIndex and paramIndex+1 respectively.
       values.push(owner, name);
       const rows = await persistence.query<CustomToolRow>(
         `UPDATE custom_tools SET ${setClauses.join(', ')}

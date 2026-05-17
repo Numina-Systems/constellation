@@ -22,6 +22,11 @@ export interface MemoryStore {
     tier: MemoryTier,
   ): Promise<Array<MemoryBlock>>;
   getBlockByLabel(owner: string, label: string): Promise<MemoryBlock | null>;
+  getBlocksByLabelPrefix(
+    owner: string,
+    prefix: string,
+    tier?: MemoryTier,
+  ): Promise<ReadonlyArray<MemoryBlock>>;
   createBlock(
     block: Omit<MemoryBlock, 'created_at' | 'updated_at'>,
   ): Promise<MemoryBlock>;

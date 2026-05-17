@@ -7,6 +7,8 @@ import { describe, test, expect, beforeAll, afterEach, afterAll } from 'bun:test
 import { createPostgresProvider } from '@/persistence';
 import { createPostgresMemoryStore } from '@/memory/postgres-store';
 import { buildDiarySection } from './inject.js';
+import type { MemoryStore } from '@/memory/store';
+import type { MemoryBlock, MemoryTier, MemoryEvent, PendingMutation } from '@/memory/types';
 
 const AGENT_OWNER = 'test-agent-diary-integration-' + Math.random().toString(36).substring(7);
 const DB_CONNECTION_STRING =
@@ -83,11 +85,17 @@ describe('diary integration', () => {
     expect(result).not.toBeNull();
     const firstSessionDiary = result!.section;
 
-    // Simulate same turn multiple times: diary section should be identical
-    // (in real agent, it's stored in deps.diarySection and reused)
-    const secondTurnDiary = result!.section;
+    // Test determinism: calling buildDiarySection with same input produces same output
+    const secondBuildResult = buildDiarySection(diaryBlocks, {
+      tokenBudget: 3000,
+      maxEntries: 3,
+    });
 
-    expect(firstSessionDiary).toBe(secondTurnDiary);
+    expect(secondBuildResult).not.toBeNull();
+    const secondSessionDiary = secondBuildResult!.section;
+
+    // Both builds should produce identical output (determinism test)
+    expect(firstSessionDiary).toBe(secondSessionDiary);
     expect(firstSessionDiary).toContain('2026-05-16');
     expect(firstSessionDiary).toContain('2026-05-17');
   });
@@ -235,14 +243,91 @@ describe('diary integration', () => {
 
   test('diary-injection.AC6.3: store error is caught and logged gracefully', async () => {
     // This test verifies the error handling pattern used in index.ts
+    // by simulating a broken memory store that throws on retrieval
 
     let diarySection: string | undefined;
-    let errorCaught = false;
+    let errorWasCaught = false;
+    let errorMessage = '';
+
+    // Create a mock memory store that throws on getBlocksByLabelPrefix
+    const brokenMemoryStore: MemoryStore = {
+      async getBlocksByLabelPrefix(_owner: string, _prefix: string, _tier?: MemoryTier) {
+        throw new Error('Database connection failed');
+      },
+      // Stub other methods to satisfy MemoryStore interface
+      async getBlock() {
+        return null;
+      },
+      async getBlocksByTier(_owner: string, _tier: MemoryTier) {
+        return [];
+      },
+      async getBlockByLabel() {
+        return null;
+      },
+      async createBlock(block: Omit<MemoryBlock, 'created_at' | 'updated_at'>) {
+        return { ...block, created_at: new Date(), updated_at: new Date() };
+      },
+      async updateBlock(id: string, content: string, embedding: ReadonlyArray<number> | null) {
+        return {
+          id,
+          owner: '',
+          tier: 'working' as MemoryTier,
+          label: '',
+          content,
+          embedding,
+          permission: 'readwrite' as const,
+          pinned: false,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+      },
+      async updateBlockTier(id: string, tier: MemoryTier) {
+        return {
+          id,
+          owner: '',
+          tier,
+          label: '',
+          content: '',
+          embedding: null,
+          permission: 'readwrite' as const,
+          pinned: false,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+      },
+      async deleteBlock() {},
+      async searchByEmbedding(_owner: string, _embedding: ReadonlyArray<number>, _limit: number, _tier?: MemoryTier) {
+        return [];
+      },
+      async logEvent(event: Omit<MemoryEvent, 'id' | 'created_at'>) {
+        return { ...event, id: '', created_at: new Date() };
+      },
+      async getEvents(_blockId: string) {
+        return [];
+      },
+      async createMutation(mutation: Omit<PendingMutation, 'id' | 'created_at' | 'resolved_at'>) {
+        return { ...mutation, id: '', created_at: new Date(), resolved_at: null };
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async resolveMutation(id: string, status: 'approved' | 'rejected', feedback?: string) {
+        return {
+          id,
+          block_id: '',
+          proposed_content: '',
+          reason: null,
+          status,
+          feedback: feedback || null,
+          created_at: new Date(),
+          resolved_at: new Date(),
+        };
+      },
+    };
 
     try {
-      // Simulate a retrieval operation
-      const memoryStore = createPostgresMemoryStore(persistence);
-      const diaryBlocks = await memoryStore.getBlocksByLabelPrefix(
+      // Simulate the retrieval pattern from index.ts
+      const diaryBlocks = await brokenMemoryStore.getBlocksByLabelPrefix(
         AGENT_OWNER,
         'diary:',
         'working',
@@ -257,13 +342,15 @@ describe('diary integration', () => {
       }
     } catch (error) {
       // In real code: console.warn('diary: retrieval failed, continuing without diary', error);
-      errorCaught = true;
+      errorWasCaught = true;
+      errorMessage = error instanceof Error ? error.message : String(error);
     }
 
-    // If no blocks exist, diarySection should remain undefined (not an error)
+    // Key assertion: error was caught and handled gracefully
+    expect(errorWasCaught).toBe(true);
+    expect(errorMessage).toContain('Database connection failed');
+    // diarySection should remain undefined because error was caught
     expect(diarySection).toBeUndefined();
-    // We should not have caught an error since no blocks exist
-    expect(errorCaught).toBe(false);
   });
 
   test('diary-injection.AC7.1: multiple turns within session use identical diary section', async () => {
@@ -296,15 +383,17 @@ describe('diary integration', () => {
     expect(initialResult).not.toBeNull();
     const sessionDiary = initialResult!.section;
 
-    // Simulate multiple turns using same diary section
-    // (in agent, this is stored in deps.diarySection and reused)
-    const turn1Diary = sessionDiary;
-    const turn2Diary = sessionDiary;
-    const turn3Diary = sessionDiary;
+    // Test determinism: building with same blocks multiple times produces identical output
+    const turnResult = buildDiarySection(initialBlocks, {
+      tokenBudget: 3000,
+      maxEntries: 3,
+    });
 
-    // All should be identical
-    expect(turn1Diary).toBe(turn2Diary);
-    expect(turn2Diary).toBe(turn3Diary);
-    expect(turn1Diary).toContain('2026-05-17');
+    expect(turnResult).not.toBeNull();
+    const turnDiary = turnResult!.section;
+
+    // All builds should produce identical output (determinism test)
+    expect(sessionDiary).toBe(turnDiary);
+    expect(sessionDiary).toContain('2026-05-17');
   });
 });

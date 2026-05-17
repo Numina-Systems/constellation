@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { createToolRegistry } from '@/tool/registry.js';
 import type { ToolRegistry } from '@/tool/types.js';
-import type { CustomToolStore } from '@/custom-tool/types.js';
+import type { CustomToolStore, CustomToolDefinition } from '@/custom-tool/types.js';
 import { createCustomToolManager } from '@/custom-tool/manager.js';
 import { createCustomToolTools } from './custom-tools.js';
 
@@ -35,7 +35,7 @@ function createMockSecretResolver() {
 
 // In-memory CustomToolStore
 function createMockStore(): CustomToolStore {
-  const storage = new Map<string, any>();
+  const storage = new Map<string, CustomToolDefinition>();
 
   return {
     async create(def) {
@@ -60,7 +60,7 @@ function createMockStore(): CustomToolStore {
     },
 
     async list(owner) {
-      const results: any[] = [];
+      const results: Array<CustomToolDefinition> = [];
       for (const [key, def] of storage) {
         if (key.startsWith(`${owner}:`)) {
           results.push(def);

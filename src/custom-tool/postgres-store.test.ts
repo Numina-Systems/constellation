@@ -26,7 +26,7 @@ describe('PostgresCustomToolStore', () => {
   afterAll(async () => {
     // Clean up test data
     try {
-      await persistence.query('DELETE FROM custom_tools WHERE owner = $1', [TEST_OWNER]);
+      await persistence.query('DELETE FROM custom_tools WHERE owner LIKE $1', [TEST_OWNER + '%']);
     } catch {
       // Table may not exist if migration failed
     }

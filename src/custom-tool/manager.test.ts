@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { createToolRegistry } from '@/tool/registry.js';
 import type { ToolRegistry, ToolParameter } from '@/tool/types.js';
-import type { CodeRuntime } from '@/runtime/types.js';
+import type { CodeRuntime, ExecutionContext } from '@/runtime/types.js';
 import type { SecretResolver } from '@/secrets/resolver.js';
 import type { CustomToolStore, CustomToolDefinition } from './types.js';
 import { createCustomToolManager } from './manager.js';
@@ -476,7 +476,7 @@ describe('CustomToolManager', () => {
     });
 
     test('AC2.8: handler passes secrets to runtime.execute()', async () => {
-      let receivedContext: any = null;
+      let receivedContext: ExecutionContext | undefined;
       const contextCapturingRuntime: CodeRuntime = {
         async execute(_code, _toolStubs, context) {
           receivedContext = context;
@@ -502,9 +502,9 @@ describe('CustomToolManager', () => {
       await registry.dispatch('secret_tool', {});
 
       expect(receivedContext).toBeDefined();
-      expect(receivedContext.secrets).toBeDefined();
-      expect(receivedContext.secrets.TEST_SECRET).toBe('secret-value');
-      expect(receivedContext.secrets.API_KEY).toBe('api-key-value');
+      expect(receivedContext?.secrets).toBeDefined();
+      expect(receivedContext?.secrets?.['TEST_SECRET']).toBe('secret-value');
+      expect(receivedContext?.secrets?.['API_KEY']).toBe('api-key-value');
     });
   });
 });

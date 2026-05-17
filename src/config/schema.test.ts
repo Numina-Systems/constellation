@@ -657,6 +657,138 @@ describe("ActivityConfigSchema", () => {
   });
 });
 
+describe("SubconsciousConfigSchema continuation fields", () => {
+  describe("impulse-continuation.AC3.6: Continuation budget config validation", () => {
+    it("should apply defaults when continuation fields omitted", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: { enabled: false },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious).toBeDefined();
+      expect(result.subconscious!.max_continuations_per_event).toBe(2);
+      expect(result.subconscious!.max_continuations_per_cycle).toBe(10);
+    });
+
+    it("should accept explicit continuation values", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          max_continuations_per_event: 5,
+          max_continuations_per_cycle: 20,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious!.max_continuations_per_event).toBe(5);
+      expect(result.subconscious!.max_continuations_per_cycle).toBe(20);
+    });
+
+    it("should accept zero values (disables continuation)", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          max_continuations_per_event: 0,
+          max_continuations_per_cycle: 0,
+        },
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.subconscious!.max_continuations_per_event).toBe(0);
+      expect(result.subconscious!.max_continuations_per_cycle).toBe(0);
+    });
+
+    it("should reject max_continuations_per_event > 10", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          max_continuations_per_event: 11,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject max_continuations_per_event < 0", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          max_continuations_per_event: -1,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject max_continuations_per_cycle > 50", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          max_continuations_per_cycle: 51,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+
+    it("should reject max_continuations_per_cycle < 0", () => {
+      const config = {
+        agent: {},
+        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+        subconscious: {
+          enabled: false,
+          max_continuations_per_cycle: -1,
+        },
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow();
+    });
+  });
+});
+
 describe("OpenRouterConfigSchema and ModelConfigSchema with openrouter provider", () => {
   describe("openrouter-provider.AC1.1: Basic openrouter provider config", () => {
     it("should parse openrouter provider with name", () => {

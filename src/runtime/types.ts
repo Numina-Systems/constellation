@@ -21,7 +21,7 @@ export type ExecutionResult = {
 
 /**
  * Execution context for credential injection into sandbox code.
- * Contains optional Bluesky credentials that are injected as constants.
+ * Contains optional Bluesky credentials and API secrets that are injected as constants.
  */
 export type ExecutionContext = {
   readonly bluesky?: {
@@ -32,6 +32,7 @@ export type ExecutionContext = {
     readonly did: string;
     readonly handle: string;
   };
+  readonly secrets?: Readonly<Record<string, string>>;
 };
 
 /**

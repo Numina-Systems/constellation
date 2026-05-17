@@ -46,6 +46,18 @@ export function generateCredentialConstants(context?: ExecutionContext): string 
 }
 
 /**
+ * Generate secret constants for injection into sandbox code.
+ * Returns a block of TypeScript const declarations, or empty string if no secrets.
+ * Pure function for testability.
+ */
+export function generateSecretConstants(context?: ExecutionContext): string {
+  if (!context?.secrets) return '';
+  const entries = Object.entries(context.secrets);
+  if (entries.length === 0) return '';
+  return entries.map(([key, value]) => `const ${key} = ${JSON.stringify(value)};`).join('\n');
+}
+
+/**
  * Create a CodeRuntime that executes code in Deno subprocesses.
  * Handles permission flags, IPC communication, and resource limits.
  */
@@ -108,7 +120,8 @@ ${code.split('\n').map(line => '    ' + line).join('\n')}
 })();
 `;
       const credentialBlock = generateCredentialConstants(context);
-      const combinedScript = `${runtimeCode}\n\n// Credentials\n${credentialBlock}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
+      const secretBlock = generateSecretConstants(context);
+      const combinedScript = `${runtimeCode}\n\n// Credentials\n${credentialBlock}\n\n// Secrets\n${secretBlock}\n\n// Tool stubs\n${toolStubs}\n\n// User code\n${wrappedUserCode}`;
 
       // Create temporary file in working directory
       const tempFileName = `exec_${randomUUID()}.ts`;

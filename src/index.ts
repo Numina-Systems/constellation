@@ -106,6 +106,8 @@ import { createPostgresCustomToolStore, createCustomToolManager } from '@/custom
 import { createCustomToolTools } from '@/tool/builtin/custom-tools';
 import { createIngestor } from '@/ingest';
 import { createIngestTool } from '@/tool/builtin/ingest';
+import { createArchivistPipeline } from '@/archivist';
+import type { ArchivistPipeline } from '@/archivist';
 
 const AGENT_OWNER = 'spirit';
 
@@ -1016,6 +1018,25 @@ async function main(): Promise<void> {
     modelName: config.summarization?.name ?? config.model.name,
   });
 
+  // --- Archivist Pipeline (opt-in) ---
+  let archivistPipeline: ArchivistPipeline | null = null;
+
+  if (config.archivist?.enabled !== false) {
+    archivistPipeline = createArchivistPipeline({
+      memoryStore,
+      memoryManager: memory,
+      embedding: embedding ?? null,
+      summarizationModel: summarizationModel ?? null,
+      persistence,
+      owner: AGENT_OWNER,
+      modelName: config.summarization?.name ?? config.model.name,
+      dedupThreshold: config.archivist?.dedup_threshold ?? 0.92,
+      crossrefThreshold: config.archivist?.crossref_threshold ?? 0.75,
+      tokenBudget: config.archivist?.token_budget ?? 50000,
+    });
+    console.log('archivist pipeline created');
+  }
+
   // --- Activity Manager (opt-in) ---
   let activityManager: ActivityManager | null = null;
   let activityScheduleConfig: ScheduleConfig | null = null;
@@ -1333,6 +1354,34 @@ async function main(): Promise<void> {
     console.log(`subconscious agent enabled (conversation: ${config.subconscious.inner_conversation_id})`);
   }
 
+  // Create archivist sub-agent for full pipeline runs during sleep (if enabled and configured)
+  let archivistAgent: Agent | null = null;
+
+  if (archivistPipeline && config.archivist?.inner_conversation_id) {
+    const archivistSourceInstructions = new Map<string, string>([
+      ['sleep-task', `You are the archivist — a background knowledge maintenance agent.
+When you receive a sleep task event, run the full archivist pipeline to maintain knowledge health.
+Focus on knowledge quality, deduplication, cross-referencing, and organization.
+Report a brief summary of actions taken.`],
+    ]);
+
+    archivistAgent = createAgent({
+      model,
+      memory,
+      registry,
+      runtime,
+      persistence,
+      embedding,
+      config: { ...config.agent, max_tool_rounds: 3 },
+      owner: AGENT_OWNER,
+      sourceInstructions: archivistSourceInstructions,
+      contextProviders: [],
+      classifiedProviders: [],
+    }, config.archivist.inner_conversation_id);
+
+    console.log('archivist sub-agent created');
+  }
+
   // Create impulse assembler if subconscious is enabled (for phase 4 scheduler)
   const impulseAssembler = subconsciousAgent
     ? createImpulseAssembler({
@@ -1536,6 +1585,13 @@ async function main(): Promise<void> {
             break;
           case 'sleep-archivist':
             event = buildArchivistEvent(flaggedEvents, new Date());
+            if (archivistAgent) {
+              // Route to archivist sub-agent
+              archivistAgent.processEvent(event).catch((error) => {
+                console.error('[archivist] full pipeline event error:', error);
+              });
+              return; // Don't queue to main agent
+            }
             break;
           default:
             console.warn(`[activity] unknown sleep task: ${task.name}`);
@@ -1615,6 +1671,18 @@ async function main(): Promise<void> {
           }
         })().catch((error) => {
           console.error('introspection task error:', error);
+        });
+      } else if (task.name === 'archivist-incremental' && archivistPipeline) {
+        (async () => {
+          try {
+            console.log('[archivist] running incremental pipeline');
+            const result = await archivistPipeline.runIncremental();
+            console.log(`[archivist] incremental complete: scanned=${result.scanned}, deduped=${result.deduped}, pruned=${result.pruned}`);
+          } catch (error) {
+            console.error('[archivist] incremental pipeline error:', error);
+          }
+        })().catch((error) => {
+          console.error('[archivist] incremental task error:', error);
         });
       } else {
         handleSystemSchedulerTask(task);
@@ -1758,6 +1826,50 @@ async function main(): Promise<void> {
   agentScheduler.start();
   systemScheduler.start();
   console.log('schedulers started (agent + system)');
+
+  // --- Archivist task registration (before activity tasks) ---
+  if (config.archivist?.enabled !== false) {
+    const archivistIncrementalCron = config.archivist?.incremental_cron ?? '0 */3 * * *';
+
+    const existingIncrementalTasks = await persistence.query<{ id: string }>(
+      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+      ['system', 'archivist-incremental'],
+    );
+
+    if (existingIncrementalTasks.length === 0) {
+      await systemScheduler.schedule({
+        id: crypto.randomUUID(),
+        name: 'archivist-incremental',
+        schedule: archivistIncrementalCron,
+        payload: { type: 'archivist-incremental' },
+      });
+      console.log(`archivist incremental task scheduled (${archivistIncrementalCron})`);
+    } else {
+      console.log('archivist incremental task already scheduled');
+    }
+
+    if (activityManager && activityScheduleConfig) {
+      const offsetHours = config.archivist?.sleep_offset_hours ?? 3;
+      const archivistSleepCron = sleepTaskCron(activityScheduleConfig.sleepSchedule, offsetHours, activityScheduleConfig.timezone);
+
+      const existingSleepTasks = await persistence.query<{ id: string }>(
+        `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
+        ['system', 'sleep-archivist'],
+      );
+
+      if (existingSleepTasks.length === 0) {
+        await systemScheduler.schedule({
+          id: crypto.randomUUID(),
+          name: 'sleep-archivist',
+          schedule: archivistSleepCron,
+          payload: { type: 'sleep-archivist' },
+        });
+        console.log(`archivist sleep task scheduled (${archivistSleepCron})`);
+      } else {
+        console.log('archivist sleep task already scheduled');
+      }
+    }
+  }
 
   // --- Activity task registration (after schedulers started) ---
   if (activityManager && activityScheduleConfig) {

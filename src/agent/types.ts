@@ -30,6 +30,9 @@ export type AgentConfig = {
   skill_threshold?: number; // Minimum similarity threshold for skill inclusion (default: 0.3)
   recall_enabled?: boolean;
   recall_token_budget?: number;
+  diary_enabled?: boolean;
+  diary_token_budget?: number;
+  diary_max_entries?: number;
   cache_diagnostics?: boolean;
   checkpoint_interval?: number;
   checkpoint_retention?: number;

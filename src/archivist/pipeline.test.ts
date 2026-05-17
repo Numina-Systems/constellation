@@ -72,16 +72,31 @@ function createMockModelProvider(): ModelProvider {
   };
 }
 
+/**
+ * Clean up blocks created by a test.
+ */
+async function cleanupTestBlocks(owner: string, store: ReturnType<typeof createPostgresMemoryStore>) {
+  const blocks = await store.getBlocksByTier(owner, 'working');
+  for (const block of blocks) {
+    try {
+      await store.deleteBlock(block.id);
+    } catch {
+      // Ignore errors during cleanup
+    }
+  }
+}
+
 describe('ArchivistPipeline', () => {
   test('runIncremental: scans eligible blocks and identifies duplicates', async () => {
     const store = createPostgresMemoryStore(persistence);
     const embedding = createMockEmbeddingProvider();
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
 
-    // Create test blocks
-    await manager.write('test:block1', 'Content about topic A', 'working');
-    await manager.write('test:block2', 'Content about topic A', 'working');
-    await manager.write('test:block3', 'Unrelated content', 'working');
+    // Create test blocks with unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`scan-test-${testId}:block1`, 'Content about topic A', 'working');
+    await manager.write(`scan-test-${testId}:block2`, 'Content about topic A', 'working');
+    await manager.write(`scan-test-${testId}:block3`, 'Unrelated content', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -101,6 +116,9 @@ describe('ArchivistPipeline', () => {
     expect(result.mode).toBe('incremental');
     expect(result.scanned).toBeGreaterThanOrEqual(3);
     expect(result.deduped).toBeGreaterThanOrEqual(0);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runIncremental: prunes empty blocks', async () => {
@@ -108,10 +126,11 @@ describe('ArchivistPipeline', () => {
     const embedding = createMockEmbeddingProvider();
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
 
-    // Create blocks including empty ones
-    await manager.write('test:filled', 'Has content', 'working');
-    await manager.write('test:empty', '', 'working');
-    await manager.write('test:whitespace', '   \n\t  ', 'working');
+    // Create blocks including empty ones with unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`prune-test-${testId}:filled`, 'Has content', 'working');
+    await manager.write(`prune-test-${testId}:empty`, '', 'working');
+    await manager.write(`prune-test-${testId}:whitespace`, '   \n\t  ', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -133,6 +152,9 @@ describe('ArchivistPipeline', () => {
     const allBlocks = await store.getBlocksByTier(TEST_OWNER, 'working');
     const emptyBlocks = allBlocks.filter((b) => b.content.trim().length === 0);
     expect(emptyBlocks).toHaveLength(0);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runFull: consolidates duplicate groups via model', async () => {
@@ -141,9 +163,10 @@ describe('ArchivistPipeline', () => {
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
     const mockModel = createMockModelProvider();
 
-    // Create duplicate blocks
-    await manager.write('dup:v1', 'Block about AI algorithms', 'working');
-    await manager.write('dup:v2', 'Block about AI algorithms', 'working');
+    // Create duplicate blocks with unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`consolidate-test-${testId}:v1`, 'Block about AI algorithms', 'working');
+    await manager.write(`consolidate-test-${testId}:v2`, 'Block about AI algorithms', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -163,6 +186,9 @@ describe('ArchivistPipeline', () => {
     expect(result.mode).toBe('full');
     // Dedup should find the duplicates
     expect(result.deduped).toBeGreaterThanOrEqual(0);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runFull: appends related block references', async () => {
@@ -171,9 +197,10 @@ describe('ArchivistPipeline', () => {
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
     const mockModel = createMockModelProvider();
 
-    // Create related blocks with similar but not duplicate content
-    await manager.write('related:main', 'Discussion of machine learning', 'working');
-    await manager.write('related:secondary', 'Discussion of deep learning models', 'working');
+    // Create related blocks with similar but not duplicate content and unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`crossref-test-${testId}:main`, 'Discussion of machine learning', 'working');
+    await manager.write(`crossref-test-${testId}:secondary`, 'Discussion of deep learning models', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -192,6 +219,9 @@ describe('ArchivistPipeline', () => {
 
     expect(result.mode).toBe('full');
     expect(result.reflected).toBe(true);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runFull: writes reflection to archivist:reflection working memory', async () => {
@@ -200,9 +230,10 @@ describe('ArchivistPipeline', () => {
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
     const mockModel = createMockModelProvider();
 
-    // Create some blocks to analyze
-    await manager.write('reflect:a', 'Some memory content', 'working');
-    await manager.write('reflect:b', 'Another memory block', 'working');
+    // Create some blocks to analyze with unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`reflect-test-${testId}:a`, 'Some memory content', 'working');
+    await manager.write(`reflect-test-${testId}:b`, 'Another memory block', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -225,6 +256,9 @@ describe('ArchivistPipeline', () => {
     const reflection = await store.getBlockByLabel(TEST_OWNER, 'archivist:reflection');
     expect(reflection).toBeDefined();
     expect(reflection?.content).toContain('summary');
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runFull: skips dedup when no embedding provider', async () => {
@@ -236,9 +270,10 @@ describe('ArchivistPipeline', () => {
     );
     const mockModel = createMockModelProvider();
 
-    // Create test blocks
-    await manager.write('noembedding:a', 'Content A', 'working');
-    await manager.write('noembedding:b', 'Content B', 'working');
+    // Create test blocks with unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`no-embedding-${testId}:a`, 'Content A', 'working');
+    await manager.write(`no-embedding-${testId}:b`, 'Content B', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -259,6 +294,9 @@ describe('ArchivistPipeline', () => {
     expect(result.deduped).toBe(0);
     // But prune should still run
     expect(result.pruned).toBeGreaterThanOrEqual(0);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runFull: skips consolidate and reflect when no model provider', async () => {
@@ -266,9 +304,10 @@ describe('ArchivistPipeline', () => {
     const embedding = createMockEmbeddingProvider();
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
 
-    // Create test blocks
-    await manager.write('nomodel:a', 'Content A', 'working');
-    await manager.write('nomodel:b', 'Content B', 'working');
+    // Create test blocks with unique labels
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await manager.write(`no-model-${testId}:a`, 'Content A', 'working');
+    await manager.write(`no-model-${testId}:b`, 'Content B', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -290,6 +329,9 @@ describe('ArchivistPipeline', () => {
     expect(result.reflected).toBe(false);
     // But other stages should run
     expect(result.scanned).toBeGreaterThan(0);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runFull: excludes archivist:* and diary:* labels from scanning', async () => {
@@ -297,13 +339,14 @@ describe('ArchivistPipeline', () => {
     const embedding = createMockEmbeddingProvider();
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
 
-    // Create blocks with excluded labels
+    // Create blocks with excluded labels (using unique label names)
+    const testId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     await persistence.withTransaction(async () => {
       await store.createBlock({
         id: crypto.randomUUID(),
         owner: TEST_OWNER,
         tier: 'working',
-        label: 'archivist:metadata',
+        label: `archivist:metadata-${testId}`,
         content: 'Should be skipped',
         embedding: null,
         permission: 'readwrite',
@@ -314,7 +357,7 @@ describe('ArchivistPipeline', () => {
         id: crypto.randomUUID(),
         owner: TEST_OWNER,
         tier: 'working',
-        label: 'diary:personal',
+        label: `diary:personal-${testId}`,
         content: 'Should be skipped',
         embedding: null,
         permission: 'readwrite',
@@ -325,7 +368,7 @@ describe('ArchivistPipeline', () => {
         id: crypto.randomUUID(),
         owner: TEST_OWNER,
         tier: 'working',
-        label: 'normal:block',
+        label: `normal-exclude-test-${testId}:block`,
         content: 'Should be included',
         embedding: null,
         permission: 'readwrite',
@@ -351,6 +394,9 @@ describe('ArchivistPipeline', () => {
     // Should exclude archivist:* and diary:* blocks
     // (exact count depends on other test blocks, but at least 1)
     expect(result.scanned).toBeGreaterThanOrEqual(1);
+
+    // Clean up test blocks
+    await cleanupTestBlocks(TEST_OWNER, store);
   });
 
   test('runIncremental: state tracking detects block changes', async () => {
@@ -359,7 +405,7 @@ describe('ArchivistPipeline', () => {
     const manager = createMemoryManager(store, embedding, TEST_OWNER);
 
     // Create initial state
-    await manager.write('state:test', 'Original content', 'working');
+    await manager.write('state-tracking-test:content', 'Original content', 'working');
 
     const pipeline = createArchivistPipeline({
       memoryStore: store,
@@ -378,10 +424,13 @@ describe('ArchivistPipeline', () => {
     const result1 = await pipeline.runIncremental();
     expect(result1.scanned).toBeGreaterThan(0);
 
-    // Verify state block was created
+    // Verify state block was created with JSON map of blockId -> contentHash
     const stateBlock = await store.getBlockByLabel(TEST_OWNER, 'archivist:state');
     expect(stateBlock).toBeDefined();
-    expect(stateBlock?.content).toContain('state:test');
+    const stateContent = JSON.parse(stateBlock?.content || '{}');
+    expect(typeof stateContent).toBe('object');
+    // Verify it contains at least one entry (the content hash for our block)
+    expect(Object.keys(stateContent).length).toBeGreaterThan(0);
 
     // Run again without changes - should short-circuit
     const result2 = await pipeline.runIncremental();

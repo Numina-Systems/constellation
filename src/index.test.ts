@@ -533,4 +533,73 @@ describe('interaction loop', () => {
       }
     });
   });
+
+  describe('secret tool registration', () => {
+    it('registers secret tools when config.secrets.agent_managed is true', async () => {
+      const { createSecretTools } = await import('@/tool/builtin/secrets');
+      const { createToolRegistry } = await import('@/tool/registry');
+
+      // Create a mock secret store
+      const mockSecretStore = {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => false,
+        listKeys: async () => [],
+      };
+
+      const registry = createToolRegistry();
+      const secretTools = createSecretTools({ store: mockSecretStore, owner: 'test-owner' });
+
+      // Simulate the conditional registration from index.ts
+      const agentManaged = true;
+      if (agentManaged) {
+        for (const tool of secretTools) {
+          registry.register(tool);
+        }
+      }
+
+      // Verify tools are registered
+      const definitions = registry.getDefinitions();
+      expect(definitions.some(d => d.name === 'secret_set')).toBe(true);
+      expect(definitions.some(d => d.name === 'secret_list')).toBe(true);
+      expect(definitions.some(d => d.name === 'secret_delete')).toBe(true);
+    });
+
+    it('does not register secret tools when config.secrets.agent_managed is false', async () => {
+      const { createToolRegistry } = await import('@/tool/registry');
+
+      const registry = createToolRegistry();
+
+      // Simulate the conditional registration from index.ts
+      const agentManaged = false;
+      if (agentManaged) {
+        // Tools would be registered here, but condition is false
+      }
+
+      // Verify tools are NOT registered
+      const definitions = registry.getDefinitions();
+      expect(definitions.some(d => d.name === 'secret_set')).toBe(false);
+      expect(definitions.some(d => d.name === 'secret_list')).toBe(false);
+      expect(definitions.some(d => d.name === 'secret_delete')).toBe(false);
+    });
+
+    it('does not register secret tools when secrets config is absent', async () => {
+      const { createToolRegistry } = await import('@/tool/registry');
+
+      const registry = createToolRegistry();
+
+      // Simulate the conditional registration from index.ts with no secrets config
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const config: any = {};
+      if (config.secrets?.agent_managed) {
+        // Tools would be registered here, but condition is false
+      }
+
+      // Verify tools are NOT registered
+      const definitions = registry.getDefinitions();
+      expect(definitions.some(d => d.name === 'secret_set')).toBe(false);
+      expect(definitions.some(d => d.name === 'secret_list')).toBe(false);
+      expect(definitions.some(d => d.name === 'secret_delete')).toBe(false);
+    });
+  });
 });

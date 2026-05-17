@@ -1,5 +1,6 @@
 // pattern: Functional Core
 
+import { z } from 'zod';
 import { formatTraceSummary } from '@/scheduled-context';
 import type { OperationTrace } from '@/reflexion/types';
 import type { Interest } from './types';
@@ -19,6 +20,11 @@ export type ContinuationJudgeContext = {
 export type ContinuationJudge = {
   readonly evaluate: (context: Readonly<ContinuationJudgeContext>) => Promise<ContinuationDecision>;
 };
+
+const ContinuationResponseSchema = z.object({
+  continue: z.boolean(),
+  reason: z.string(),
+});
 
 export function buildContinuationPrompt(context: Readonly<ContinuationJudgeContext>): string {
   const lines: Array<string> = [];
@@ -75,32 +81,25 @@ export function parseContinuationResponse(text: string): ContinuationDecision {
 
   let jsonStr = text;
 
-  // Try to extract JSON from markdown code blocks
   const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (jsonMatch && jsonMatch[1]) {
     jsonStr = jsonMatch[1];
   }
 
   try {
-    const parsed: unknown = JSON.parse(jsonStr);
+    const raw: unknown = JSON.parse(jsonStr);
+    const result = ContinuationResponseSchema.safeParse(raw);
 
-    // Type narrowing: check if parsed is an object and has the required fields
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      typeof (parsed as Record<string, unknown>)['continue'] !== 'boolean' ||
-      typeof (parsed as Record<string, unknown>)['reason'] !== 'string'
-    ) {
+    if (!result.success) {
       return {
         shouldContinue: false,
         reason: 'Failed to parse continuation response',
       };
     }
 
-    const record = parsed as Record<string, unknown>;
     return {
-      shouldContinue: record['continue'] as boolean,
-      reason: record['reason'] as string,
+      shouldContinue: result.data.continue,
+      reason: result.data.reason,
     };
   } catch {
     return {

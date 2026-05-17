@@ -117,6 +117,14 @@ describe('impulse-continuation.AC1.2: parseContinuationResponse parses valid JSO
     expect(decision.shouldContinue).toBe(false);
     expect(decision.reason).toBe('done');
   });
+
+  it('ignores extra fields like confidence', () => {
+    const response = '{"continue": true, "reason": "exploring", "confidence": 0.9}';
+    const decision = parseContinuationResponse(response);
+
+    expect(decision.shouldContinue).toBe(true);
+    expect(decision.reason).toBe('exploring');
+  });
 });
 
 describe('impulse-continuation.AC1.3: parseContinuationResponse handles malformed input', () => {

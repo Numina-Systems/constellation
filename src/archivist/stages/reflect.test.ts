@@ -30,6 +30,7 @@ describe('reflect', () => {
     const stats = createMockPipelineResult();
     const result = await reflect(stats, {
       model: null,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 5000,
       tokensUsedSoFar: 0,
     });
@@ -45,6 +46,7 @@ describe('reflect', () => {
 
     const result = await reflect(stats, {
       model: mockModel,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 100,
       tokensUsedSoFar: 100, // Already at budget
     });
@@ -61,6 +63,7 @@ describe('reflect', () => {
 
     const result = await reflect(stats, {
       model: mockModel,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 5000,
       tokensUsedSoFar: 500,
     });
@@ -93,6 +96,7 @@ describe('reflect', () => {
     const stats = createMockPipelineResult();
     await reflect(stats, {
       model: mockModel,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 5000,
       tokensUsedSoFar: 500,
     });
@@ -138,6 +142,7 @@ describe('reflect', () => {
 
     await reflect(incrementalStats, {
       model: mockModel,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 5000,
       tokensUsedSoFar: 0,
     });
@@ -151,6 +156,7 @@ describe('reflect', () => {
 
     const result = await reflect(stats, {
       model: mockModel,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 5000,
       tokensUsedSoFar: 0,
     });
@@ -166,6 +172,7 @@ describe('reflect', () => {
 
     const result = await reflect(stats, {
       model: mockModel,
+      modelName: 'claude-3-5-sonnet',
       tokenBudget: 5000,
       tokensUsedSoFar: 0,
     });

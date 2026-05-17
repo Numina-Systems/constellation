@@ -5,6 +5,7 @@ import type { DedupGroup, ConsolidateAction, ConsolidateResult } from '../types.
 
 type ConsolidateDeps = {
   readonly model: ModelProvider | null;
+  readonly modelName: string;
   readonly tokenBudget: number;
 };
 
@@ -31,7 +32,7 @@ export async function consolidate(
       system:
         'You are a knowledge consolidation agent. Merge the following duplicate memory blocks into a single coherent block. Preserve all unique information. Be concise.',
       messages: [{ role: 'user', content: allContents }],
-      model: '', // Placeholder - actual model comes from provider config
+      model: deps.modelName,
       max_tokens: 1024,
     });
 

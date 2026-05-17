@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import type { MemoryTier } from '@/memory/types.js';
 
 export type BlockSnapshot = {

@@ -42,7 +42,7 @@ describe('consolidate', () => {
       ]),
     ];
 
-    const result = await consolidate(groups, { model: null, tokenBudget: 5000 });
+    const result = await consolidate(groups, { model: null, modelName: 'claude-3-5-sonnet', tokenBudget: 5000 });
 
     expect(result.actions.length).toBe(0);
     expect(result.skipped).toBe(true);
@@ -51,7 +51,7 @@ describe('consolidate', () => {
 
   test('returns empty actions when no groups provided', async () => {
     const mockModel = createMockModelProvider('merged');
-    const result = await consolidate([], { model: mockModel, tokenBudget: 5000 });
+    const result = await consolidate([], { model: mockModel, modelName: 'claude-3-5-sonnet', tokenBudget: 5000 });
 
     expect(result.actions.length).toBe(0);
     expect(result.skipped).toBe(false);
@@ -65,7 +65,7 @@ describe('consolidate', () => {
       ]),
     ];
 
-    const result = await consolidate(groups, { model: mockModel, tokenBudget: 5000 });
+    const result = await consolidate(groups, { model: mockModel, modelName: 'claude-3-5-sonnet', tokenBudget: 5000 });
 
     expect(result.actions.length).toBe(1);
     const action = result.actions[0];
@@ -88,7 +88,7 @@ describe('consolidate', () => {
 
     // First group: ~255 tokens input + 750 tokens response = 1005
     // Second group check: 1005 + 255 = 1260 > 1200, stops
-    const result = await consolidate(groups, { model: mockModel, tokenBudget: 1200 });
+    const result = await consolidate(groups, { model: mockModel, modelName: 'claude-3-5-sonnet', tokenBudget: 1200 });
 
     // Should only process first group
     expect(result.actions.length).toBe(1);
@@ -124,7 +124,7 @@ describe('consolidate', () => {
       ]),
     ];
 
-    await consolidate(groups, { model: mockModel, tokenBudget: 5000 });
+    await consolidate(groups, { model: mockModel, modelName: 'claude-3-5-sonnet', tokenBudget: 5000 });
 
     expect(capturedRequest).not.toBeNull();
     expect(capturedRequest!.includes('[block1]')).toBe(true);
@@ -143,7 +143,7 @@ describe('consolidate', () => {
       ]),
     ];
 
-    const result = await consolidate(groups, { model: mockModel, tokenBudget: 5000 });
+    const result = await consolidate(groups, { model: mockModel, modelName: 'claude-3-5-sonnet', tokenBudget: 5000 });
 
     expect(result.tokensUsed).toBeGreaterThan(0);
     expect(result.skipped).toBe(false);
@@ -157,7 +157,7 @@ describe('consolidate', () => {
       ]),
     ];
 
-    const result = await consolidate(groups, { model: mockModel, tokenBudget: 100 });
+    const result = await consolidate(groups, { model: mockModel, modelName: 'claude-3-5-sonnet', tokenBudget: 100 });
 
     // Budget is too small to even start processing
     expect(result.actions.length).toBe(0);

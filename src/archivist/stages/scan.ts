@@ -21,7 +21,7 @@ export function isEligible(block: MemoryBlock): boolean {
   return true;
 }
 
-function hashContent(content: string): string {
+export function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 16);
 }
 

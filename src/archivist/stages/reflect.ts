@@ -5,6 +5,7 @@ import type { PipelineResult, ReflectResult } from '../types.js';
 
 type ReflectDeps = {
   readonly model: ModelProvider | null;
+  readonly modelName: string;
   readonly tokenBudget: number;
   readonly tokensUsedSoFar: number;
 };
@@ -32,7 +33,7 @@ Write a brief (2-3 sentence) observation about the health and organization of th
   const response = await deps.model.complete({
     system: 'You are a knowledge archivist reflecting on memory health. Be concise and observational.',
     messages: [{ role: 'user', content: prompt }],
-    model: '',
+    model: deps.modelName,
     max_tokens: 256,
   });
 

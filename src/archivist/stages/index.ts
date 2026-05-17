@@ -1,4 +1,4 @@
-export { scan } from './scan.js';
+export { scan, hashContent } from './scan.js';
 export { dedup, cosineSimilarity } from './dedup.js';
 export { consolidate } from './consolidate.js';
 export { crossref } from './crossref.js';

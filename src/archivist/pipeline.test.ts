@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 /**
  * Integration tests for the archivist pipeline.
  * Tests both incremental and full modes against real PostgreSQL.
@@ -15,6 +13,7 @@ import { createMockEmbeddingProvider } from '@/integration/test-helpers.js';
 import { createArchivistPipeline } from './pipeline.js';
 
 const TEST_OWNER = `test-archivist-${Date.now()}`;
+const TEST_MODEL_NAME = 'claude-3-5-sonnet';
 
 let persistence: PersistenceProvider;
 
@@ -91,6 +90,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: null,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -120,6 +120,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: null,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -151,6 +152,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: mockModel,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -180,6 +182,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: mockModel,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.70, // Lower threshold to catch more relations
       tokenBudget: 50000,
@@ -208,6 +211,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: mockModel,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -243,6 +247,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: mockModel,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -272,6 +277,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: null, // No model provider
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -334,6 +340,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: null,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,
@@ -361,6 +368,7 @@ describe('ArchivistPipeline', () => {
       summarizationModel: null,
       persistence,
       owner: TEST_OWNER,
+      modelName: TEST_MODEL_NAME,
       dedupThreshold: 0.92,
       crossrefThreshold: 0.75,
       tokenBudget: 50000,

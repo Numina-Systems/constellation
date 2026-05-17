@@ -101,6 +101,7 @@ export type AgentDependencies = {
   checkpointFn?: (trigger: CheckpointTrigger) => Promise<string | null>;
   checkpointStateRef?: { current: CheckpointAgentState };
   loopDetector?: LoopDetector;
+  diarySection?: string;
 };
 
 export type Agent = {

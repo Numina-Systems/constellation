@@ -166,7 +166,7 @@ describe('scan stage', () => {
       });
 
       const mockStore: MemoryStore = {
-        getBlocksByTier: async (owner: string, tier) => {
+        getBlocksByTier: async (_owner: string, tier: MemoryTier) => {
           if (tier === 'working') {
             return [workingBlock];
           }
@@ -175,7 +175,7 @@ describe('scan stage', () => {
           }
           return [];
         },
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const result = await scan({
         memoryStore: mockStore,
@@ -197,13 +197,13 @@ describe('scan stage', () => {
       });
 
       const mockStore: MemoryStore = {
-        getBlocksByTier: async (owner, tier) => {
+        getBlocksByTier: async (_owner: string, tier: MemoryTier) => {
           if (tier === 'working') {
             return [readwriteBlock, readonlyBlock];
           }
           return [];
         },
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const result = await scan({
         memoryStore: mockStore,
@@ -225,13 +225,13 @@ describe('scan stage', () => {
       });
 
       const mockStore: MemoryStore = {
-        getBlocksByTier: async (owner, tier) => {
+        getBlocksByTier: async (_owner: string, tier: MemoryTier) => {
           if (tier === 'working') {
             return [unpinnedBlock, pinnedBlock];
           }
           return [];
         },
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const result = await scan({
         memoryStore: mockStore,
@@ -257,13 +257,13 @@ describe('scan stage', () => {
       });
 
       const mockStore: MemoryStore = {
-        getBlocksByTier: async (owner, tier) => {
+        getBlocksByTier: async (_owner: string, tier: MemoryTier) => {
           if (tier === 'working') {
             return [userBlock, archivistBlock, diaryBlock];
           }
           return [];
         },
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const result = await scan({
         memoryStore: mockStore,
@@ -289,7 +289,7 @@ describe('scan stage', () => {
       });
 
       const mockStore: MemoryStore = {
-        getBlocksByTier: async (owner, tier) => {
+        getBlocksByTier: async (_owner: string, tier: MemoryTier) => {
           if (tier === 'working') {
             return [eligible1];
           }
@@ -298,7 +298,7 @@ describe('scan stage', () => {
           }
           return [];
         },
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const result = await scan({
         memoryStore: mockStore,
@@ -316,7 +316,7 @@ describe('scan stage', () => {
       const block = createMockBlock();
       const mockStore: MemoryStore = {
         getBlocksByTier: async () => [block],
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const beforeScan = new Date();
       const result = await scan({
@@ -334,7 +334,7 @@ describe('scan stage', () => {
     test('returns empty blocks when no blocks eligible', async () => {
       const mockStore: MemoryStore = {
         getBlocksByTier: async () => [],
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       const result = await scan({
         memoryStore: mockStore,
@@ -347,11 +347,11 @@ describe('scan stage', () => {
     test('passes owner to memoryStore.getBlocksByTier', async () => {
       let capturedOwner = '';
       const mockStore: MemoryStore = {
-        getBlocksByTier: async (owner) => {
+        getBlocksByTier: async (owner: string) => {
           capturedOwner = owner;
           return [];
         },
-      } as MemoryStore;
+      } as unknown as MemoryStore;
 
       await scan({
         memoryStore: mockStore,

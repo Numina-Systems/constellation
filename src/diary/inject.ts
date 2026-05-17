@@ -79,6 +79,9 @@ export function buildDiarySection(
     // Check if full content fits
     const contentTokens = estimateTokens(entry.content);
     const tokensAfterContent = tokensAfterHeader + contentTokens;
+    // Note: separator tokens are charged conservatively during budget accumulation
+    // but not included in final render (trim() removes trailing separators).
+    // This is acceptable as it leaves a few tokens unused rather than risking overflow.
     const separator = '\n\n';
     const separatorTokens = estimateTokens(separator);
 

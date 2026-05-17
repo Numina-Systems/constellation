@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 /**
  * Unit tests for diary injection.
  * Tests the buildDiarySection pure function against acceptance criteria.

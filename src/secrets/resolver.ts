@@ -21,16 +21,36 @@ export function createSecretResolver(options: SecretResolverOptions): SecretReso
     async resolve(keys) {
       try {
         const result: Record<string, string> = {};
-        for (const key of keys) {
-          if (key in configSecrets) {
-            result[key] = configSecrets[key]!;
-            continue;
+
+        // Optimization: if requesting all keys, use getAll() for batch efficiency
+        // Otherwise, do individual lookups (may be a sparse set)
+        const allStoredKeys = await store.listKeys(owner);
+        const isRequestingAll = keys.length === (Object.keys(configSecrets).length + allStoredKeys.length);
+
+        if (isRequestingAll && keys.length > 0) {
+          // Batch fetch: use getAll() for efficiency
+          const allStored = await store.getAll(owner);
+          for (const key of keys) {
+            if (key in configSecrets) {
+              result[key] = configSecrets[key]!;
+            } else if (key in allStored) {
+              result[key] = allStored[key]!;
+            }
           }
-          const stored = await store.get(owner, key);
-          if (stored !== null) {
-            result[key] = stored;
+        } else {
+          // Sparse fetch: get individual keys
+          for (const key of keys) {
+            if (key in configSecrets) {
+              result[key] = configSecrets[key]!;
+              continue;
+            }
+            const stored = await store.get(owner, key);
+            if (stored !== null) {
+              result[key] = stored;
+            }
           }
         }
+
         return result;
       } catch (error) {
         if (error instanceof SecretsError) {

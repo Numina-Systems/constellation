@@ -46,15 +46,29 @@ export function generateCredentialConstants(context?: ExecutionContext): string 
 }
 
 /**
+ * Validate that a string is a valid TypeScript identifier.
+ * Pattern: must start with letter, underscore, or dollar sign.
+ * Can contain letters, digits, underscores, or dollar signs.
+ * Pure function for testability.
+ */
+export function isValidIdentifier(key: string): boolean {
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key);
+}
+
+/**
  * Generate secret constants for injection into sandbox code.
  * Returns a block of TypeScript const declarations, or empty string if no secrets.
+ * Silently skips invalid key names to prevent code injection.
  * Pure function for testability.
  */
 export function generateSecretConstants(context?: ExecutionContext): string {
   if (!context?.secrets) return '';
   const entries = Object.entries(context.secrets);
   if (entries.length === 0) return '';
-  return entries.map(([key, value]) => `const ${key} = ${JSON.stringify(value)};`).join('\n');
+  return entries
+    .filter(([key]) => isValidIdentifier(key))
+    .map(([key, value]) => `const ${key} = ${JSON.stringify(value)};`)
+    .join('\n');
 }
 
 /**

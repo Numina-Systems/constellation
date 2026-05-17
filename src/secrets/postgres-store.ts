@@ -55,5 +55,21 @@ export function createPostgresSecretStore(persistence: PersistenceProvider): Sec
         throw new SecretsError('STORE_FAILED', `failed to list secrets`, {}, { cause: error as Error });
       }
     },
+
+    async getAll(owner) {
+      try {
+        const rows = await persistence.query<{ key: string; value: string }>(
+          'SELECT key, value FROM secrets WHERE owner = $1',
+          [owner],
+        );
+        const result: Record<string, string> = {};
+        for (const row of rows) {
+          result[row.key] = row.value;
+        }
+        return result;
+      } catch (error) {
+        throw new SecretsError('STORE_FAILED', `failed to fetch all secrets`, {}, { cause: error as Error });
+      }
+    },
   };
 }

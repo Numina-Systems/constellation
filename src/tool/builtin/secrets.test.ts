@@ -8,26 +8,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import type { SecretStore } from '../../secrets/types.js';
 import { createSecretTools } from './secrets.js';
-
-// Mock SecretStore implementation
-function createMockSecretStore(data: Record<string, string>): SecretStore {
-  return {
-    async get(_owner, key) {
-      return data[key] ?? null;
-    },
-    async set(_owner, key, value) {
-      data[key] = value;
-    },
-    async delete(_owner, key) {
-      const had = key in data;
-      delete data[key];
-      return had;
-    },
-    async listKeys(_owner) {
-      return Object.keys(data).sort();
-    },
-  };
-}
+import { createMockSecretStore } from '../../secrets/test-utils.js';
 
 describe('Secret Tools', () => {
   let mockStore: SecretStore;
@@ -49,6 +30,70 @@ describe('Secret Tools', () => {
       expect(result.success).toBe(true);
       expect(result.output).toBe('Secret "API_KEY" stored successfully.');
       expect(storeData['API_KEY']).toBe('secret123');
+    });
+
+    test('rejects keys with invalid identifiers (defense-in-depth)', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      const result = await setTool!.handler({ key: 'x = 1; malicious(); const y', value: 'payload' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('invalid secret name');
+      expect(storeData['x = 1; malicious(); const y']).toBeUndefined();
+    });
+
+    test('rejects keys starting with digits', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      const result = await setTool!.handler({ key: '123_KEY', value: 'value' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('invalid secret name');
+      expect(storeData['123_KEY']).toBeUndefined();
+    });
+
+    test('rejects keys with hyphens', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      const result = await setTool!.handler({ key: 'MY-API-KEY', value: 'value' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('invalid secret name');
+      expect(storeData['MY-API-KEY']).toBeUndefined();
+    });
+
+    test('rejects keys with spaces', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      const result = await setTool!.handler({ key: 'MY API KEY', value: 'value' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('invalid secret name');
+      expect(storeData['MY API KEY']).toBeUndefined();
+    });
+
+    test('accepts keys starting with underscore', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      const result = await setTool!.handler({ key: '_PRIVATE_KEY', value: 'secret' });
+
+      expect(result.success).toBe(true);
+      expect(storeData['_PRIVATE_KEY']).toBe('secret');
+    });
+
+    test('accepts keys starting with dollar sign', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      const result = await setTool!.handler({ key: '$SPECIAL_KEY', value: 'secret' });
+
+      expect(result.success).toBe(true);
+      expect(storeData['$SPECIAL_KEY']).toBe('secret');
     });
 
     test('never includes the secret value in output', async () => {
@@ -178,6 +223,10 @@ describe('Secret Tools', () => {
         async listKeys(owner) {
           capturedOwner = owner;
           return [];
+        },
+        async getAll(owner) {
+          capturedOwner = owner;
+          return {};
         },
       };
 

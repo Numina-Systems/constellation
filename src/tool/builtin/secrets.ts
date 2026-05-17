@@ -8,6 +8,15 @@
 import type { SecretStore } from '../../secrets/types.js';
 import type { Tool } from '../types.js';
 
+/**
+ * Validate that a string is a valid TypeScript identifier for use as a const name.
+ * Pattern: must start with letter, underscore, or dollar sign.
+ * Can contain letters, digits, underscores, or dollar signs.
+ */
+function isValidIdentifier(key: string): boolean {
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key);
+}
+
 type SecretToolDeps = {
   readonly store: SecretStore;
   readonly owner: string;
@@ -25,7 +34,8 @@ export function createSecretTools(deps: SecretToolDeps): ReadonlyArray<Tool> {
         {
           name: 'key',
           type: 'string',
-          description: 'Secret name (e.g., MY_API_KEY)',
+          description:
+            'Secret name — must be a valid identifier: letters, digits, underscores, starting with a letter or underscore (e.g., MY_API_KEY)',
           required: true,
         },
         {
@@ -39,6 +49,16 @@ export function createSecretTools(deps: SecretToolDeps): ReadonlyArray<Tool> {
     handler: async (params) => {
       const key = params['key'] as string;
       const value = params['value'] as string;
+
+      // Defense-in-depth: validate key at entry point
+      if (!isValidIdentifier(key)) {
+        return {
+          success: false,
+          output: '',
+          error: `invalid secret name "${key}": must be a valid identifier (letters, digits, underscores, starting with letter or underscore)`,
+        };
+      }
+
       await store.set(owner, key, value);
       return { success: true, output: `Secret "${key}" stored successfully.` };
     },

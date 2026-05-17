@@ -5,4 +5,5 @@ export type SecretStore = {
   set(owner: string, key: string, value: string): Promise<void>;
   delete(owner: string, key: string): Promise<boolean>;
   listKeys(owner: string): Promise<ReadonlyArray<string>>;
+  getAll(owner: string): Promise<Readonly<Record<string, string>>>;
 };

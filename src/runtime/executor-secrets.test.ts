@@ -7,7 +7,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import type { ExecutionContext } from './types.js';
-import { generateSecretConstants } from './executor.js';
+import { generateSecretConstants, isValidIdentifier } from './executor.js';
 
 describe('generateSecretConstants', () => {
   test('returns empty string when context is undefined', () => {
@@ -132,5 +132,131 @@ describe('generateSecretConstants', () => {
     // Should only generate secret constants, not Bluesky credentials
     expect(result).toContain('const API_KEY = "secret";');
     expect(result).not.toContain('BSKY');
+  });
+
+  describe('security: defense against code injection via key names', () => {
+    test('skips keys with invalid identifiers (injection attempt: semicolon and statement)', () => {
+      const context: ExecutionContext = {
+        secrets: {
+          'x = 1; malicious(); const y': 'payload',
+          VALID_KEY: 'value',
+        },
+      };
+      const result = generateSecretConstants(context);
+
+      // Should only contain the valid key, not the injection attempt
+      expect(result).toContain('const VALID_KEY = "value";');
+      expect(result).not.toContain('malicious');
+      expect(result).not.toContain('x = 1');
+    });
+
+    test('skips keys starting with a digit', () => {
+      const context: ExecutionContext = {
+        secrets: {
+          '123_KEY': 'value',
+          VALID_KEY: 'value',
+        },
+      };
+      const result = generateSecretConstants(context);
+
+      expect(result).toContain('const VALID_KEY = "value";');
+      expect(result).not.toContain('123_KEY');
+    });
+
+    test('skips keys with hyphens (common but invalid in identifiers)', () => {
+      const context: ExecutionContext = {
+        secrets: {
+          'MY-API-KEY': 'value',
+          MY_API_KEY: 'value',
+        },
+      };
+      const result = generateSecretConstants(context);
+
+      expect(result).toContain('const MY_API_KEY = "value";');
+      expect(result).not.toContain('MY-API-KEY');
+    });
+
+    test('skips keys with spaces', () => {
+      const context: ExecutionContext = {
+        secrets: {
+          'MY API KEY': 'value',
+          MY_API_KEY: 'value',
+        },
+      };
+      const result = generateSecretConstants(context);
+
+      expect(result).toContain('const MY_API_KEY = "value";');
+      expect(result).not.toContain('MY API KEY');
+    });
+
+    test('skips keys with dots', () => {
+      const context: ExecutionContext = {
+        secrets: {
+          'api.key': 'value',
+          api_key: 'value',
+        },
+      };
+      const result = generateSecretConstants(context);
+
+      expect(result).toContain('const api_key = "value";');
+      expect(result).not.toContain('api.key');
+    });
+
+    test('accepts keys starting with underscore', () => {
+      const context: ExecutionContext = { secrets: { _PRIVATE_KEY: 'value' } };
+      const result = generateSecretConstants(context);
+
+      expect(result).toContain('const _PRIVATE_KEY = "value";');
+    });
+
+    test('accepts keys starting with dollar sign', () => {
+      const context: ExecutionContext = { secrets: { $SPECIAL_KEY: 'value' } };
+      const result = generateSecretConstants(context);
+
+      expect(result).toContain('const $SPECIAL_KEY = "value";');
+    });
+
+    test('result with injected keys still produces valid TypeScript', () => {
+      // If somehow we had an invalid key, the valid ones should still be evaluable
+      const context: ExecutionContext = {
+        secrets: {
+          'x = 1; bad();': 'bad',
+          VALID1: 'v1',
+          VALID2: 'v2',
+        },
+      };
+      const code = generateSecretConstants(context);
+
+      // Should not throw when evaluated
+      const fn = new Function(code + '; return { VALID1, VALID2 }');
+      const result = fn();
+
+      expect(result.VALID1).toBe('v1');
+      expect(result.VALID2).toBe('v2');
+    });
+  });
+});
+
+describe('isValidIdentifier', () => {
+  test('accepts valid identifiers', () => {
+    expect(isValidIdentifier('myKey')).toBe(true);
+    expect(isValidIdentifier('MY_KEY')).toBe(true);
+    expect(isValidIdentifier('_privateKey')).toBe(true);
+    expect(isValidIdentifier('$special')).toBe(true);
+    expect(isValidIdentifier('API_KEY_123')).toBe(true);
+    expect(isValidIdentifier('a')).toBe(true);
+    expect(isValidIdentifier('_')).toBe(true);
+    expect(isValidIdentifier('$')).toBe(true);
+  });
+
+  test('rejects invalid identifiers', () => {
+    expect(isValidIdentifier('123key')).toBe(false);
+    expect(isValidIdentifier('my-key')).toBe(false);
+    expect(isValidIdentifier('my key')).toBe(false);
+    expect(isValidIdentifier('my.key')).toBe(false);
+    expect(isValidIdentifier('my@key')).toBe(false);
+    expect(isValidIdentifier('')).toBe(false);
+    expect(isValidIdentifier('x = 1; bad()')).toBe(false);
+    expect(isValidIdentifier('key;')).toBe(false);
   });
 });

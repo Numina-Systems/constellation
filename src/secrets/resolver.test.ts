@@ -1,25 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { createSecretResolver } from './resolver.ts';
-import type { SecretStore } from './types.ts';
-
-function createMockSecretStore(data: Record<string, string>): SecretStore {
-  return {
-    async get(_owner, key) {
-      return data[key] ?? null;
-    },
-    async set(_owner, key, value) {
-      data[key] = value;
-    },
-    async delete(_owner, key) {
-      const had = key in data;
-      delete data[key];
-      return had;
-    },
-    async listKeys(_owner) {
-      return Object.keys(data).sort();
-    },
-  };
-}
+import { createMockSecretStore } from './test-utils.ts';
 
 describe('SecretResolver', () => {
   describe('knowledge-autonomy.AC1.5: config secrets take precedence', () => {
@@ -120,6 +101,49 @@ describe('SecretResolver', () => {
       const keys = await resolver.listKeys();
 
       expect(keys).toEqual(['A', 'M', 'Z']);
+    });
+  });
+
+  describe('batch resolution optimization', () => {
+    it('resolve uses getAll for efficiency when resolving all keys', async () => {
+      const storeData = { KEY1: 'value1', KEY2: 'value2', KEY3: 'value3' };
+      const mockStore = createMockSecretStore(storeData);
+
+      const resolver = createSecretResolver({
+        store: mockStore,
+        owner: 'test-owner',
+        configSecrets: { CONFIG_KEY: 'config_value' },
+      });
+
+      // Resolve all keys at once (should use getAll internally)
+      const keys = await resolver.listKeys();
+      const resolved = await resolver.resolve(keys);
+
+      expect(resolved).toEqual({
+        CONFIG_KEY: 'config_value',
+        KEY1: 'value1',
+        KEY2: 'value2',
+        KEY3: 'value3',
+      });
+    });
+
+    it('resolve falls back to individual get() for sparse key requests', async () => {
+      const storeData = { KEY1: 'value1', KEY2: 'value2', KEY3: 'value3' };
+      const mockStore = createMockSecretStore(storeData);
+
+      const resolver = createSecretResolver({
+        store: mockStore,
+        owner: 'test-owner',
+        configSecrets: { CONFIG_KEY: 'config_value' },
+      });
+
+      // Request only a few keys (sparse set)
+      const resolved = await resolver.resolve(['KEY1', 'CONFIG_KEY']);
+
+      expect(resolved).toEqual({
+        CONFIG_KEY: 'config_value',
+        KEY1: 'value1',
+      });
     });
   });
 });

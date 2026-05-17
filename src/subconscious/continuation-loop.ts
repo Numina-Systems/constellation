@@ -69,6 +69,6 @@ export async function runContinuationLoop(
       ? `${error.message}\n${error.stack}`
       : String(error);
     log(`[continuation] loop error: ${errorMessage}`);
-    // Intentionally don't re-throw - AC4.4 requires errors not to break normal flow
+    // Loop exits on error — per-round recovery is a future enhancement (see AC4.4 design notes)
   }
 }

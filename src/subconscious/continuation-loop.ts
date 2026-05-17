@@ -15,6 +15,7 @@ export type ContinuationLoopDeps = {
   readonly processEvent: (event: ExternalEvent) => Promise<string>;
   readonly onHousekeeping?: () => Promise<void>;
   readonly eventType: 'impulse' | 'introspection';
+  readonly log?: (message: string) => void;
 };
 
 export async function runContinuationLoop(
@@ -22,6 +23,8 @@ export async function runContinuationLoop(
   initialResponse: string,
   roundStart: Date,
 ): Promise<void> {
+  const log = deps.log ?? console.log;
+
   try {
     let agentResponse = initialResponse;
     let currentRoundStart = roundStart;
@@ -43,13 +46,13 @@ export async function runContinuationLoop(
       const decision = await deps.judge.evaluate(context);
 
       if (!decision.shouldContinue) {
-        console.log(`[continuation] ${deps.eventType} continuation stopped: ${decision.reason}`);
+        log(`[continuation] ${deps.eventType} continuation stopped: ${decision.reason}`);
         break;
       }
 
       // Spend budget and log decision
       deps.budget.spend();
-      console.log(`[continuation] ${deps.eventType} continuation round (reason: ${decision.reason})`);
+      log(`[continuation] ${deps.eventType} continuation round (reason: ${decision.reason})`);
 
       // Update round start for next query
       currentRoundStart = new Date();
@@ -62,8 +65,10 @@ export async function runContinuationLoop(
       await deps.onHousekeeping?.();
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[continuation] loop error: ${errorMessage}`);
+    const errorMessage = error instanceof Error
+      ? `${error.message}\n${error.stack}`
+      : String(error);
+    log(`[continuation] loop error: ${errorMessage}`);
     // Intentionally don't re-throw - AC4.4 requires errors not to break normal flow
   }
 }

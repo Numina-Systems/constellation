@@ -20,6 +20,8 @@ import { createToolRegistry } from '@/tool/registry';
 import { createMemoryTools } from '@/tool/builtin/memory';
 import { createExecuteCodeTool } from '@/tool/builtin/code';
 import { createCompactContextTool } from '@/tool/builtin/compaction';
+import { createPostgresSecretStore, createSecretResolver } from '@/secrets';
+import { createSecretTools } from '@/tool/builtin/secrets';
 import { createDenoExecutor } from '@/runtime/executor';
 import { createAgent } from '@/agent/agent';
 import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
@@ -620,6 +622,24 @@ async function main(): Promise<void> {
   const predictionStore = createPredictionStore(persistence);
   const traceRecorder: TraceStore = createTraceRecorder(persistence);
 
+  // Create secret store and resolver
+  const secretStore = createPostgresSecretStore(persistence);
+
+  const configSecrets: Record<string, string> = {};
+  if (process.env['ANTHROPIC_API_KEY']) configSecrets['ANTHROPIC_API_KEY'] = process.env['ANTHROPIC_API_KEY'];
+  if (process.env['OPENAI_COMPAT_API_KEY']) configSecrets['OPENAI_COMPAT_API_KEY'] = process.env['OPENAI_COMPAT_API_KEY'];
+  if (process.env['OPENROUTER_API_KEY']) configSecrets['OPENROUTER_API_KEY'] = process.env['OPENROUTER_API_KEY'];
+  if (process.env['EMBEDDING_API_KEY']) configSecrets['EMBEDDING_API_KEY'] = process.env['EMBEDDING_API_KEY'];
+  if (process.env['BRAVE_API_KEY']) configSecrets['BRAVE_API_KEY'] = process.env['BRAVE_API_KEY'];
+  if (process.env['TAVILY_API_KEY']) configSecrets['TAVILY_API_KEY'] = process.env['TAVILY_API_KEY'];
+  if (process.env['MAILGUN_API_KEY']) configSecrets['MAILGUN_API_KEY'] = process.env['MAILGUN_API_KEY'];
+
+  const secretResolver = createSecretResolver({
+    store: secretStore,
+    owner: AGENT_OWNER,
+    configSecrets,
+  });
+
   // Create message store (used for checkpoint restoration)
   const messageStore = createMessageStore(persistence);
 
@@ -678,6 +698,15 @@ async function main(): Promise<void> {
   });
   for (const tool of introspectionTools) {
     registry.register(tool);
+  }
+
+  // Register secret tools (conditional on config)
+  if (config.secrets?.agent_managed) {
+    const secretTools = createSecretTools({ store: secretStore, owner: AGENT_OWNER });
+    for (const tool of secretTools) {
+      registry.register(tool);
+    }
+    console.log('secret tools registered (agent_managed: true)');
   }
 
   // Create prediction context provider
@@ -902,21 +931,29 @@ async function main(): Promise<void> {
   // Shared by both REPL and Bluesky agents so either can post to Bluesky.
   // Returns undefined when bluesky is not connected, so the sandbox
   // simply won't have BSKY_* constants available.
-  const getExecutionContext = blueskyConnected && blueskySource
-    ? (): ExecutionContext => {
-        const src = blueskySource!;
-        return {
-          bluesky: {
-            service: "https://bsky.social",
-            pdsUrl: src.getPdsUrl(),
-            accessToken: src.getAccessToken(),
-            refreshToken: src.getRefreshToken(),
-            did: config.bluesky.did!,
-            handle: config.bluesky.handle!,
-          },
-        };
-      }
-    : undefined;
+  const getExecutionContext = async (): Promise<ExecutionContext> => {
+    const allKeys = await secretResolver.listKeys();
+    const secrets = await secretResolver.resolve(allKeys);
+
+    const context: ExecutionContext = { secrets };
+
+    if (blueskyConnected && blueskySource) {
+      const src = blueskySource;
+      return {
+        ...context,
+        bluesky: {
+          service: "https://bsky.social",
+          pdsUrl: src.getPdsUrl(),
+          accessToken: src.getAccessToken(),
+          refreshToken: src.getRefreshToken(),
+          did: config.bluesky.did!,
+          handle: config.bluesky.handle!,
+        },
+      };
+    }
+
+    return context;
+  };
 
   // Create compactor with configuration from config.summarization
   const compactionConfig: CompactionConfig = {

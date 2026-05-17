@@ -498,7 +498,7 @@ export function createAgent(
               // Special case: code execution
               const code = String(toolUse.input['code']);
               const stubs = deps.registry.generateStubs();
-              const context = deps.getExecutionContext?.();
+              const context = await deps.getExecutionContext?.();
               const result = await deps.runtime.execute(code, stubs, context);
 
               toolResult = result.success ? result.output : `Error: ${result.error}`;

@@ -5,7 +5,7 @@
  * Validates workspace boundary traversal and file type/size constraints.
  */
 
-import { resolve, relative } from 'node:path';
+import { resolve, relative, extname } from 'node:path';
 
 export type ValidationResult =
   | { valid: true; resolvedPath: string }
@@ -77,7 +77,7 @@ export function validateIngestPath(filePath: string, workspaceRoot: string): Val
   }
 
   // Check for binary file extensions
-  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+  const ext = extname(filePath).toLowerCase();
   if (BINARY_EXTENSIONS.has(ext)) {
     return {
       valid: false,

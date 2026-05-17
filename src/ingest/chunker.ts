@@ -66,17 +66,16 @@ function chunkMarkdown(text: string, maxChunkTokens: number): ReadonlyArray<Chun
         const contentText = currentContent.join('\n').trim();
         if (contentText.length > 0) {
           const contextStr = headingStack.join(' > ');
-          const subcontent = contentText;
 
           // Split if exceeds token budget
-          const subcontent_chunks = splitLongContent(
-            subcontent,
+          const subcontentChunks = splitLongContent(
+            contentText,
             contextStr,
             maxChunkTokens,
             chunkIndex,
           );
-          chunks.push(...subcontent_chunks);
-          chunkIndex += subcontent_chunks.length;
+          chunks.push(...subcontentChunks);
+          chunkIndex += subcontentChunks.length;
         }
         currentContent = [];
       }
@@ -113,13 +112,13 @@ function chunkMarkdown(text: string, maxChunkTokens: number): ReadonlyArray<Chun
     const contentText = currentContent.join('\n').trim();
     if (contentText.length > 0) {
       const contextStr = headingStack.join(' > ');
-      const subcontent_chunks = splitLongContent(
+      const subcontentChunks = splitLongContent(
         contentText,
         contextStr,
         maxChunkTokens,
         chunkIndex,
       );
-      chunks.push(...subcontent_chunks);
+      chunks.push(...subcontentChunks);
     }
   }
 
@@ -211,6 +210,47 @@ function splitLongContent(
 
   // Split on double newlines first
   const parts = content.split(/\n\n+/).filter(p => p.trim().length > 0);
+
+  // If no double newlines, split on single newlines
+  if (parts.length <= 1) {
+    const lines = content.split('\n').filter(l => l.trim().length > 0);
+    const chunks: Array<Chunk> = [];
+    let buffer = '';
+    let chunkIndex = startIndex;
+
+    for (const line of lines) {
+      const bufferWithLine = buffer ? `${buffer}\n${line}` : line;
+      const bufferTokens = estimateTokens(bufferWithLine);
+
+      if (bufferTokens <= maxChunkTokens) {
+        buffer = bufferWithLine;
+      } else {
+        if (buffer) {
+          chunks.push({
+            content: buffer,
+            headingContext,
+            index: chunkIndex,
+            tokenEstimate: estimateTokens(buffer),
+          });
+          chunkIndex++;
+        }
+        buffer = line;
+      }
+    }
+
+    if (buffer.trim().length > 0) {
+      chunks.push({
+        content: buffer,
+        headingContext,
+        index: chunkIndex,
+        tokenEstimate: estimateTokens(buffer),
+      });
+    }
+
+    return chunks;
+  }
+
+  // We have double newlines - split on those
   const chunks: Array<Chunk> = [];
   let buffer = '';
   let chunkIndex = startIndex;

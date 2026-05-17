@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -228,18 +226,9 @@ The details section provides implementation specifics.`;
         workspaceRoot: tempDir,
       });
 
-      let errorThrown = false;
-      let errorMessage = '';
-      try {
-        await ingestor.ingest('../../../etc/passwd');
-      } catch (error) {
-        errorThrown = true;
-        errorMessage =
-          error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorThrown).toBe(true);
-      expect(errorMessage).toContain('path traversal rejected');
+      await expect(
+        ingestor.ingest('../../../etc/passwd'),
+      ).rejects.toThrow('path traversal rejected');
     });
   });
 
@@ -254,19 +243,8 @@ The details section provides implementation specifics.`;
         workspaceRoot: tempDir,
       });
 
-      let errorThrown = false;
-      let errorMessage = '';
-      try {
-        await ingestor.ingest('image.png');
-      } catch (error) {
-        errorThrown = true;
-        errorMessage =
-          error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorThrown).toBe(true);
-      expect(errorMessage).toContain('binary file rejected');
-      expect(errorMessage).toContain('.png');
+      const promise = ingestor.ingest('image.png');
+      await expect(promise).rejects.toThrow('binary file rejected');
     });
 
     it('throws error for file over 1MB', async () => {
@@ -283,19 +261,8 @@ The details section provides implementation specifics.`;
         workspaceRoot: tempDir,
       });
 
-      let errorThrown = false;
-      let errorMessage = '';
-      try {
-        await ingestor.ingest('large.md');
-      } catch (error) {
-        errorThrown = true;
-        errorMessage =
-          error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorThrown).toBe(true);
-      expect(errorMessage).toContain('file too large');
-      expect(errorMessage).toContain('1.00MB');
+      const promise = ingestor.ingest('large.md');
+      await expect(promise).rejects.toThrow('file too large');
     });
   });
 

@@ -1,6 +1,6 @@
 # Activity
 
-Last verified: 2026-03-07
+Last verified: 2026-05-17
 
 ## Purpose
 Implements a circadian sleep/wake cycle for the agent. During sleep, external events are queued instead of dispatched, and the agent runs reflective tasks (compaction, prediction review, pattern analysis). On wake, queued events trickle-drain back into the agent loop.

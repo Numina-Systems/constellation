@@ -1,12 +1,12 @@
 # Tool
 
-Last verified: 2026-05-16
+Last verified: 2026-05-17
 
 ## Purpose
-Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, agent scheduling, unified search, subconscious interest/curiosity management, and session checkpointing.
+Provides a tool registry that manages registration, parameter validation, dispatch, model-format conversion, and Deno stub generation. Includes built-in tools for memory operations, code execution, web search/fetch, agent scheduling, unified search, subconscious interest/curiosity management, session checkpointing, secret management, custom tool CRUD, and file ingestion.
 
 ## Contracts
-- **Exposes**: `ToolRegistry` interface (`register`, `unregister`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `createSubconsciousTools(deps)`, `createCheckpointTool(deps, getAgentState)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
+- **Exposes**: `ToolRegistry` interface (`register`, `unregister`, `getDefinitions`, `dispatch`, `generateStubs`, `toModelTools`), `createToolRegistry()`, `createMemoryTools(memory)`, `createExecuteCodeTool()`, `createCompactContextTool()`, `createWebTools(options)`, `createSchedulingTools(deps)`, `createSearchTools(searchStore)`, `createSubconsciousTools(deps)`, `createCheckpointTool(deps, getAgentState)`, `createSecretTools(deps)`, `createCustomToolTools(manager)`, `createIngestTool(ingestor)`, `validateMinimumInterval(schedule, minMinutes)`, all tool types
 - **Guarantees**:
   - `unregister(name)` returns `true` if a tool was removed, `false` if no tool existed with that name; unregistered tools are immediately invisible to `getDefinitions`, `dispatch`, `generateStubs`, and `toModelTools`
   - `dispatch` validates required params, types, and enum values before calling handler
@@ -14,10 +14,10 @@ Provides a tool registry that manages registration, parameter validation, dispat
   - `generateStubs()` produces TypeScript function stubs that call `__callTool__` for the Deno IPC bridge
   - `toModelTools()` converts definitions to Anthropic tool format (JSON Schema)
   - Duplicate tool names are rejected at registration
-- **Expects**: Tools registered before dispatch. `MemoryManager` injected for memory tools. `SearchFn` and `FetchFn` injected for web tools. `Scheduler`, `owner`, and `PersistenceProvider` injected for scheduling tools. `SearchStore` injected for search tools. `InterestRegistry` and `owner` injected for subconscious tools. `CheckpointDependencies` and agent state getter injected for checkpoint tool.
+- **Expects**: Tools registered before dispatch. `MemoryManager` injected for memory tools. `SearchFn` and `FetchFn` injected for web tools. `Scheduler`, `owner`, and `PersistenceProvider` injected for scheduling tools. `SearchStore` injected for search tools. `InterestRegistry` and `owner` injected for subconscious tools. `CheckpointDependencies` and agent state getter injected for checkpoint tool. `SecretStore` and `owner` injected for secret tools. `CustomToolManager` injected for custom tool tools. `Ingestor` injected for ingest tool.
 
 ## Dependencies
-- **Uses**: `src/memory/` (for built-in memory tools), `src/web/` (for built-in web tools), `src/extensions/scheduler.ts` and `src/persistence/` (for scheduling tools), `src/search/` (for built-in search tool), `src/subconscious/` (for interest/curiosity tools), `src/agent/checkpoint-create.ts` (for checkpoint tool)
+- **Uses**: `src/memory/` (for built-in memory tools), `src/web/` (for built-in web tools), `src/extensions/scheduler.ts` and `src/persistence/` (for scheduling tools), `src/search/` (for built-in search tool), `src/subconscious/` (for interest/curiosity tools), `src/agent/checkpoint-create.ts` (for checkpoint tool), `src/secrets/` (for secret tools), `src/custom-tool/` (for custom tool tools), `src/ingest/` (for ingest tool)
 - **Used by**: `src/agent/`, `src/runtime/` (stubs for Deno bridge), `src/skill/` (ToolParameter, Tool types for skill tool definitions), `src/index.ts`
 - **Boundary**: Tool handlers are pure functions returning `ToolResult`. Side effects go through injected dependencies.
 
@@ -50,6 +50,14 @@ Provides a tool registry that manages registration, parameter validation, dispat
 - `list_interests(status?, source?, min_score?)` -- List interests with optional filters
 - `list_curiosities(interest_id, status?)` -- List curiosity threads for an interest
 - `checkpoint()` -- Create a snapshot of current agent state (returns checkpoint ID)
+- `secret_set(key, value)` -- Store a secret securely (value never returned in output)
+- `secret_list()` -- List stored secret key names (values never exposed)
+- `secret_delete(key)` -- Delete a stored secret by key name
+- `create_tool(name, description, parameters, code)` -- Create a custom tool (immediately callable)
+- `list_tools()` -- List agent-created custom tools
+- `update_tool(name, description?, parameters?, code?)` -- Update a custom tool
+- `delete_tool(name)` -- Delete a custom tool
+- `ingest_file(path)` -- Ingest a workspace file into archival memory as semantic chunks
 
 ## Key Files
 - `types.ts` -- `Tool`, `ToolRegistry`, `ToolResult`, `ToolDefinition` types
@@ -62,3 +70,6 @@ Provides a tool registry that manages registration, parameter validation, dispat
 - `builtin/search.ts` -- Unified search tool (delegates to SearchStore)
 - `builtin/subconscious.ts` -- Interest and curiosity management tools
 - `builtin/checkpoint.ts` -- Session checkpoint tool (delegates to `performCheckpoint`)
+- `builtin/secrets.ts` -- Secret management tools (set, list, delete)
+- `builtin/custom-tools.ts` -- Custom tool CRUD tools (create, list, update, delete)
+- `builtin/ingest.ts` -- File ingestion tool (delegates to Ingestor)

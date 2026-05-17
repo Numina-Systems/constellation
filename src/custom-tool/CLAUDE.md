@@ -33,5 +33,4 @@ Provides runtime custom tool creation with persistence, registry integration, an
 - `types.ts` -- `CustomToolDefinition` type and `CustomToolStore` port interface
 - `postgres-store.ts` -- PostgreSQL adapter for custom tool persistence
 - `index.ts` -- Barrel exports
-- (Phase 3B) `manager.ts` -- `CustomToolManager` orchestrating CRUD and registry integration
-- (Phase 3B) `builtin/custom-tools.ts` -- Agent tools for creating/managing custom tools
+- `manager.ts` -- `CustomToolManager` orchestrating CRUD and registry integration

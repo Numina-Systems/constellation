@@ -70,6 +70,7 @@ import {
   buildCompactionEvent,
   buildPredictionReviewEvent,
   buildPatternAnalysisEvent,
+  buildArchivistEvent,
 } from '@/activity/index.ts';
 import type { ActivityManager, ScheduleConfig } from '@/activity/index.ts';
 import type { MemoryManager } from '@/memory/manager';
@@ -1532,6 +1533,9 @@ async function main(): Promise<void> {
             break;
           case 'sleep-pattern-analysis':
             event = buildPatternAnalysisEvent(flaggedEvents, new Date());
+            break;
+          case 'sleep-archivist':
+            event = buildArchivistEvent(flaggedEvents, new Date());
             break;
           default:
             console.warn(`[activity] unknown sleep task: ${task.name}`);

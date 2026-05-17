@@ -42,6 +42,15 @@ Common source patterns:
 - Quotes: `app.bsky.feed.post:embed.record.uri`
 - Follows: `app.bsky.graph.follow:subject`
 
+### Looking up lexicon schemas
+
+Use `web_fetch` to query **Lexicon Garden** — a public lexicon browser with an API:
+```
+https://lexicon.garden/xrpc/com.atproto.lexicon.resolveLexicon?nsid={collection_nsid}
+```
+
+Returns the full JSON schema definition for any collection. Use this when you need to understand a record's structure, required fields, or valid values before creating or interpreting records.
+
 ### When to use what
 
 | Task | Tool | Service |
@@ -51,6 +60,7 @@ Common source patterns:
 | Fetch a public record | `web_fetch` | Slingshot |
 | Count likes/reposts/replies | `web_fetch` | Constellation |
 | List who interacted | `web_fetch` | Constellation |
+| Look up a lexicon schema | `web_fetch` | Lexicon Garden |
 
 ## key concepts
 

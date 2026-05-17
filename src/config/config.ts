@@ -26,6 +26,17 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["model"] = modelObj;
   }
 
+  if (parsed["summarization"]) {
+    const summObj = parsed["summarization"] as Record<string, unknown>;
+    const summProvider = summObj["provider"] as string | undefined;
+    const summEnvKeyName = summProvider ? providerEnvKeys[summProvider] : undefined;
+    const summEnvKey = summEnvKeyName ? process.env[summEnvKeyName] : undefined;
+    if (summEnvKey && !summObj["api_key"]) {
+      summObj["api_key"] = summEnvKey;
+      envOverrides["summarization"] = summObj;
+    }
+  }
+
   if (process.env["EMBEDDING_API_KEY"]) {
     const embeddingObj = (parsed["embedding"] as Record<string, unknown>) ?? {};
     embeddingObj["api_key"] = process.env["EMBEDDING_API_KEY"] ?? embeddingObj["api_key"];

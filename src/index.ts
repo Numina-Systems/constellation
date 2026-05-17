@@ -8,7 +8,7 @@
 
 import * as readline from 'readline';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
 import { createPostgresProvider, createMessageStore } from '@/persistence';
@@ -103,6 +103,8 @@ import { createLoopDetector } from '@/loop-detection/index.js';
 import type { LoopDetectionConfig } from '@/loop-detection/types.js';
 import { createPostgresCustomToolStore, createCustomToolManager } from '@/custom-tool';
 import { createCustomToolTools } from '@/tool/builtin/custom-tools';
+import { createIngestor } from '@/ingest';
+import { createIngestTool } from '@/tool/builtin/ingest';
 
 const AGENT_OWNER = 'spirit';
 
@@ -800,6 +802,19 @@ async function main(): Promise<void> {
     registry.register(tool);
   }
   console.log('search tools registered');
+
+  // Ingest tool (requires embedding for vector storage)
+  if (embedding) {
+    const ingestor = createIngestor({
+      memoryStore,
+      embedding,
+      persistence,
+      owner: AGENT_OWNER,
+      workspaceRoot: resolve(config.runtime.working_dir),
+    });
+    registry.register(createIngestTool(ingestor));
+    console.log('ingest tool registered');
+  }
 
   const runtime = createDenoExecutor({ ...config.runtime, ...config.agent }, registry);
 

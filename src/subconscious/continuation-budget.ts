@@ -1,4 +1,4 @@
-// pattern: Imperative Shell
+// pattern: Functional Core
 
 type ContinuationBudgetConfig = {
   readonly maxPerEvent: number;

@@ -24,13 +24,11 @@ Typical flow: get initial counts from Constellation, resolve identities/records 
 
 ## writes and listRecords
 
-Go through the user's PDS directly — Slingshot is read-only and doesn't support `listRecords`. Get the PDS URL from `resolveMiniDoc`, then call `com.atproto.repo.listRecords` on that PDS. For writes, use **pdsx** or hit the PDS XRPC endpoints directly with auth.
+Go through the user's PDS directly — Slingshot is read-only and doesn't support `listRecords`. Get the PDS URL from `resolveMiniDoc`, then call `com.atproto.repo.listRecords` on that PDS. For writes, use `execute_code` with `@atproto/api` in the Deno sandbox (see the `bluesky-posting` skill).
 
 ## bundled tools
 
-- **pdsx** — record CRUD (create, update, delete), auth, batch operations
-- **atproto-mcp** — search atproto docs, lexicon schemas, cookbook examples
-- **pub-search** — search published writing across atmosphere platforms for prior art
+- **pub-search** — search published writing across atmosphere platforms for prior art (MCP)
 
 ## using the Bluesky public API
 

@@ -1,6 +1,6 @@
 ---
 name: atproto
-description: Orientation for building on the AT Protocol. Use this skill whenever the task involves AT Protocol, atproto, Bluesky, decentralized social, or any app that reads/writes atproto records. Even if the user doesn't mention it explicitly, use this skill if they're working with DIDs, AT-URIs, lexicons, or PDS records.
+description: Orientation for the AT Protocol. Use this skill whenever the task involves AT Protocol, atproto, Bluesky, decentralized social, or any work with DIDs, AT-URIs, lexicons, or PDS records.
 user-invocable: true
 ---
 
@@ -14,25 +14,49 @@ For deeper grounding: https://atproto.com/guides/understanding-atproto
 
 ## what's available to you
 
-This plugin gives you several complementary tools. Use what fits the task.
+### Writing (posts, replies, likes)
 
-**Microcosm services** — free, unauthenticated infrastructure that indexes the entire AT Protocol network (not just Bluesky):
+Use `execute_code` with `@atproto/api` in the Deno sandbox. Your Bluesky credentials are pre-injected as constants. See the `bluesky-posting` skill for full details on facets, embeds, and threading.
 
-- **Slingshot** — fast record fetching and identity resolution. Invoke `/protopack:slingshot`.
-- **Constellation** — backlink index for engagement data (likes, reposts, follows, replies). Invoke `/protopack:constellation`.
-- **Spacedust** — real-time WebSocket firehose of interactions. Invoke `/protopack:spacedust`.
-- **UFOs** — discover what lexicons/apps exist in the network. Invoke `/protopack:ufos`.
+### Reading records and resolving identities
 
-**MCP tools** — available directly in your tool list:
+Use `web_fetch` to hit the **Microcosm services** — free, unauthenticated HTTP APIs that index the entire AT Protocol network:
 
-- **pdsx** — AT Protocol record CRUD (list, get, create, update, delete)
-- **atproto-mcp** — search atproto docs, lexicon schemas, cookbook examples (search_atproto_docs, get_lexicon, etc.)
-- **pub-search** — search published writing across Leaflet, Whitewind, and other atmosphere platforms. Invoke `/protopack:pub-search`.
+**Slingshot** — fast record fetching and identity resolution:
+```
+https://slingshot.microcosm.blue/xrpc/blue.microcosm.identity.resolveMiniDoc?identifier={handle_or_did}
+https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo={did}&collection={nsid}&rkey={rkey}
+https://slingshot.microcosm.blue/xrpc/com.atproto.identity.resolveHandle?handle={handle}
+```
 
-**Deployment:**
+**Constellation** — backlink index (who liked/reposted/replied/quoted a record):
+```
+https://constellation.microcosm.blue/xrpc/blue.microcosm.links.getBacklinksCount?subject={at_uri}&source={collection}:{path}
+https://constellation.microcosm.blue/xrpc/blue.microcosm.links.getBacklinks?subject={at_uri}&source={collection}:{path}&limit=10
+```
 
-- **wisp.place** — deploy static sites to the AT Protocol. Invoke `/protopack:wisp`.
+Common source patterns:
+- Likes: `app.bsky.feed.like:subject.uri`
+- Reposts: `app.bsky.feed.repost:subject.uri`
+- Replies: `app.bsky.feed.post:reply.parent.uri`
+- Quotes: `app.bsky.feed.post:embed.record.uri`
+- Follows: `app.bsky.graph.follow:subject`
 
-## combining services
+### When to use what
 
-Invoke `/protopack:app-patterns` for common patterns — e.g. using Constellation for historical data + Slingshot to hydrate records + Spacedust for live updates.
+| Task | Tool | Service |
+|------|------|---------|
+| Post, reply, like | `execute_code` | @atproto/api (sandbox) |
+| Resolve handle → DID | `web_fetch` | Slingshot |
+| Fetch a public record | `web_fetch` | Slingshot |
+| Count likes/reposts/replies | `web_fetch` | Constellation |
+| List who interacted | `web_fetch` | Constellation |
+
+## key concepts
+
+**AT-URI format:** `at://{did}/{collection}/{rkey}`
+- Example: `at://did:plc:xyz/app.bsky.feed.post/3lwcmto4tck2h`
+
+**StrongRef:** A pair of `{uri, cid}` that uniquely identifies a record version. Used in replies, quotes, and likes.
+
+**Collections** are namespaced like Java packages: `app.bsky.feed.post`, `app.bsky.actor.profile`, `app.bsky.graph.follow`.

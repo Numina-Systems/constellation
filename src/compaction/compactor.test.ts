@@ -2631,17 +2631,18 @@ describe('token-budget chunking in compress()', () => {
     const { mockMemory } = createResummarizeTestContext();
     const mockPersistence = createMockPersistenceProvider();
 
-    // Each message is 400 chars = ~100 tokens
-    // maxChunkTokens of 250 means ~2 messages per chunk
-    // 8 compressible messages (10 total - 2 keepRecent) = 4 chunks
+    // Each message is 400 chars = ~100 tokens.
+    // Overhead: ~40 (system prompt) + ~150 (directive) + 64 (maxSummaryTokens) ≈ 254 tokens.
+    // Effective budget: 500 - 254 ≈ 246, so ~2 messages per chunk.
+    // 8 compressible messages (10 total - 2 keepRecent) = 4 chunks.
     const config = {
       chunkSize: 20, // large — should be overridden by maxChunkTokens
       keepRecent: 2,
-      maxSummaryTokens: 1024,
+      maxSummaryTokens: 64,
       clipFirst: 2,
       clipLast: 2,
       prompt: null,
-      maxChunkTokens: 250,
+      maxChunkTokens: 500,
     };
 
     const messages = Array.from({ length: 10 }, (_, i) =>
@@ -2658,8 +2659,8 @@ describe('token-budget chunking in compress()', () => {
 
     const result = await compactor.compress(messages, 'test-conv');
 
-    // With maxChunkTokens=250 and ~100 tokens per message, should get ~4 chunks from 8 messages
-    // (2 messages per chunk). Each chunk gets a summarize call.
+    // After overhead deduction, effective budget ≈ 215 tokens. With ~100 tokens per message,
+    // that's ~2 messages per chunk. 8 compressible messages = 4 chunks, each getting a summarize call.
     expect(calls.length).toBe(4);
     expect(result.messagesCompressed).toBe(8);
   });

@@ -10,7 +10,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
 - **Guarantees**:
   - `compress` never throws; pipeline failures return original history unchanged (with `failed: true`)
   - Circuit breaker: after `maxConsecutiveFailures` (default 3) consecutive failures, `compress` short-circuits without calling the model; resets on success
-  - When `maxChunkTokens` is configured, chunks are split by token budget instead of message count, preventing oversized chunks from timing out the summarization model
+  - When `maxChunkTokens` is configured, chunks are split by token budget (minus summarization overhead: system prompt, prior summary, directive, max_tokens) instead of message count, preventing oversized requests from exceeding the model's context window
   - Summary batches are archived to memory (archival tier) with metadata headers before messages are deleted
   - Clip-archive shows first N and last N batches; omitted middle is searchable via `memory_read`
   - Recursive re-summarization triggers when batch count exceeds clip window + buffer, producing higher-depth batches
@@ -18,7 +18,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
   - Messages with identical importance scores maintain chronological order (stable sort)
   - Token estimation uses heuristic (1 token ~ 4 chars)
   - Summarisation calls use `ModelRequest.timeout` when `CompactionConfig.timeout` is set
-  - On timeout, retry loop halves chunk size (floor: 2 messages) and token budget (floor: 1000 tokens) with exponential backoff, up to `maxRetries` attempts
+  - On timeout, retry loop halves chunk size (floor: 2 messages) and token budget (floor: 100 tokens) with exponential backoff, up to `maxRetries` attempts
 - **Expects**: `ModelProvider` for LLM summarization, `MemoryManager` for archival writes/reads, `PersistenceProvider` for message deletion, valid `CompactionConfig`
 
 ## Dependencies

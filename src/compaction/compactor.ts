@@ -25,6 +25,8 @@ import { scoreMessage } from './scoring.js';
 import {
   buildSummarizationRequest,
   buildResummarizationRequest,
+  DEFAULT_SYSTEM_PROMPT,
+  DEFAULT_DIRECTIVE,
 } from './prompt.js';
 
 export type CreateCompactorOptions = {
@@ -334,6 +336,23 @@ export function estimateTokens(text: string): number {
 }
 
 /**
+ * Compute the token overhead that summarization adds beyond message content.
+ * Accounts for: system prompt, previous summary, directive, and max_tokens reserved for output.
+ */
+export function computeSummarizationOverhead(
+  systemPrompt: string | null,
+  previousSummary: string,
+  maxSummaryTokens: number,
+): number {
+  const systemTokens = estimateTokens(systemPrompt ?? DEFAULT_SYSTEM_PROMPT);
+  const summaryTokens = previousSummary
+    ? estimateTokens(`Previous summary of conversation:\n${previousSummary}`)
+    : 0;
+  const directiveTokens = estimateTokens(DEFAULT_DIRECTIVE);
+  return systemTokens + summaryTokens + directiveTokens + maxSummaryTokens;
+}
+
+/**
  * Build the clip-archive string content.
  * Shows first clipFirst and last clipLast batches; omits the middle with a separator if needed.
  */
@@ -626,7 +645,13 @@ export function createCompactor(
     const maxRetries = config.maxRetries ?? 2;
     const backoffBase = config.backoffBaseMs ?? INITIAL_BACKOFF_MS;
     let chunkSize = currentChunkSize;
-    let tokenBudget = config.maxChunkTokens;
+    let tokenBudget = config.maxChunkTokens
+      ? Math.max(100, config.maxChunkTokens - computeSummarizationOverhead(
+          systemPrompt,
+          existingSummary,
+          config.maxSummaryTokens,
+        ))
+      : undefined;
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -662,7 +687,7 @@ export function createCompactor(
         // Halve chunk size / token budget, respect floors
         chunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(chunkSize / 2));
         if (tokenBudget) {
-          tokenBudget = Math.max(1000, Math.floor(tokenBudget / 2));
+          tokenBudget = Math.max(100, Math.floor(tokenBudget / 2));
         }
 
         // Exponential backoff (skip on last attempt)
@@ -725,8 +750,19 @@ export function createCompactor(
       const systemPrompt = config.prompt;
 
       // 4. Chunk messages (prefer token-budget chunking when configured)
-      const chunks = config.maxChunkTokens
-        ? chunkMessagesByTokenBudget(toCompress, config.maxChunkTokens)
+      // Reserve headroom for summarization overhead (system prompt, prior summary, directive, output tokens).
+      // Use maxSummaryTokens as the worst-case prior summary size since the fold-in summary grows each chunk.
+      let effectiveBudget: number | undefined;
+      if (config.maxChunkTokens) {
+        const overhead = computeSummarizationOverhead(
+          systemPrompt,
+          priorSummary?.content ?? '',
+          config.maxSummaryTokens,
+        );
+        effectiveBudget = Math.max(100, config.maxChunkTokens - overhead);
+      }
+      const chunks = effectiveBudget
+        ? chunkMessagesByTokenBudget(toCompress, effectiveBudget)
         : chunkMessages(toCompress, config.chunkSize);
 
       // 5. Summarize each chunk (fold-in pattern)

@@ -161,21 +161,78 @@ await agent.post({
 
 ## Replies and Threading
 
-Replies need both `root` (thread starter) and `parent` (post you're replying to):
+Every reply requires a `reply` object with two `com.atproto.repo.strongRef` fields:
+
+- **`root`** — the very first post in the thread (never changes as the thread grows)
+- **`parent`** — the immediate post you're replying to
+
+Both fields require `uri` (AT-URI) and `cid` (content hash at fetch time).
+
+### Resolving root vs parent
+
+You must fetch the parent post and check whether it's already in a thread. If the parent has its own `reply.root`, use that as your root. If the parent has no `reply` field, the parent itself IS the root.
 
 ```typescript
+import { AppBskyFeedPost } from "npm:@atproto/api";
+
+// parentUri: the AT-URI of the post you want to reply to
+const { data: parentThread } = await agent.getPostThread({ uri: parentUri, depth: 0 });
+const parentPost = parentThread.thread.post;
+const parentRef = { uri: parentPost.uri, cid: parentPost.cid };
+
+let rootRef: { uri: string; cid: string };
+
+if (AppBskyFeedPost.isRecord(parentPost.record) && parentPost.record.reply) {
+  // parent is already a reply — inherit its root
+  rootRef = {
+    uri: parentPost.record.reply.root.uri,
+    cid: parentPost.record.reply.root.cid,
+  };
+} else {
+  // parent is the thread starter — root and parent are the same
+  rootRef = parentRef;
+}
+
 await agent.post({
   text: rt.text,
   facets: rt.facets,
   reply: {
-    root: { uri: ROOT_URI, cid: ROOT_CID },
-    parent: { uri: PARENT_URI, cid: PARENT_CID },
+    root: rootRef,
+    parent: parentRef,
   },
   createdAt: new Date().toISOString(),
 });
 ```
 
-If replying directly to the root post, `root` and `parent` are the same. These values come from the incoming event metadata.
+### Self-threading (continuing your own thread)
+
+When posting a thread of your own, keep a reference to the first post's URI/CID as root and update parent after each post:
+
+```typescript
+const firstPost = await agent.post({
+  text: "Thread (1/3): ...",
+  createdAt: new Date().toISOString(),
+});
+const rootRef = { uri: firstPost.uri, cid: firstPost.cid };
+
+const secondPost = await agent.post({
+  text: "Thread (2/3): ...",
+  reply: { root: rootRef, parent: rootRef },
+  createdAt: new Date().toISOString(),
+});
+
+await agent.post({
+  text: "Thread (3/3): ...",
+  reply: { root: rootRef, parent: { uri: secondPost.uri, cid: secondPost.cid } },
+  createdAt: new Date().toISOString(),
+});
+```
+
+### Common mistakes
+
+- **Setting `root = parent` unconditionally** — correct only for direct replies to thread starters. For nested replies, you must walk up to find the actual root. Bluesky will accept the record but the thread view breaks silently.
+- **Omitting `cid`** — both `root` and `parent` require it. Fetch the post to get the current CID.
+- **Stale CIDs** — CIDs are content-addressed. If a post was edited between when you fetched it and when you reply, your CID won't match. Always use the CID from your most recent fetch.
 
 ## Combining Facets + Embeds
 

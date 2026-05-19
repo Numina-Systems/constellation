@@ -16,6 +16,9 @@ export function createOllamaEmbeddingAdapter(
 
   return {
     async embed(text: string): Promise<Array<number>> {
+      if (text.trim().length === 0) {
+        return new Array(config.dimensions).fill(0);
+      }
       try {
         const response = await fetch(`${endpoint}/api/embed`, {
           method: "POST",

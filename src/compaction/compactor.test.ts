@@ -2664,4 +2664,64 @@ describe('token-budget chunking in compress()', () => {
     expect(calls.length).toBe(4);
     expect(result.messagesCompressed).toBe(8);
   });
+
+  it('retries with smaller chunks on context-size errors', async () => {
+    let callCount = 0;
+    const mockModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        callCount++;
+        // First call fails with context-size error, subsequent calls succeed
+        if (callCount === 1) {
+          throw new ModelError(
+            'INVALID_RESPONSE',
+            'request exceeds the available context size',
+            false,
+            { provider: 'openai-compat' },
+          );
+        }
+        return {
+          content: [{ type: 'text', text: `Summary ${callCount}` }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const { mockMemory } = createResummarizeTestContext();
+    const mockPersistence = createMockPersistenceProvider();
+
+    const config = {
+      chunkSize: 20,
+      keepRecent: 2,
+      maxSummaryTokens: 64,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+      maxChunkTokens: 500,
+      maxRetries: 2,
+      backoffBaseMs: 0,
+    };
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'a'.repeat(400), i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    expect(result.failed).toBeUndefined();
+    expect(result.messagesCompressed).toBe(8);
+    // First call failed, then retried with halved budget — more chunks, more calls
+    expect(callCount).toBeGreaterThan(1);
+  });
 });

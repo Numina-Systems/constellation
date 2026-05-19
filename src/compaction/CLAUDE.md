@@ -18,7 +18,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
   - Messages with identical importance scores maintain chronological order (stable sort)
   - Token estimation uses heuristic (1 token ~ 4 chars)
   - Summarisation calls use `ModelRequest.timeout` when `CompactionConfig.timeout` is set
-  - On timeout, retry loop halves chunk size (floor: 2 messages) and token budget (floor: 100 tokens) with exponential backoff, up to `maxRetries` attempts
+  - On timeout or context-size errors, retry loop halves chunk size (floor: 2 messages) and token budget (floor: 100 tokens) with exponential backoff, up to `maxRetries` attempts. Context-size errors (model reports request exceeds available context) are treated as retryable even though the model marks them non-retryable, because the compactor can recover by shrinking chunks
 - **Expects**: `ModelProvider` for LLM summarization, `MemoryManager` for archival writes/reads, `PersistenceProvider` for message deletion, valid `CompactionConfig`
 
 ## Dependencies

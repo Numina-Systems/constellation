@@ -636,6 +636,12 @@ export function createCompactor(
   const MIN_CHUNK_SIZE = 2;
   const INITIAL_BACKOFF_MS = 1000;
 
+  function isContextSizeError(error: unknown): boolean {
+    if (!(error instanceof ModelError)) return false;
+    const msg = error.message.toLowerCase();
+    return msg.includes('exceed') && msg.includes('context');
+  }
+
   async function summarizeChunkWithRetry(
     messages: ReadonlyArray<ConversationMessage>,
     existingSummary: string,
@@ -656,11 +662,8 @@ export function createCompactor(
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        // Re-chunk with reduced budget/size if we've retried
         let subChunks: ReadonlyArray<ReadonlyArray<ConversationMessage>>;
-        if (attempt === 0) {
-          subChunks = [messages];
-        } else if (tokenBudget) {
+        if (tokenBudget) {
           subChunks = chunkMessagesByTokenBudget(messages, tokenBudget);
         } else {
           subChunks = chunkMessages(messages, chunkSize);
@@ -674,13 +677,13 @@ export function createCompactor(
       } catch (error) {
         lastError = error;
 
-        // Non-retryable errors fail immediately
-        if (error instanceof ModelError && !error.retryable) {
+        const isContextError = isContextSizeError(error);
+
+        if (error instanceof ModelError && !error.retryable && !isContextError) {
           throw error;
         }
 
-        // Only retry on timeout specifically
-        if (!(error instanceof ModelError && error.code === 'TIMEOUT')) {
+        if (error instanceof ModelError && error.code !== 'TIMEOUT' && !isContextError) {
           throw error;
         }
 

@@ -360,7 +360,7 @@ export function createInterestRegistry(
   ): Promise<number> {
     const rows = await persistence.query<{ id: string }>(
       `UPDATE interests
-       SET engagement_score = engagement_score * pow(0.5, EXTRACT(EPOCH FROM (NOW() - last_engaged_at)) / ($1 * 86400))
+       SET engagement_score = GREATEST(0, engagement_score * pow(0.5, LEAST(EXTRACT(EPOCH FROM (NOW() - last_engaged_at)) / ($1 * 86400), 100)))
        WHERE owner = $2 AND status = 'active'
        RETURNING id`,
       [halfLifeDays, owner],

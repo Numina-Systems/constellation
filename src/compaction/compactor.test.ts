@@ -891,10 +891,13 @@ describe('Compaction pipeline with mocked dependencies', () => {
     expect(result.tokensEstimateAfter).toBeLessThan(result.tokensEstimateBefore);
   });
 
-  it('AC1.3: each chunk summarization receives prior summary (fold-in pattern)', async () => {
-    const messages = Array.from({ length: 20 }, (_, i) =>
-      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(50), i * 100),
+  it('AC1.3: chunks are summarized independently (no fold-in), prior summary only on first chunk', async () => {
+    // Create messages where the first is a prior compaction summary
+    const priorSummary = createMessage('prior', 'system', '[Context Summary — prior cycle summary content', 0);
+    const conversationMessages = Array.from({ length: 20 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(50), (i + 1) * 100),
     );
+    const messages = [priorSummary, ...conversationMessages];
 
     const mockPersistence = createMockPersistenceProvider();
     const mockModel = createMockModelProvider(['Summary 1', 'Summary 2']);
@@ -920,17 +923,19 @@ describe('Compaction pipeline with mocked dependencies', () => {
     await compactor.compress(messages, 'test-conv');
 
     const model = mockModel as unknown as { _calls: Array<ModelRequest> };
-    expect(model._calls.length).toBe(2); // Two chunks
+    expect(model._calls.length).toBe(2);
 
-    // Each call should have included existing summary in the prompt
-    for (let i = 0; i < model._calls.length; i++) {
-      const callRequest = model._calls[i];
-      const callContent = callRequest?.messages[0]?.content;
-      expect(callContent).toBeDefined();
-      if (i > 0) {
-        expect(String(callContent)).toContain('Summary');
-      }
-    }
+    // First chunk should receive the prior summary as context
+    const firstCall = model._calls[0];
+    const firstContent = firstCall?.messages[0]?.content;
+    expect(String(firstContent)).toContain('prior cycle summary content');
+
+    // Second chunk should NOT receive any prior summary (independent summarization)
+    const secondCall = model._calls[1];
+    const hasSystemSummary = secondCall?.messages.some(
+      (m) => m.role === 'system' && String(m.content).includes('Previous summary'),
+    );
+    expect(hasSystemSummary).toBe(false);
   });
 
   it('AC1.4: returned SummaryBatch objects include depth, timestamp range, and message count', async () => {

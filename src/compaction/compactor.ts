@@ -758,8 +758,8 @@ export function createCompactor(
       const systemPrompt = config.prompt;
 
       // 4. Chunk messages (prefer token-budget chunking when configured)
-      // Reserve headroom for summarization overhead (system prompt, prior summary, directive, output tokens).
-      // Use maxSummaryTokens as the worst-case prior summary size since the fold-in summary grows each chunk.
+      // Reserve headroom for summarization overhead (system prompt, directive, output tokens).
+      // Prior summary is only passed to the first chunk, so reserve maxSummaryTokens as worst case.
       let effectiveBudget: number | undefined;
       if (config.maxChunkTokens) {
         const overhead = computeSummarizationOverhead(
@@ -773,18 +773,22 @@ export function createCompactor(
         ? chunkMessagesByTokenBudget(toCompress, effectiveBudget)
         : chunkMessages(toCompress, config.chunkSize);
 
-      // 5. Summarize each chunk (fold-in pattern)
+      // 5. Summarize each chunk independently (no fold-in).
+      // Prior summary context is passed to the first chunk only to maintain continuity
+      // with previous compaction cycles. Subsequent chunks are summarized in isolation
+      // so the accumulated summary never grows beyond maxSummaryTokens.
       const batches: Array<SummaryBatch> = [];
-      let accumulatedSummary = priorSummary?.content || '';
 
-      for (const chunk of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!;
+        const existingSummary = i === 0 ? (priorSummary?.content || '') : '';
+
         const summaryText = await summarizeChunkWithRetry(
           chunk,
-          accumulatedSummary,
+          existingSummary,
           systemPrompt,
           config.chunkSize,
         );
-        accumulatedSummary = summaryText;
 
         const firstChunkMsg = chunk[0];
         const lastChunkMsg = chunk[chunk.length - 1];

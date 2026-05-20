@@ -27,7 +27,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
 - **Boundary**: Only the agent loop (or composition root) should construct a `Compactor`. This module never calls `ModelProvider.complete` outside of summarization.
 
 ## Key Decisions
-- Chunk-and-fold summarization: Messages chunked, each chunk summarized with accumulated context from prior chunks
+- Independent chunk summarization: Messages chunked and each chunk summarized independently (no fold-in). Prior summary from previous compaction cycles is passed to the first chunk only. This prevents the accumulated summary from growing unboundedly and exceeding the summarization model's context window
 - Structured summarization prompts: LLM calls use `ModelRequest.system` for system prompt and `ModelRequest.messages` with proper role context (system-role for prior summary, user/assistant for conversation, user for directive)
 - Clip-archive over full replay: Only earliest + most recent batches injected into context; middle omitted but searchable
 - Metadata headers in archival content: `[depth:N|start:ISO|end:ISO|count:M]` prefix enables batch reconstruction without extra DB columns

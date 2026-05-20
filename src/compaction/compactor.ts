@@ -648,7 +648,7 @@ export function createCompactor(
     systemPrompt: string | null,
     currentChunkSize: number,
   ): Promise<string> {
-    const maxRetries = config.maxRetries ?? 2;
+    const maxRetries = config.maxRetries ?? 4;
     const backoffBase = config.backoffBaseMs ?? INITIAL_BACKOFF_MS;
     let chunkSize = currentChunkSize;
     let tokenBudget = config.maxChunkTokens
@@ -677,13 +677,17 @@ export function createCompactor(
       } catch (error) {
         lastError = error;
 
-        const isContextError = isContextSizeError(error);
-
-        if (error instanceof ModelError && !error.retryable && !isContextError) {
+        if (!(error instanceof ModelError)) {
           throw error;
         }
 
-        if (error instanceof ModelError && error.code !== 'TIMEOUT' && !isContextError) {
+        const isContextError = isContextSizeError(error);
+
+        if (!error.retryable && !isContextError) {
+          throw error;
+        }
+
+        if (error.code !== 'TIMEOUT' && !isContextError) {
           throw error;
         }
 
@@ -693,8 +697,9 @@ export function createCompactor(
           tokenBudget = Math.max(100, Math.floor(tokenBudget / 2));
         }
 
-        // Exponential backoff (skip on last attempt)
-        if (attempt < maxRetries) {
+        // Exponential backoff (skip on last attempt and on context-size errors where
+        // the fix is smaller chunks, not waiting)
+        if (attempt < maxRetries && !isContextError) {
           const backoffMs = backoffBase * Math.pow(2, attempt);
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }

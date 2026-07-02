@@ -401,6 +401,41 @@ describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
       expect(() => AppConfigSchema.parse(config)).toThrow();
     });
 
+    it("should reject min_output_reserve above output_tokens_per_minute (would hang the rate limiter) on [model]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          output_tokens_per_minute: 500,
+          min_output_reserve: 1024,
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow(/min_output_reserve/);
+    });
+
+    it("should reject an output_tokens_per_minute below the default reserve when reserve is unset on [model]", () => {
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          output_tokens_per_minute: 500, // below DEFAULT_MIN_OUTPUT_RESERVE (1024)
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      expect(() => AppConfigSchema.parse(config)).toThrow(/min_output_reserve/);
+    });
+
     it("should reject output_tokens_per_minute: 1.5 (non-integer) on [model]", () => {
       const config = {
         agent: {},

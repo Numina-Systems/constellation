@@ -560,4 +560,36 @@ describe('createRateLimitedProvider', () => {
       expect(Math.abs(rpmAfter.remaining - rpmBefore.remaining)).toBeLessThan(1);
     });
   });
+
+  describe('infeasible-request guard (deadlock prevention)', () => {
+    it('rejects a request whose estimated input exceeds the input bucket capacity instead of hanging', async () => {
+      const tinyConfig: RateLimiterConfig = {
+        requestsPerMinute: 100,
+        inputTokensPerMinute: 10, // far below any real prompt
+        outputTokensPerMinute: 10000,
+        minOutputReserve: 1024,
+      };
+      const rateLimited = createRateLimitedProvider(createMockProvider(), tinyConfig);
+
+      // A prompt that estimates well above 10 input tokens can never clear the
+      // bucket; without the guard this would loop forever.
+      await expect(
+        rateLimited.complete(createRequest('x'.repeat(4000))),
+      ).rejects.toThrow(/input rate limit capacity/);
+    });
+
+    it('rejects when minOutputReserve exceeds the output bucket capacity', async () => {
+      const badConfig: RateLimiterConfig = {
+        requestsPerMinute: 100,
+        inputTokensPerMinute: 10000,
+        outputTokensPerMinute: 100,
+        minOutputReserve: 1024, // reserve larger than the whole per-minute budget
+      };
+      const rateLimited = createRateLimitedProvider(createMockProvider(), badConfig);
+
+      await expect(
+        rateLimited.complete(createRequest()),
+      ).rejects.toThrow(/output rate limit capacity/);
+    });
+  });
 });

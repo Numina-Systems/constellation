@@ -3,6 +3,31 @@ import { z } from "zod";
 import { Cron } from "croner";
 import { McpConfigSchema } from "@/mcp/schema.ts";
 
+// Mirrors DEFAULT_MIN_OUTPUT_RESERVE in src/rate-limit/provider.ts. A request
+// reserving more output tokens than the per-minute budget can never clear the
+// bucket, so the rate limiter would hang forever; reject that at load time.
+const DEFAULT_MIN_OUTPUT_RESERVE = 1024;
+
+function refineRateLimitFeasibility(
+  data: {
+    input_tokens_per_minute?: number;
+    output_tokens_per_minute?: number;
+    min_output_reserve?: number;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.output_tokens_per_minute !== undefined) {
+    const reserve = data.min_output_reserve ?? DEFAULT_MIN_OUTPUT_RESERVE;
+    if (reserve > data.output_tokens_per_minute) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `min_output_reserve (${reserve}) must not exceed output_tokens_per_minute (${data.output_tokens_per_minute}); the rate limiter would hang on every request`,
+        path: ["min_output_reserve"],
+      });
+    }
+  }
+}
+
 const AgentConfigSchema = z.object({
   max_tool_rounds: z.number().int().positive().default(20),
   max_code_size: z.number().int().positive().default(51200),
@@ -40,7 +65,7 @@ const ModelConfigSchema = z.object({
   output_tokens_per_minute: z.number().int().positive().optional(),
   min_output_reserve: z.number().int().positive().optional(),
   openrouter: OpenRouterConfigSchema.optional(),
-});
+}).superRefine(refineRateLimitFeasibility);
 
 const EmbeddingConfigSchema = z.object({
   provider: z.enum(["openai", "ollama"]),
@@ -126,7 +151,7 @@ const SummarizationConfigSchema = z.object({
   compaction_max_retries: z.number().int().nonnegative().default(2),
   max_chunk_tokens: z.number().int().positive().optional(),
   max_consecutive_failures: z.number().int().positive().default(3),
-});
+}).superRefine(refineRateLimitFeasibility);
 
 const WebConfigSchema = z.object({
   brave_api_key: z.string().optional(),

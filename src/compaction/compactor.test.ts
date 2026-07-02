@@ -891,6 +891,80 @@ describe('Compaction pipeline with mocked dependencies', () => {
     expect(result.tokensEstimateAfter).toBeLessThan(result.tokensEstimateBefore);
   });
 
+  it('archived batch timestamps stay chronological even when importance sorting reorders messages', async () => {
+    // The earliest message carries a high-scoring keyword so importance sorting
+    // would place it LAST in its chunk. Before the chronological re-sort, the
+    // batch would read startTime from a late message and endTime from an early
+    // one, producing startTime > endTime. Assert the ordering survives.
+    const messages = [
+      createMessage('0', 'user', 'critical error decision constraint', 0),
+      ...Array.from({ length: 9 }, (_, i) =>
+        createMessage(String(i + 1), i % 2 === 0 ? 'assistant' : 'user', 'x'.repeat(50), (i + 1) * 100),
+      ),
+    ];
+
+    const mockPersistence = createMockPersistenceProvider();
+    const mockModel = createMockModelProvider(['Summary 1']);
+    const mockMemory = createMockMemoryManager();
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config: { chunkSize: 10, keepRecent: 3, maxSummaryTokens: 500, clipFirst: 2, clipLast: 2, prompt: null },
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    const archival = await mockMemory.list('archival');
+    expect(archival.length).toBeGreaterThan(0);
+    for (const block of archival) {
+      const match = block.content.match(/\[depth:\d+\|start:([^|]+)\|end:([^|]+)\|count:\d+\]/);
+      expect(match).not.toBeNull();
+      const start = new Date(match![1]!).getTime();
+      const end = new Date(match![2]!).getTime();
+      expect(start).toBeLessThanOrEqual(end);
+    }
+  });
+
+  it('deletes messages and inserts the clip-archive atomically via a single transaction', async () => {
+    const messages = Array.from({ length: 20 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(100), i * 100),
+    );
+
+    let txCalls = 0;
+    const insideTx: Array<string> = [];
+    const basePersistence = createMockPersistenceProvider();
+    const trackingPersistence = {
+      ...basePersistence,
+      async withTransaction<T>(fn: (q: QueryFunction) => Promise<T>): Promise<T> {
+        txCalls++;
+        const wrapped: QueryFunction = async (sql, params) => {
+          if (sql.includes('DELETE FROM messages')) insideTx.push('delete');
+          if (sql.includes('INSERT INTO messages')) insideTx.push('insert');
+          return basePersistence.query(sql, params);
+        };
+        return fn(wrapped);
+      },
+    } as unknown as PersistenceProvider;
+
+    const compactor = createCompactor({
+      model: createMockModelProvider(['Summary 1', 'Summary 2']),
+      memory: createMockMemoryManager(),
+      persistence: trackingPersistence,
+      config: { chunkSize: 10, keepRecent: 5, maxSummaryTokens: 500, clipFirst: 2, clipLast: 2, prompt: null },
+      modelName: 'test-model',
+    });
+
+    await compactor.compress(messages, 'test-conv');
+
+    // Both the destructive delete and the replacing insert run inside one
+    // transaction, so a crash between them cannot lose messages.
+    expect(txCalls).toBe(1);
+    expect(insideTx).toEqual(['delete', 'insert']);
+  });
+
   it('AC1.3: chunks are summarized independently (no fold-in), prior summary only on first chunk', async () => {
     // Create messages where the first is a prior compaction summary
     const priorSummary = createMessage('prior', 'system', '[Context Summary — prior cycle summary content', 0);

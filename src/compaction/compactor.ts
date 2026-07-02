@@ -732,11 +732,19 @@ export function createCompactor(
     }
 
     try {
-      // 1. Split history
-      const { toCompress, toKeep, priorSummary } = splitHistory(
+      // 1. Split history. `splitHistory` orders `toCompress` by importance to
+      // decide which messages are compressed, but summarization and batch
+      // timestamps require chronological order (the summary prompt assumes it,
+      // and batch start/end times are read from the first/last message). Restore
+      // chronological order here; message selection is fixed by the split index,
+      // not by score order, so re-sorting is safe.
+      const { toCompress: selected, toKeep, priorSummary } = splitHistory(
         history,
         config.keepRecent,
         config.scoring,
+      );
+      const toCompress = [...selected].sort(
+        (a, b) => a.created_at.getTime() - b.created_at.getTime(),
       );
 
       // 2. Check if there's anything to compress
@@ -827,33 +835,39 @@ export function createCompactor(
       // 8. Rebuild batch list after potential re-summarization
       const finalBatches = await getCompactionBatches(memory, conversationId);
 
-      // 9. Delete old messages from database (including prior clip-archive if present)
+      // 9-11. Replace old messages with the clip-archive atomically. The delete
+      // and insert must commit together: a crash between them would drop the
+      // compressed messages with no summary left in their place, permanently
+      // losing that span of conversation. A single transaction guarantees the
+      // clip-archive exists iff the messages are gone.
       const idsToDelete = toCompress.map((m) => m.id);
       if (priorSummary) {
         idsToDelete.push(priorSummary.id);
       }
-      await persistence.query(
-        'DELETE FROM messages WHERE id = ANY($1)',
-        [idsToDelete],
-      );
 
-      // 10. Build clip-archive content
+      // Build clip-archive content
       const clipArchiveContent = buildClipArchive(
         finalBatches.map((b) => b.batch),
         config,
         toCompress.length,
       );
 
-      // 11. Insert clip-archive as a system message.
       // Use a timestamp just before the first kept message so the clip-archive
       // sorts before kept messages (and any in-flight tool call messages) on reload.
       const clipArchiveId = randomUUID();
       const firstKeptTime = toKeep[0]?.created_at ?? new Date();
       const clipArchiveTime = new Date(firstKeptTime.getTime() - 1);
-      await persistence.query(
-        'INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [clipArchiveId, conversationId, 'system', clipArchiveContent, clipArchiveTime],
-      );
+
+      await persistence.withTransaction(async (tx) => {
+        await tx(
+          'DELETE FROM messages WHERE id = ANY($1)',
+          [idsToDelete],
+        );
+        await tx(
+          'INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)',
+          [clipArchiveId, conversationId, 'system', clipArchiveContent, clipArchiveTime],
+        );
+      });
 
       // 12. Build the clip-archive ConversationMessage object
       const clipArchiveMessage: ConversationMessage = {

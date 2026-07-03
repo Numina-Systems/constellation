@@ -573,10 +573,8 @@ export function createAgent(
                 // (to suppress cache-bust events from expected history replacements)
                 compactionOccurredThisTurn = true;
                 // Track compaction metadata for checkpoint state
-                if (compactionOccurredThisTurn) {
-                  lastCompactionMessageCount = history.length;
-                  lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
-                }
+                lastCompactionMessageCount = history.length;
+                lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
 
                 toolResult = JSON.stringify({
                   messagesCompressed: compactionResult.messagesCompressed,

@@ -190,7 +190,6 @@ export function createAgent(
     deps.loopDetector?.reset();
 
     // Step 1: Persist user message
-    // @ts-ignore - userMessageId will be used in Task 3 (compose once per turn, persist composed content)
     const userMessageId = await persistMessage({
       conversation_id: id,
       role: 'user',
@@ -240,6 +239,12 @@ export function createAgent(
     // normally triggered by the context budget check above, but a rate-limit
     // input cap below that threshold surfaces here first.
     let overflowRecoveryAttempted = false;
+
+    // Per-turn flag: compose snapshot at most once per turn, only when the last
+    // message can carry the attachment. Provider changes that occur later in the
+    // turn (e.g., during tool rounds) are delivered next turn. Also prevents
+    // double-wrapping on overflow-recovery retry.
+    let snapshotComposed = false;
 
     while (roundCount < maxRounds) {
       roundCount++;
@@ -329,15 +334,29 @@ export function createAgent(
         deps.workingMemoryContextState.setBlocks(await deps.memory.getWorkingBlocks());
       }
 
-      // Compute snapshot — first round forces full, subsequent rounds detect delta/noop
-      const isFirstRound = roundCount === 1;
-      const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, isFirstRound);
-
-      // Build final user message with snapshot composition
+      // Compose snapshot onto the latest user message — at most once per turn,
+      // and only when the last message can carry the attachment. Provider hashes
+      // are consumed only here, so changes during tool rounds surface next turn.
       const lastMessage = finalMessages[finalMessages.length - 1];
-      if (lastMessage && lastMessage.role === 'user' && typeof lastMessage.content === 'string') {
+      if (
+        !snapshotComposed &&
+        lastMessage &&
+        lastMessage.role === 'user' &&
+        typeof lastMessage.content === 'string'
+      ) {
+        snapshotComposed = true;
+        const isFirstRound = roundCount === 1;
+        const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, isFirstRound);
         const composedUserMessage = buildUserMessage(lastMessage.content, snapshotResult);
-        finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
+        if (composedUserMessage.content !== lastMessage.content) {
+          finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
+          const composedContent = composedUserMessage.content as string;
+          await updateMessageContent(userMessageId, composedContent);
+          const historyEntry = history.find((m) => m.id === userMessageId);
+          if (historyEntry) {
+            historyEntry.content = composedContent;
+          }
+        }
       }
 
       // Call cache diagnostics before model.complete()
@@ -732,9 +751,8 @@ export function createAgent(
 
   /**
    * Update the content of an existing message.
-   * Used in Task 3 (compose once per turn, persist composed content).
+   * Used to persist composed user messages for byte-identical replay.
    */
-  // @ts-ignore - used in Task 3
   async function updateMessageContent(messageId: string, content: string): Promise<void> {
     await deps.persistence.query('UPDATE messages SET content = $1 WHERE id = $2', [
       content,

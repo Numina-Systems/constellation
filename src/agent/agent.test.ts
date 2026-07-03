@@ -64,6 +64,17 @@ function createMockPersistenceProvider(): PersistenceProvider & { capturedInsert
       return [{ id } as unknown as T];
     }
 
+    if (sql.includes('UPDATE messages')) {
+      const [content, id] = params ? Array.from(params) : [];
+      for (const list of messages.values()) {
+        const msg = list.find((m) => m.id === id);
+        if (msg) {
+          msg.content = content as string;
+        }
+      }
+      return [] as Array<T>;
+    }
+
     if (sql.includes('SELECT') && sql.includes('FROM messages')) {
       const [conversationId] = params || [];
       return (messages.get(String(conversationId)) || []) as unknown as Array<T>;
@@ -2908,19 +2919,10 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
     // Verify turn 1 has working memory in attachment
     const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
     expect(turn1LastMsg).toBeDefined();
-    let hasWorkingMemory = false;
-    if (Array.isArray(turn1LastMsg!.content)) {
-      for (const block of turn1LastMsg!.content) {
-        if (typeof block === 'object' && 'type' in block && (block as Record<string, unknown>)['type'] === 'text') {
-          const textContent = String((block as Record<string, unknown>)['text']);
-          if (textContent.includes('## working-memory')) {
-            hasWorkingMemory = true;
-            expect(textContent).toContain('Initial state');
-          }
-        }
-      }
-    }
-    expect(hasWorkingMemory).toBe(true);
+    expect(typeof turn1LastMsg!.content).toBe('string');
+    const turn1ContentStr = String(turn1LastMsg!.content);
+    expect(turn1ContentStr).toContain('## working-memory');
+    expect(turn1ContentStr).toContain('Initial state');
 
     // Change working memory content
     workingBlockContent = 'Updated state';
@@ -2948,19 +2950,10 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
     // AC3.2: Verify turn 2's LAST message contains updated working memory content
     const turn2LastMsg = turn2Request.messages[turn2Request.messages.length - 1];
     expect(turn2LastMsg).toBeDefined();
-    hasWorkingMemory = false;
-    if (Array.isArray(turn2LastMsg!.content)) {
-      for (const block of turn2LastMsg!.content) {
-        if (typeof block === 'object' && 'type' in block && (block as Record<string, unknown>)['type'] === 'text') {
-          const textContent = String((block as Record<string, unknown>)['text']);
-          if (textContent.includes('## working-memory')) {
-            hasWorkingMemory = true;
-            expect(textContent).toContain('Updated state');
-          }
-        }
-      }
-    }
-    expect(hasWorkingMemory).toBe(true);
+    expect(typeof turn2LastMsg!.content).toBe('string');
+    const turn2ContentStr = String(turn2LastMsg!.content);
+    expect(turn2ContentStr).toContain('## working-memory');
+    expect(turn2ContentStr).toContain('Updated state');
   });
 
   it('cache-friendliness.AC3.3 (unit): with no working-memory blocks, no working-memory section in request', async () => {
@@ -3059,6 +3052,271 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
     // AC3.3: "working-memory" should not appear anywhere in the request
     expect(requestStr).not.toContain('working-memory');
     expect(requestStr).not.toContain('## working-memory');
+  });
+});
+
+describe('cache-friendliness.AC4: Persist composed user messages', () => {
+  let mockMemory: MemoryManager;
+
+  beforeEach(() => {
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [];
+      },
+      async buildSystemPrompt() {
+        return 'You are helpful.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'test',
+            owner: 'test',
+            tier: 'working',
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+  });
+
+  it('cache-friendliness.AC4.1 (unit): composed message persisted and byte-identical on replay', async () => {
+    let providerValue = 'alpha';
+    let providerCalls = 0;
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const turn1Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 1 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const turn2Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 2 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([turn1Response, turn2Response], tracker);
+    const mockPersistence = createMockPersistenceProvider();
+    const mockRegistry = createMockToolRegistry();
+    const mockRuntime = createMockCodeRuntime();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'test-ctx',
+          provider: () => {
+            providerCalls++;
+            return providerValue;
+          },
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    // Turn 1: Compose and persist
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello from turn 1');
+
+    expect(tracker.requests.length).toBe(1);
+    const turn1Request = tracker.requests[0]!;
+
+    // AC4.1(a): Last message contains composed attachment with provider content
+    const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
+    expect(turn1LastMsg).toBeDefined();
+    expect(typeof turn1LastMsg!.content).toBe('string');
+    const turn1ContentStr = String(turn1LastMsg!.content);
+    expect(turn1ContentStr).toContain('[Dynamic Context — Full Snapshot]');
+    expect(turn1ContentStr).toContain('## test-ctx');
+    expect(turn1ContentStr).toContain('alpha');
+    expect(turn1ContentStr).toContain('Hello from turn 1');
+
+    // AC4.1(b): Persisted content equals what was sent
+    const convHistory = await agent.getConversationHistory();
+    const lastUserMsg = convHistory.filter((m) => m.role === 'user').pop();
+    expect(lastUserMsg).toBeDefined();
+    expect(lastUserMsg!.content).toBe(turn1ContentStr);
+
+    // Turn 2: Verify byte-identical replay
+    await agent.processMessage('Hello from turn 2');
+
+    expect(tracker.requests.length).toBe(2);
+    const turn2Request = tracker.requests[1]!;
+
+    // AC4.1(c): Turn 1's last message is byte-identical in turn 2
+    const turn2SharedMsg = turn2Request.messages[turn1Request.messages.length - 1];
+    expect(JSON.stringify(turn1LastMsg)).toBe(JSON.stringify(turn2SharedMsg));
+  });
+
+  it('cache-friendliness.AC4.2 (unit): provider change during tool round not consumed', async () => {
+    let providerValue = 'alpha';
+    let providerCalls = 0;
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    // Tool round response + end_turn
+    const toolResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-1',
+          name: 'no_op_tool',
+          input: {},
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const endTurnResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const turn2Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 2 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolResponse, endTurnResponse, turn2Response], tracker);
+    const mockPersistence = createMockPersistenceProvider();
+    const mockRegistry = createMockToolRegistry();
+    const mockRuntime = createMockCodeRuntime();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'test-ctx',
+          provider: () => {
+            providerCalls++;
+            return providerValue;
+          },
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+
+    // Turn 1: Initial message, tool round, end_turn
+    await agent.processMessage('Message with tool');
+
+    // Provider should be called exactly once (during first round composition)
+    expect(providerCalls).toBe(1);
+
+    // Mutate provider during turn (simulating dynamic change)
+    providerValue = 'beta';
+
+    // Turn 2: Verify beta appears in composed attachment
+    await agent.processMessage('Next message');
+
+    // Provider called again for turn 2's composition, now returning 'beta'
+    expect(providerCalls).toBe(2);
+
+    const turn2Request = tracker.requests[tracker.requests.length - 1]!;
+    const turn2LastMsg = turn2Request.messages[turn2Request.messages.length - 1];
+    expect(typeof turn2LastMsg!.content).toBe('string');
+    const turn2ContentStr = String(turn2LastMsg!.content);
+    expect(turn2ContentStr).toContain('beta');
+  });
+
+  it('cache-friendliness.AC4: undefined provider returns no composition', async () => {
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const turn1Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 1 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([turn1Response], tracker);
+    const mockPersistence = createMockPersistenceProvider();
+    const mockRegistry = createMockToolRegistry();
+    const mockRuntime = createMockCodeRuntime();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'test-ctx',
+          provider: () => undefined,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Simple message');
+
+    expect(tracker.requests.length).toBe(1);
+    const turn1Request = tracker.requests[0]!;
+
+    // Last message should be plain text (no composition)
+    const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
+    expect(typeof turn1LastMsg!.content).toBe('string');
+    const turn1ContentStr = String(turn1LastMsg!.content);
+    expect(turn1ContentStr).toBe('Simple message');
+    expect(turn1ContentStr).not.toContain('[Dynamic Context');
+
+    // Persisted content should also be plain text
+    const convHistory = await agent.getConversationHistory();
+    const lastUserMsg = convHistory.filter((m) => m.role === 'user').pop();
+    expect(lastUserMsg).toBeDefined();
+    expect(lastUserMsg!.content).toBe('Simple message');
   });
 });
 

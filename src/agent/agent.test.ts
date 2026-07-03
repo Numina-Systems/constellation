@@ -23,6 +23,9 @@ import type { PersistenceProvider, QueryFunction } from '../persistence/types.ts
 import type { Compactor, CompactionResult } from '../compaction/types.ts';
 import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
+import type { SearchStore } from '../search/store.ts';
+import type { RecallContextState } from '../recall/context.ts';
+import type { RecallResult } from '../recall/types.ts';
 
 /**
  * Mock implementations for testing
@@ -2304,6 +2307,78 @@ describe('Cache Diagnostics Integration', () => {
       // The cache bust should happen on turn 2 (after the system prompt changed)
       expect(trace.input['turn']).toBe(2);
     }
+  });
+});
+
+describe('recall system prompt stability', () => {
+  it('cache-friendliness.AC1.1 (unit): builds the system prompt exactly once per round on recall-enabled turns', async () => {
+    // Test that when recall is enabled and executes, the system prompt is built
+    // exactly once per round (no post-recall rebuild).
+
+    const buildSystemPromptCalls = { count: 0 };
+    const baseMemory = createMockMemoryManager();
+    const countingMemory: MemoryManager = {
+      ...baseMemory,
+      async buildSystemPrompt() {
+        buildSystemPromptCalls.count++;
+        return baseMemory.buildSystemPrompt();
+      },
+    };
+
+    // Create a minimal mock SearchStore that returns empty results
+    const mockSearchStore: SearchStore = {
+      search: async () => {
+        return [];
+      },
+      registerDomain: () => {
+        // no-op
+      },
+    };
+
+    // Create a RecallContextState holder
+    let recallResult: RecallResult | null = null;
+    const recallContextState: RecallContextState = {
+      setResult: (result: RecallResult | null) => {
+        recallResult = result;
+      },
+      getResult: () => recallResult,
+    };
+
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Test response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse]);
+    const config: AgentConfig = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+      recall_enabled: true,
+      recall_token_budget: 4096,
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: countingMemory,
+      registry: createMockToolRegistry(),
+      runtime: createMockCodeRuntime(),
+      persistence: createMockPersistenceProvider(),
+      config,
+      recallContextState,
+      searchStore: mockSearchStore,
+      embedding: createMockEmbeddingProvider(),
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello');
+
+    // On recall-enabled turns with one round, buildSystemPrompt should be called exactly twice:
+    // - Once at line 203 (preliminary build for overhead calculation)
+    // - Once at line 244 (inside the round loop, sent to the model)
+    // - NOT again after recall is set (lines 278-283 dead code removed)
+    // This verifies there's no post-recall rebuild that would add a 3rd call.
+    expect(buildSystemPromptCalls.count).toBe(2);
   });
 });
 

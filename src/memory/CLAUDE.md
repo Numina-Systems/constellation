@@ -1,12 +1,12 @@
 # Memory
 
-Last verified: 2026-05-17
+Last verified: 2026-07-03 (Task 6 verified snapshot context provider delivery)
 
 ## Purpose
 Implements a three-tier memory system (core/working/archival) with permission-based write access, semantic search via pgvector, event sourcing, and a mutation approval flow for human-controlled blocks.
 
 ## Contracts
-- **Exposes**: `MemoryManager` interface (context building, read/write/list/deleteBlock/moveBlock/getStats, mutation management), `MemoryStore` port interface (includes `getBlocksByLabelPrefix(owner, prefix, tier?)`), `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, all memory types
+- **Exposes**: `MemoryManager` interface (context building, read/write/list/deleteBlock/moveBlock/getStats, mutation management), `MemoryStore` port interface (includes `getBlocksByLabelPrefix(owner, prefix, tier?)`), `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, snapshot context provider for working memory (`WorkingMemoryContextState` type, `createWorkingMemoryContextProvider()`, `formatWorkingMemorySection()`), all memory types
 - **Guarantees**:
   - `readonly` blocks cannot be written to
   - `familiar`-permissioned blocks queue a `PendingMutation` instead of writing directly (requires human approval)
@@ -19,9 +19,9 @@ Implements a three-tier memory system (core/working/archival) with permission-ba
 - **Expects**: `PersistenceProvider` connected with migrations applied. `EmbeddingProvider` available (graceful fallback to null embedding on failure).
 
 ## Dependencies
-- **Uses**: `src/persistence/` (via `MemoryStore`), `src/embedding/` (via `EmbeddingProvider`)
-- **Used by**: `src/tool/builtin/memory.ts`, `src/agent/`, `src/compaction/`, `src/diary/` (via `MemoryBlock` type), `src/index.ts`
-- **Boundary**: Direct SQL access goes through `MemoryStore` only, never through `MemoryManager`.
+- **Uses**: `src/persistence/` (via `MemoryStore`), `src/embedding/` (via `EmbeddingProvider`), `src/agent/types.ts` (re-exports `ContextProvider` type for snapshot context provider)
+- **Used by**: `src/tool/builtin/memory.ts`, `src/agent/` (uses `MemoryBlock` type and calls `getWorkingBlocks()`; snapshot context provider registered at composition root for Phase 3 dynamic delivery), `src/compaction/`, `src/diary/` (via `MemoryBlock` type), `src/index.ts` (composition root wiring of snapshot context provider)
+- **Boundary**: Direct SQL access goes through `MemoryStore` only, never through `MemoryManager`. Working-memory context delivery is synchronous (holder refresh in agent loop is async, but provider invocation from snapshot pipeline is sync).
 
 ## Key Decisions
 - Three tiers: Core (always in context), Working (active session context), Archival (searchable long-term)
@@ -40,3 +40,4 @@ Implements a three-tier memory system (core/working/archival) with permission-ba
 - `store.ts` -- `MemoryStore` port interface
 - `postgres-store.ts` -- PostgreSQL + pgvector implementation of `MemoryStore`
 - `manager.ts` -- `MemoryManager` interface and implementation (orchestration layer)
+- `context.ts` -- Snapshot context provider for working-memory delivery (Phase 3); `WorkingMemoryContextState` holder, `createWorkingMemoryContextProvider()`, `formatWorkingMemorySection()` formatter

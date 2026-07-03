@@ -1,6 +1,6 @@
 # Agent
 
-Last verified: 2026-07-03 (Task 6 verified current working-memory snapshot delivery, buildMessages signature change)
+Last verified: 2026-07-03 (Phase 4: persisted snapshot composition, byte-identical replay)
 
 ## Purpose
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency, delivers relevant skills via the snapshot pipeline per turn via optional `SkillRegistry` dependency, optionally records operation traces for every tool dispatch via `TraceRecorder`, and supports session checkpointing for state persistence and restoration across restarts.
@@ -19,7 +19,7 @@ Implements the core agent loop: receives user messages, builds context from memo
   - Core memory blocks are always included in the system prompt
   - Working memory blocks are delivered via the snapshot pipeline (Phase 3) — the agent refreshes the holder before composition each round, and updated blocks appear in the dynamic-context attachment
   - System prompt is stable when tools and persona haven't changed (no dynamic context providers appended)
-  - Dynamic context providers are routed through snapshot state in user message attachments (Phase 4)
+  - Dynamic context providers are routed through snapshot state in user message attachments (Phase 4): snapshot composition happens at most once per turn, only when the last message is a plain-string user message. Composed attachments are persisted back onto the user-message row in the database and synchronized with the in-memory history entry, ensuring replay is byte-identical across turns. Provider state changes that occur during tool rounds (when the last message is an assistant response) are not consumed; they surface on the next turn's composition as a full snapshot.
   - Relevant skills are delivered via the snapshot pipeline once per turn (requires `skills` AND `skillsContextState` in deps; uses `max_skills_per_turn` and `skill_threshold` config). Skill content is set in the holder and attached as dynamic context, not appended to the system prompt. Retrieval failure logs a warning and clears the section.
   - If `traceRecorder` is present, every tool dispatch (including execute_code and compact_context) is traced fire-and-forget with timing, success/failure, and output summary
   - When `cache_diagnostics` config is true (default), cache-bust detection runs before every `model.complete()` call, comparing content hashes across four dimensions (system_prompt, tool_definitions, message_prefix, beta_headers); unexpected changes emit console warnings and record traces; expected changes (compaction, tool mutation, first turn) are suppressed
@@ -40,6 +40,7 @@ Implements the core agent loop: receives user messages, builds context from memo
 - Token estimation heuristic (1 token ~ 4 chars): Good enough for budget checks without API calls
 - Pre-flight truncation as safety net: Even after compaction, the request may still exceed the model's context window (e.g., large tool definitions, long system prompt). `truncateOldest` provides a hard guard that never sends an over-budget request
 - Cache diagnostics as observability, not enforcement: Detects unexpected cache busts via content hashing but only warns/traces -- never blocks the request. Suppression flags prevent false positives from known-good mutations (compaction, tool changes, first turn)
+- Snapshot composition once per turn (Phase 4): A per-turn `snapshotComposed` flag ensures dynamic context attachments are composed and persisted at most once per turn, only when the last message is a plain-string user message. This guards against double-wrapping on overflow-recovery retries and ensures changes to provider state during tool rounds surface on the next turn. Composed attachments are persisted to the messages table and synchronized with in-memory history, guaranteeing byte-identical replay across conversation restarts.
 - Checkpoint as minimal state snapshot: Captures only the state needed to resume (turn/tool counters, message IDs, working memory, predictions, interests, compaction meta, recall cache). Conversation messages are already persisted; the checkpoint references them by ID rather than duplicating content
 - Checkpoint triggers are strategic: `pre_compaction` (before lossy compression), `interval` (periodic), `shutdown` (graceful exit), `explicit` (user-requested via tool). Pre-compaction is the most critical -- it preserves state before context is irreversibly compressed
 
@@ -53,7 +54,7 @@ Implements the core agent loop: receives user messages, builds context from memo
 - `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression, skill injection, trace recording, external event formatting with per-source instructions)
 - `context.ts` -- System prompt building (memory only, no dynamic providers), message conversion (`buildMessages(history)` — note signature changed in Phase 3, memory param removed), token estimation, overhead estimation, pre-flight truncation (`truncateOldest`)
 - `snapshot.ts` -- Batch-anchored snapshot state (`createSnapshotState`): per-provider content hashing via `Bun.hash()`, snapshot mode detection (full/delta/noop), tracks hash changes across calls
-- `messages.ts` -- User message composition (`buildUserMessage`): builds Anthropic-compatible user messages with optional dynamic context attachment blocks from snapshot results
+- `messages.ts` -- User message composition (`buildUserMessage`): builds Anthropic-compatible user messages with optional dynamic context attachment composed as a single-string message body from snapshot results (Phase 4). Attachments are composed at most once per turn and persisted for byte-identical replay across turns.
 - `cache-diagnostics.ts` -- Cache-bust detection (Functional Core): per-dimension content hashing via `Bun.hash()`, suppression logic for expected changes, `createCacheDiagnostics()` factory
 - `scheduling-context.ts` -- Scheduling context provider (DID authority injection into system prompt)
 - `checkpoint-types.ts` -- `SessionCheckpoint`, `CheckpointTrigger`, `CheckpointAgentState`, `AgentCheckpointState`, `SessionCheckpointSchema`, `CHECKPOINT_VERSION`

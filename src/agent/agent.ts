@@ -569,7 +569,9 @@ export function createAgent(
                 history = Array.from(compactionResult.history);
                 // Reset snapshot state after compaction so next tool round gets full snapshot
                 snapshotState.reset();
-                compactionOccurredThisTurn = compactionResult.messagesCompressed > 0;
+                // Set compaction flag whenever compaction is executed, even if no messages were deleted
+                // (to suppress cache-bust events from expected history replacements)
+                compactionOccurredThisTurn = true;
                 // Track compaction metadata for checkpoint state
                 if (compactionOccurredThisTurn) {
                   lastCompactionMessageCount = history.length;

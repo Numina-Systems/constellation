@@ -1036,7 +1036,7 @@ describe('cache-diagnostics edge cases', () => {
     expect(events[0]?.turn).toBe(99);
   });
 
-  test('message prefix size calculation includes all messages except last', () => {
+  test('message prefix size calculation includes all messages (full-list hashing)', () => {
     const flags: SuppressionFlags = {};
     const msg1 = {role: 'user', content: 'a'};
     const msg2 = {role: 'assistant', content: 'b'};
@@ -1050,7 +1050,7 @@ describe('cache-diagnostics edge cases', () => {
       flags,
     });
 
-    // Modify msg1 (in prefix)
+    // Modify msg1 (in full list)
     const msg1mod = {role: 'user', content: 'aa'};
     const events = diagnostics.checkForCacheBust({
       systemPrompt: '',
@@ -1061,8 +1061,8 @@ describe('cache-diagnostics edge cases', () => {
     });
 
     expect(events.length).toBe(1);
-    // Previous prefix (excluding msg3): msg1, msg2 → total serialized size
-    // Current prefix (excluding msg3): msg1mod, msg2 → total serialized size
+    // Previous full list: msg1, msg2, msg3 → total serialized size
+    // Current full list: msg1mod, msg2, msg3 → total serialized size
     expect(events[0]?.previousSize).toBeGreaterThan(0);
     expect(events[0]?.currentSize).toBeGreaterThan(0);
   });

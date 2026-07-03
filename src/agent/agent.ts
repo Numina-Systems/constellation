@@ -190,7 +190,8 @@ export function createAgent(
     deps.loopDetector?.reset();
 
     // Step 1: Persist user message
-    await persistMessage({
+    // @ts-ignore - userMessageId will be used in Task 3 (compose once per turn, persist composed content)
+    const userMessageId = await persistMessage({
       conversation_id: id,
       role: 'user',
       content: userMessage,
@@ -727,6 +728,18 @@ export function createAgent(
       return '';
     }
     return String(row['id']);
+  }
+
+  /**
+   * Update the content of an existing message.
+   * Used in Task 3 (compose once per turn, persist composed content).
+   */
+  // @ts-ignore - used in Task 3
+  async function updateMessageContent(messageId: string, content: string): Promise<void> {
+    await deps.persistence.query('UPDATE messages SET content = $1 WHERE id = $2', [
+      content,
+      messageId,
+    ]);
   }
 
   /**

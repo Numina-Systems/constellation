@@ -44,23 +44,32 @@ export function buildUserMessage(
   text: string,
   snapshot: SnapshotResult | null,
 ): Message {
-  // No snapshot, or noop, or no content: return plain string message
-  if (snapshot === null || snapshot.mode === 'noop' || snapshot.content === null) {
+  // No snapshot or no content: return plain string message
+  if (snapshot === null || snapshot.content === null) {
     return {
       role: 'user',
       content: text,
     };
   }
 
-  // Full or delta mode with content: compose into single string
-  if ((snapshot.mode === 'full' || snapshot.mode === 'delta') && snapshot.content !== null) {
-    const composedContent = `${formatAttachment(snapshot.content, snapshot.mode)}\n\n${text}`;
-    return {
-      role: 'user',
-      content: composedContent,
-    };
-  }
+  // Exhaustive switch over snapshot mode with compile-time guarantees
+  switch (snapshot.mode) {
+    case 'noop':
+      return {
+        role: 'user',
+        content: text,
+      };
 
-  // Unreachable, but satisfy type system
-  throw new Error('Unreachable: snapshot mode/content combination not handled');
+    case 'full':
+    case 'delta':
+      const composedContent = `${formatAttachment(snapshot.content, snapshot.mode)}\n\n${text}`;
+      return {
+        role: 'user',
+        content: composedContent,
+      };
+
+    default:
+      const _exhaustive: never = snapshot.mode;
+      return _exhaustive;
+  }
 }

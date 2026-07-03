@@ -240,7 +240,7 @@ describe('Skill injection pipeline', () => {
 });
 
 describe('createSkillsContextProvider', () => {
-  describe('cache-friendliness.AC2.1 (unit): SkillsContextState provider returns undefined when unset', () => {
+  describe('provider returns undefined when unset', () => {
     it('should return undefined before any setSection call', () => {
       const provider = createSkillsContextProvider();
       const result = provider();
@@ -249,7 +249,7 @@ describe('createSkillsContextProvider', () => {
     });
   });
 
-  describe('cache-friendliness.AC2.2 (unit): SkillsContextState provider returns section string when set', () => {
+  describe('provider returns section string when set', () => {
     it('should return the exact string set by setSection', () => {
       const provider = createSkillsContextProvider();
       const testSection = '## Active Skills\n\n### test-skill\n\nThis is a test skill.';
@@ -261,7 +261,7 @@ describe('createSkillsContextProvider', () => {
     });
   });
 
-  describe('cache-friendliness.AC2.3 (unit): SkillsContextState provider clears when set to undefined', () => {
+  describe('provider clears when set to undefined', () => {
     it('should return undefined after setSection is called with undefined', () => {
       const provider = createSkillsContextProvider();
       const testSection = '## Active Skills\n\n### test-skill\n\nContent.';

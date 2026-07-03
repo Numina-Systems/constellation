@@ -2568,14 +2568,24 @@ describe('recall system prompt stability', () => {
 
     if (messages && messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
-      // Message should be user role and have content
       expect(lastMessage?.role).toBe('user');
 
-      // Verify skills were set in the context provider
+      // Extract message text to verify snapshot content
+      const text = typeof lastMessage?.content === 'string'
+        ? lastMessage.content
+        : Array.isArray(lastMessage?.content)
+          ? lastMessage.content.map(block => (block.type === 'text' ? block.text : '')).join('\n')
+          : JSON.stringify(lastMessage?.content);
+
+      // Verify the snapshot attachment is in the message
+      expect(text).toContain('[Dynamic Context — Full Snapshot]');
+      expect(text).toContain('## skills');
+      expect(text).toContain('## Active Skills');
+      expect(text).toContain('Test Skill');
+
+      // Secondary assertion: verify provider state
       const skillsSection = skillsContextProvider.getSection();
       expect(skillsSection).toBeDefined();
-      expect(skillsSection).toMatch(/## Active Skills/);
-      expect(skillsSection).toMatch(/Test Skill/);
     }
   });
 

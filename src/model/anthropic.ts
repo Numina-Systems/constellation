@@ -1,4 +1,14 @@
 // pattern: Imperative Shell
+//
+// Cache-friendly Anthropic prompt caching implementation:
+// Anthropic renders requests as tools → system → messages.
+// A cache_control breakpoint on the system param's final block caches tools + system together.
+// A breakpoint on the final message's final content block caches conversation incrementally.
+// Two breakpoints total, within Anthropic's limit of 4.
+//
+// Known limitation (20-block lookback): Anthropic's cache lookup window is 20 content blocks.
+// If a single turn generates >20 new blocks, the previous cache entry is not found—the prefix
+// is recalculated. This is expected and harmless; revisit only if observed in production.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { ModelConfig } from "../config/schema.js";
@@ -32,7 +42,7 @@ function isRetryableError(error: unknown): boolean {
 export function buildAnthropicSystemParam(
   requestSystem: string | undefined,
   messages: ReadonlyArray<Message>,
-): string | undefined {
+): Array<Anthropic.Messages.TextBlockParam> | undefined {
   const systemContents: Array<string> = [];
 
   if (requestSystem !== undefined) {
@@ -53,7 +63,64 @@ export function buildAnthropicSystemParam(
     }
   }
 
-  return systemContents.length > 0 ? systemContents.join("\n\n") : undefined;
+  const concatenated = systemContents.length > 0 ? systemContents.join("\n\n") : undefined;
+
+  if (concatenated === undefined) {
+    return undefined;
+  }
+
+  return [
+    {
+      type: "text" as const,
+      text: concatenated,
+      cache_control: { type: "ephemeral" as const },
+    },
+  ];
+}
+
+export function applyCacheControlToLastBlock(
+  messages: Array<Anthropic.Messages.MessageParam>,
+): Array<Anthropic.Messages.MessageParam> {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  const last = messages[messages.length - 1]!;
+  const ephemeral = { type: "ephemeral" as const };
+
+  const content =
+    typeof last.content === "string"
+      ? [{ type: "text" as const, text: last.content, cache_control: ephemeral }]
+      : last.content.map((block, i) =>
+          i === last.content.length - 1 ? { ...block, cache_control: ephemeral } : block,
+        );
+
+  return [...messages.slice(0, -1), { ...last, content }];
+}
+
+function buildRequestParams(request: ModelRequest): {
+  system: Array<Anthropic.Messages.TextBlockParam> | undefined;
+  messages: Array<Anthropic.Messages.MessageParam>;
+  tools: Array<Anthropic.Messages.Tool> | undefined;
+  model: string;
+  max_tokens: number;
+  temperature?: number;
+  timeout?: number;
+} {
+  const systemParam = buildAnthropicSystemParam(request.system, request.messages);
+  const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
+  const normalizedMessages = nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>;
+  const messagesWithCache = applyCacheControlToLastBlock(normalizedMessages);
+
+  return {
+    system: systemParam,
+    messages: messagesWithCache,
+    tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
+    model: request.model,
+    max_tokens: request.max_tokens,
+    temperature: request.temperature,
+    timeout: request.timeout,
+  };
 }
 
 function normalizeToolDefinitions(
@@ -175,19 +242,18 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
     async complete(request: ModelRequest): Promise<ModelResponse> {
       const response = await callWithRetry(async () => {
         try {
-          const systemParam = buildAnthropicSystemParam(request.system, request.messages);
-          const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
+          const params = buildRequestParams(request);
 
           const stream = client.messages.stream(
             {
-              model: request.model,
-              max_tokens: request.max_tokens,
-              system: systemParam,
-              tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
-              temperature: request.temperature,
-              messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
+              model: params.model,
+              max_tokens: params.max_tokens,
+              system: params.system,
+              tools: params.tools,
+              temperature: params.temperature,
+              messages: params.messages,
             },
-            ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+            ...(params.timeout != null ? [{ timeout: params.timeout }] : []),
           );
           return await stream.finalMessage();
         } catch (error) {
@@ -237,19 +303,18 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
       const stream = await callWithRetry(async () => {
         try {
-          const systemParam = buildAnthropicSystemParam(request.system, request.messages);
-          const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
+          const params = buildRequestParams(request);
 
           return await client.messages.stream(
             {
-              model: request.model,
-              max_tokens: request.max_tokens,
-              system: systemParam,
-              tools: request.tools ? normalizeToolDefinitions(request.tools) : undefined,
-              temperature: request.temperature,
-              messages: nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>,
+              model: params.model,
+              max_tokens: params.max_tokens,
+              system: params.system,
+              tools: params.tools,
+              temperature: params.temperature,
+              messages: params.messages,
             },
-            ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+            ...(params.timeout != null ? [{ timeout: params.timeout }] : []),
           );
         } catch (error) {
           if (error instanceof Anthropic.AuthenticationError) {

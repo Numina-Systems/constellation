@@ -1,12 +1,12 @@
 # Skill
 
-Last verified: 2026-04-05
+Last verified: 2026-07-03
 
 ## Purpose
 Embedding-based skill retrieval system. Skills are structured markdown files (SKILL.md) with YAML frontmatter that teach the agent how to approach specific situations. Retrieved per-turn via semantic similarity.
 
 ## Contracts
-- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface (including `injectSkills()`), `createSkillRegistry(options)`, `createPostgresSkillStore(persistence)`, `loadSkills(options)`, `createSkillTools(registry)`, `formatSkillsSection(skills)`, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
+- **Exposes**: `parseSkillFile(content)`, `SkillStore` port interface, `SkillRegistry` interface (including `injectSkills()`), `createSkillRegistry(options)`, `createPostgresSkillStore(persistence)`, `loadSkills(options)`, `createSkillTools(registry)`, `formatSkillsSection(skills)`, `createSkillsContextProvider()`, `SkillsContextState` type, all domain types (`SkillMetadata`, `SkillDefinition`, `SkillSource`, `SkillSearchResult`, `ParseResult`, `SkillToolDefinition`, `LoadResult`)
 - **SkillStore interface methods**:
   - `upsertEmbedding()` — Write or update skill embedding
   - `deleteEmbedding()` — Remove skill embedding
@@ -21,12 +21,15 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
   - `injectSkills()` accepts non-filesystem skill sources (e.g. MCP prompts) and embeds them for semantic retrieval
   - `SkillSource` is `'builtin' | 'agent' | 'mcp'` -- only `'agent'` skills can be updated via `updateAgentSkill()`
   - `formatSkillsSection` formats an array of skills into a markdown system prompt section (returns `undefined` if empty)
-  - Skills are injected per-turn via `SkillRegistry.getRelevant()`, with errors logged and execution continuing (skills are optional/supplementary)
+  - `createSkillsContextProvider()` returns a callable provider + state object (matching `RecallContextState` pattern): `provider()` returns current section, `setSection()` updates it, `getSection()` reads it
+  - `SkillsContextState` holder is created in the composition root and registered as a dynamic classified provider named 'skills'
+  - Skills are retrieved once per turn via `SkillRegistry.getRelevant()` and delivered via the snapshot pipeline, not appended to system prompt
+  - Retrieval errors are logged and execution continues; the holder is cleared (no skill section appended)
 - **Expects**: `yaml` npm package for YAML parsing, `EmbeddingProvider` for skill embeddings
 
 ## Dependencies
-- **Uses**: `src/tool/` (ToolParameter type), `yaml` (YAML parsing)
-- **Used by**: `src/agent/` (per-turn skill retrieval and formatting), `src/index.ts` (composition root wires registry, store, and skill-defined tools), `src/mcp/` (prompt-to-skill conversion via `injectSkills()`)
+- **Uses**: `src/tool/` (ToolParameter type), `src/agent/types.ts` (ContextProvider type), `yaml` (YAML parsing)
+- **Used by**: `src/agent/` (per-turn skill retrieval via registry, delivery via skillsContextState holder in snapshot pipeline), `src/index.ts` (composition root creates holder, registers as dynamic provider, wires registry and holder to agent), `src/mcp/` (prompt-to-skill conversion via `injectSkills()`)
 
 ## Key Decisions
 - Embedding-based retrieval over system-prompt enumeration: Scales without bloating context
@@ -41,7 +44,7 @@ Embedding-based skill retrieval system. Skills are structured markdown files (SK
 - `postgres-store.ts` — PostgreSQL implementation of SkillStore
 - `loader.ts` — Filesystem skill loader with change detection (phase 3)
 - `registry.ts` — SkillRegistry implementation (phase 3)
-- `context.ts` — `formatSkillsSection(skills)` for system prompt injection (phase 4)
+- `context.ts` — `formatSkillsSection(skills)` formatter, `createSkillsContextProvider()` factory, `SkillsContextState` type (snapshot pipeline delivery; phase 4)
 - `tools.ts` — Agent-facing skill management tools: `skill_list`, `skill_read`, `skill_create`, `skill_update` (phase 5)
 - `test-helpers.ts` — Shared test utilities (mock skill store, embedding provider, skill factories)
 - `index.ts` — Barrel exports

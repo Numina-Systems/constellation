@@ -92,6 +92,7 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { createSkillsContextProvider } from '@/skill/index.js';
 import { buildDiarySection } from '@/diary';
 import { createShellSession } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
@@ -735,6 +736,9 @@ async function main(): Promise<void> {
   const recallContextProvider = createRecallContextProvider();
   const subconsciousRecallContextProvider = createRecallContextProvider();
 
+  // Create skills context provider
+  const skillsContextProvider = createSkillsContextProvider();
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -1140,6 +1144,13 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
+  // Skills context provider
+  classifiedProviders.push({
+    name: 'skills',
+    provider: skillsContextProvider,
+    classification: 'dynamic',
+  });
+
   // Prediction context provider
   classifiedProviders.push({
     name: 'prediction',
@@ -1296,6 +1307,7 @@ async function main(): Promise<void> {
     ],
     classifiedProviders,
     skills: skillRegistry,
+    skillsContextState: skillsContextProvider,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
     recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
     searchStore: searchStore,

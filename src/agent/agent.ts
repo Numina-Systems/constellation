@@ -231,6 +231,9 @@ export function createAgent(
     let cachedRecallResult: RecallResult | null = null;
     let recallExecuted = false;
 
+    // Skills state — cache result across tool rounds
+    let skillsRetrieved = false;
+
     // One recovery attempt per turn when the provider reports the request can
     // never fit (context window or rate-limit input budget). Compaction is
     // normally triggered by the context budget check above, but a rate-limit
@@ -280,30 +283,18 @@ export function createAgent(
         deps.recallContextState.setResult(cachedRecallResult);
       }
 
-      // Retrieve and append relevant skills
-      // KNOWN LIMITATION: Skills currently mutate systemPrompt directly rather than routing through
-      // the snapshot pipeline like other dynamic providers (recall, prediction, activity, etc).
-      // Future improvement: Create a SkillsContextState holder (similar to RecallContextState) that
-      // stores skill content and registers as a dynamic provider in classifiedProviders. This would
-      // allow skill injection to be cached and versioned in snapshots. Requires:
-      // 1. New SkillsContextState type with setContent/getContent methods
-      // 2. Creating the holder before agent loop (in index.ts composition root)
-      // 3. Passing it as AgentDependencies.skillsContextState
-      // 4. Calling setContent after getRelevant() here, then removing this direct mutation
-      // For now, this approach works but prevents skills from being routed through snapshot caching.
-      if (deps.skills) {
+      // Retrieve relevant skills once per turn; delivered via the snapshot pipeline
+      if (!skillsRetrieved && deps.skills && deps.skillsContextState) {
+        skillsRetrieved = true;
         try {
           const maxSkills = deps.config.max_skills_per_turn ?? 3;
           const threshold = deps.config.skill_threshold ?? 0.3;
           const relevantSkills = await deps.skills.getRelevant(userMessage, maxSkills, threshold);
-          const skillSection = formatSkillsSection(relevantSkills);
-          if (skillSection) {
-            systemPrompt += '\n\n' + skillSection;
-          }
+          deps.skillsContextState.setSection(formatSkillsSection(relevantSkills));
         } catch (error) {
+          deps.skillsContextState.setSection(undefined);
           const errorMsg = error instanceof Error ? error.message : String(error);
           console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
-
           if (deps.traceRecorder) {
             const structured = isConstellationError(error)
               ? error

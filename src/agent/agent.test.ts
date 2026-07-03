@@ -21,7 +21,7 @@ import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime } from '../runtime/types.ts';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.ts';
 import type { Compactor, CompactionResult } from '../compaction/types.ts';
-import type { SkillRegistry } from '../skill/types.ts';
+import type { SkillRegistry, SkillDefinition } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { SearchStore } from '../search/store.ts';
 import type { RecallContextState } from '../recall/context.ts';
@@ -2379,6 +2379,285 @@ describe('recall system prompt stability', () => {
     // - NOT again after recall is set (lines 278-283 dead code removed)
     // This verifies there's no post-recall rebuild that would add a 3rd call.
     expect(buildSystemPromptCalls.count).toBe(2);
+  });
+
+  it('cache-friendliness.AC2.1 (unit): system prompt is byte-identical across turns when skills are unchanged', async () => {
+    // Create a mock skill registry that returns the same skills both times
+    const skillDefinition: SkillDefinition = {
+      id: 'skill-1',
+      metadata: {
+        name: 'Test Skill',
+        description: 'A test skill',
+        version: '1.0.0',
+      },
+      body: 'This is a test skill body.',
+      companions: [],
+      source: 'builtin',
+      filePath: '/test/skill.md',
+      contentHash: 'abc123',
+    };
+
+    const fakeSkillRegistry: SkillRegistry = {
+      async load() {},
+      getAll() {
+        return [skillDefinition];
+      },
+      getByName() {
+        return null;
+      },
+      async search() {
+        return [];
+      },
+      async getRelevant(_context: string, _limit?: number, _threshold?: number) {
+        // Return the same skill both times
+        return [skillDefinition];
+      },
+      async createAgentSkill() {
+        return skillDefinition;
+      },
+      async updateAgentSkill() {
+        return skillDefinition;
+      },
+      async injectSkills() {},
+    };
+
+    // Create skills context provider
+    const { createSkillsContextProvider } = await import('../skill/index.js');
+    const skillsContextProvider = createSkillsContextProvider();
+
+    // Track requests
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse, modelResponse], tracker);
+    const mockMem = createMockMemoryManager();
+    const mockReg = createMockToolRegistry();
+    const mockRun = createMockCodeRuntime();
+    const mockPers = createMockPersistenceProvider();
+
+    // Create dependencies with skills and skillsContextState
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMem,
+      registry: mockReg,
+      runtime: mockRun,
+      persistence: mockPers,
+      config: {
+        max_tool_rounds: 5,
+        context_budget: 0.8,
+      },
+      skills: fakeSkillRegistry,
+      skillsContextState: skillsContextProvider,
+      classifiedProviders: [
+        {
+          name: 'skills',
+          provider: skillsContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+
+    // First message
+    await agent.processMessage('Hello');
+    const firstSystemPrompt = tracker.requests[0]?.system ?? '';
+
+    // Reset tracker for second message
+    tracker.requests = [];
+
+    // Second message (skills unchanged)
+    await agent.processMessage('Hello again');
+    const secondSystemPrompt = tracker.requests[0]?.system ?? '';
+
+    // System prompt should be byte-identical (no skills section in system prompt)
+    expect(firstSystemPrompt).toBe(secondSystemPrompt);
+    // Verify skills section is NOT in system prompt
+    expect(firstSystemPrompt).not.toMatch(/## Active Skills/);
+  });
+
+  it('cache-friendliness.AC2.2 (unit): skill content appears in dynamic context attachment', async () => {
+    // Create a mock skill registry
+    const skillDefinition: SkillDefinition = {
+      id: 'skill-1',
+      metadata: {
+        name: 'Test Skill',
+        description: 'A test skill',
+        version: '1.0.0',
+      },
+      body: 'This is a test skill body.',
+      companions: [],
+      source: 'builtin',
+      filePath: '/test/skill.md',
+      contentHash: 'abc123',
+    };
+
+    const fakeSkillRegistry: SkillRegistry = {
+      async load() {},
+      getAll() {
+        return [skillDefinition];
+      },
+      getByName() {
+        return null;
+      },
+      async search() {
+        return [];
+      },
+      async getRelevant(_context: string, _limit?: number, _threshold?: number) {
+        return [skillDefinition];
+      },
+      async createAgentSkill() {
+        return skillDefinition;
+      },
+      async updateAgentSkill() {
+        return skillDefinition;
+      },
+      async injectSkills() {},
+    };
+
+    // Create skills context provider
+    const { createSkillsContextProvider } = await import('../skill/index.js');
+    const skillsContextProvider = createSkillsContextProvider();
+
+    // Track requests
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse], tracker);
+    const mockMem = createMockMemoryManager();
+    const mockReg = createMockToolRegistry();
+    const mockRun = createMockCodeRuntime();
+    const mockPers = createMockPersistenceProvider();
+
+    // Create dependencies
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMem,
+      registry: mockReg,
+      runtime: mockRun,
+      persistence: mockPers,
+      config: {
+        max_tool_rounds: 5,
+        context_budget: 0.8,
+      },
+      skills: fakeSkillRegistry,
+      skillsContextState: skillsContextProvider,
+      classifiedProviders: [
+        {
+          name: 'skills',
+          provider: skillsContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello');
+
+    // Get the last message (should be the composed user message)
+    const messages = tracker.requests[0]?.messages;
+    expect(messages).toBeDefined();
+
+    if (messages && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      // Message should be user role and have content
+      expect(lastMessage?.role).toBe('user');
+
+      // Verify skills were set in the context provider
+      const skillsSection = skillsContextProvider.getSection();
+      expect(skillsSection).toBeDefined();
+      expect(skillsSection).toMatch(/## Active Skills/);
+      expect(skillsSection).toMatch(/Test Skill/);
+    }
+  });
+
+  it('cache-friendliness.AC2.3 (unit): turn completes normally when skill retrieval throws', async () => {
+    // Create a skill registry that throws
+    const fakeSkillRegistry: SkillRegistry = {
+      async load() {},
+      getAll() {
+        return [];
+      },
+      getByName() {
+        return null;
+      },
+      async search() {
+        return [];
+      },
+      async getRelevant() {
+        throw new Error('Skill retrieval failed');
+      },
+      async createAgentSkill() {
+        throw new Error('not implemented');
+      },
+      async updateAgentSkill() {
+        throw new Error('not implemented');
+      },
+      async injectSkills() {},
+    };
+
+    // Create skills context provider
+    const { createSkillsContextProvider } = await import('../skill/index.js');
+    const skillsContextProvider = createSkillsContextProvider();
+
+    // Track requests
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Success despite skill error' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse], tracker);
+    const mockMem = createMockMemoryManager();
+    const mockReg = createMockToolRegistry();
+    const mockRun = createMockCodeRuntime();
+    const mockPers = createMockPersistenceProvider();
+
+    // Create dependencies
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMem,
+      registry: mockReg,
+      runtime: mockRun,
+      persistence: mockPers,
+      config: {
+        max_tool_rounds: 5,
+        context_budget: 0.8,
+      },
+      skills: fakeSkillRegistry,
+      skillsContextState: skillsContextProvider,
+      classifiedProviders: [
+        {
+          name: 'skills',
+          provider: skillsContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+
+    // Should complete normally despite skill retrieval error
+    const response = await agent.processMessage('Hello');
+
+    expect(response).toBe('Success despite skill error');
+
+    // Verify skills section is undefined after error
+    const skillsSection = skillsContextProvider.getSection();
+    expect(skillsSection).toBeUndefined();
+
+    // Verify system prompt doesn't contain skills
+    const systemPrompt = tracker.requests[0]?.system ?? '';
+    expect(systemPrompt).not.toMatch(/## Active Skills/);
   });
 });
 

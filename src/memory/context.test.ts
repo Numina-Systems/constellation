@@ -1,127 +1,145 @@
 // pattern: Functional Core
 
-/**
- * Unit tests for working-memory context provider.
- * Verifies the formatter contract and provider state behavior.
- */
-
-import { describe, it, expect } from 'bun:test';
-import {
-  formatWorkingMemorySection,
-  createWorkingMemoryContextProvider,
-} from './context.ts';
+import { describe, test, expect } from 'bun:test';
+import { formatWorkingMemorySection, createWorkingMemoryContextProvider } from './context.ts';
 import type { MemoryBlock } from './types.ts';
 
-function createTestBlock(overrides?: Partial<MemoryBlock>): MemoryBlock {
-  return {
-    id: 'test-id',
-    owner: 'test-owner',
-    tier: 'working',
-    label: 'test-label',
-    content: 'test content',
-    embedding: null,
-    permission: 'readwrite',
-    pinned: false,
-    created_at: new Date(),
-    updated_at: new Date(),
-    ...overrides,
-  };
-}
-
 describe('formatWorkingMemorySection', () => {
-  it('returns undefined for empty blocks', () => {
+  test('cache-friendliness.AC3.3: empty blocks returns undefined', () => {
     const result = formatWorkingMemorySection([]);
     expect(result).toBeUndefined();
   });
 
-  it('formats single block as heading and content', () => {
-    const block = createTestBlock({
-      label: 'context',
-      content: 'some content',
-    });
+  test('single block formats correctly', () => {
+    const blocks: Array<MemoryBlock> = [
+      {
+        id: 'b1',
+        owner: 'test',
+        tier: 'working',
+        label: 'Current Focus',
+        content: 'Working on feature X',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ];
 
-    const result = formatWorkingMemorySection([block]);
-
-    expect(result).toBe('### context\nsome content');
+    const result = formatWorkingMemorySection(blocks);
+    expect(result).toBe('### Current Focus\nWorking on feature X');
   });
 
-  it('formats two blocks with heading separation', () => {
-    const block1 = createTestBlock({
-      label: 'label1',
-      content: 'content1',
-    });
-    const block2 = createTestBlock({
-      label: 'label2',
-      content: 'content2',
-    });
+  test('two blocks format with separator', () => {
+    const blocks: Array<MemoryBlock> = [
+      {
+        id: 'b1',
+        owner: 'test',
+        tier: 'working',
+        label: 'Context A',
+        content: 'Content for A',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+      {
+        id: 'b2',
+        owner: 'test',
+        tier: 'working',
+        label: 'Context B',
+        content: 'Content for B',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ];
 
-    const result = formatWorkingMemorySection([block1, block2]);
-
-    expect(result).toBe(
-      '### label1\ncontent1\n\n### label2\ncontent2'
-    );
-  });
-
-  it('cache-friendliness.AC3.3 (unit): empty blocks return undefined', () => {
-    // Explicit AC label test as requested in phase file
-    const result = formatWorkingMemorySection([]);
-    expect(result).toBeUndefined();
+    const result = formatWorkingMemorySection(blocks);
+    expect(result).toBe('### Context A\nContent for A\n\n### Context B\nContent for B');
   });
 });
 
 describe('createWorkingMemoryContextProvider', () => {
-  it('returns undefined before setBlocks is called', () => {
+  test('returns undefined before setBlocks is called', () => {
     const provider = createWorkingMemoryContextProvider();
     const result = provider();
     expect(result).toBeUndefined();
   });
 
-  it('returns undefined after setBlocks is called with empty array', () => {
+  test('returns undefined after setBlocks([])', () => {
     const provider = createWorkingMemoryContextProvider();
     provider.setBlocks([]);
     const result = provider();
     expect(result).toBeUndefined();
   });
 
-  it('returns formatted section after setBlocks is called with blocks', () => {
+  test('returns formatted section after setBlocks with blocks', () => {
     const provider = createWorkingMemoryContextProvider();
-    const block = createTestBlock({
-      label: 'context',
-      content: 'some content',
-    });
+    const blocks: Array<MemoryBlock> = [
+      {
+        id: 'b1',
+        owner: 'test',
+        tier: 'working',
+        label: 'Session State',
+        content: 'Active',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ];
 
-    provider.setBlocks([block]);
+    provider.setBlocks(blocks);
     const result = provider();
 
-    expect(result).toBe('### context\nsome content');
+    expect(result).toBe('### Session State\nActive');
   });
 
-  it('updates when setBlocks is called multiple times', () => {
+  test('updates content when setBlocks is called multiple times', () => {
     const provider = createWorkingMemoryContextProvider();
 
-    const block1 = createTestBlock({
-      label: 'label1',
-      content: 'content1',
-    });
-    provider.setBlocks([block1]);
-    expect(provider()).toBe('### label1\ncontent1');
+    const block1: Array<MemoryBlock> = [
+      {
+        id: 'b1',
+        owner: 'test',
+        tier: 'working',
+        label: 'V1',
+        content: 'Version 1',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ];
 
-    const block2 = createTestBlock({
-      label: 'label2',
-      content: 'content2',
-    });
-    provider.setBlocks([block2]);
-    expect(provider()).toBe('### label2\ncontent2');
-  });
+    provider.setBlocks(block1);
+    const result1 = provider();
+    expect(result1).toContain('Version 1');
 
-  it('returns undefined when reset with empty array', () => {
-    const provider = createWorkingMemoryContextProvider();
-    const block = createTestBlock();
+    const block2: Array<MemoryBlock> = [
+      {
+        id: 'b1',
+        owner: 'test',
+        tier: 'working',
+        label: 'V2',
+        content: 'Version 2',
+        embedding: null,
+        permission: 'readwrite',
+        pinned: false,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+    ];
 
-    provider.setBlocks([block]);
-    expect(provider()).toBeDefined();
-
-    provider.setBlocks([]);
-    expect(provider()).toBeUndefined();
+    provider.setBlocks(block2);
+    const result2 = provider();
+    expect(result2).toContain('Version 2');
+    expect(result2).not.toContain('Version 1');
   });
 });

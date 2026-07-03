@@ -304,7 +304,7 @@ export function createAgent(
         }
       }
 
-      const messages = await buildMessages(history, deps.memory);
+      const messages = await buildMessages(history);
 
       // Pre-flight guard: truncate if estimated request exceeds model limit
       const modelTools = deps.registry.toModelTools();
@@ -321,6 +321,11 @@ export function createAgent(
           `pre-flight guard: estimated ${messageTokens + requestOverhead} tokens exceeds safe limit ${safeLimit} (model max: ${modelMaxTokens}), truncating oldest messages`,
         );
         finalMessages = truncateOldest(messages, modelMaxTokens, requestOverhead);
+      }
+
+      // Refresh working memory holder before snapshot composition
+      if (deps.workingMemoryContextState) {
+        deps.workingMemoryContextState.setBlocks(await deps.memory.getWorkingBlocks());
       }
 
       // Compute snapshot — first round forces full, subsequent rounds detect delta/noop

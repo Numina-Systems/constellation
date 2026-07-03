@@ -93,6 +93,7 @@ import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServ
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
 import { createSkillsContextProvider } from '@/skill/index.js';
+import { createWorkingMemoryContextProvider } from '@/memory/index.js';
 import { buildDiarySection } from '@/diary';
 import { createShellSession } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
@@ -739,6 +740,9 @@ async function main(): Promise<void> {
   // Create skills context provider
   const skillsContextProvider = createSkillsContextProvider();
 
+  // Create working memory context provider
+  const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -1151,6 +1155,13 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
+  // Working memory context provider
+  classifiedProviders.push({
+    name: 'working-memory',
+    provider: workingMemoryContextProvider,
+    classification: 'dynamic',
+  });
+
   // Prediction context provider
   classifiedProviders.push({
     name: 'prediction',
@@ -1317,6 +1328,7 @@ async function main(): Promise<void> {
     checkpointStateRef: agentStateRef,
     loopDetector,
     diarySection,
+    workingMemoryContextState: workingMemoryContextProvider,
   }, mainConversationId);
 
   // Create subconscious agent if enabled

@@ -2671,6 +2671,381 @@ describe('recall system prompt stability', () => {
   });
 });
 
+describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+  });
+
+  it('cache-friendliness.AC3.1 (unit): buildMessages output contains no working-memory message', async () => {
+    // Mock memory manager that returns a working block
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [
+          {
+            id: 'wb-1',
+            owner: 'test',
+            tier: 'working',
+            label: 'Session State',
+            content: 'Currently working on feature X',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        ];
+      },
+      async buildSystemPrompt() {
+        return 'You are a helpful assistant.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'test',
+            owner: 'test',
+            tier: 'working',
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+
+    const { buildMessages } = await import('./context.ts');
+    const history: ReadonlyArray<ConversationMessage> = [
+      {
+        id: 'msg-1',
+        conversation_id: 'conv-1',
+        role: 'user',
+        content: 'Hello',
+        created_at: new Date(),
+      },
+    ];
+
+    const messages = await buildMessages(history);
+
+    // AC3.1: messages should not contain working-memory prepend
+    expect(messages.length).toBe(1);
+    expect(messages[0]!.role).toBe('user');
+    expect(messages[0]!.content).toBe('Hello');
+
+    // Verify no message contains [Working Memory Context]
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        expect(msg.content).not.toContain('[Working Memory Context]');
+      }
+    }
+  });
+
+  it('cache-friendliness.AC3.2 (unit): turn 2 LAST message attachment contains updated working-memory', async () => {
+    // Create a mock memory that returns a working block that changes
+    let workingBlockContent = 'Initial state';
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [
+          {
+            id: 'wb-1',
+            owner: 'test',
+            tier: 'working',
+            label: 'State',
+            content: workingBlockContent,
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        ];
+      },
+      async buildSystemPrompt() {
+        return 'You are helpful.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'wb-1',
+            owner: 'test',
+            tier: 'working',
+            label: 'State',
+            content: workingBlockContent,
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const turn1Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 1 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const turn2Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 2 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([turn1Response, turn2Response], tracker);
+
+    const { createWorkingMemoryContextProvider } = await import('@/memory/index.js');
+    const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'working-memory',
+          provider: workingMemoryContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+      workingMemoryContextState: workingMemoryContextProvider,
+    };
+
+    const agent = createAgent(deps);
+
+    // Turn 1
+    await agent.processMessage('First message');
+
+    expect(tracker.requests.length).toBe(1);
+    const turn1Request = tracker.requests[0]!;
+
+    // Verify turn 1 has working memory in attachment
+    const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
+    expect(turn1LastMsg).toBeDefined();
+    let hasWorkingMemory = false;
+    if (Array.isArray(turn1LastMsg!.content)) {
+      for (const block of turn1LastMsg!.content) {
+        if (typeof block === 'object' && 'type' in block && (block as Record<string, unknown>)['type'] === 'text') {
+          const textContent = String((block as Record<string, unknown>)['text']);
+          if (textContent.includes('## working-memory')) {
+            hasWorkingMemory = true;
+            expect(textContent).toContain('Initial state');
+          }
+        }
+      }
+    }
+    expect(hasWorkingMemory).toBe(true);
+
+    // Change working memory content
+    workingBlockContent = 'Updated state';
+
+    // Turn 2
+    await agent.processMessage('Second message');
+
+    expect(tracker.requests.length).toBe(2);
+    const turn2Request = tracker.requests[1]!;
+
+    // AC3.2: Verify that all messages from turn 1 are byte-identical in turn 2 (except turn 1's final composed user message)
+    expect(turn2Request.messages.length).toBeGreaterThanOrEqual(turn1Request.messages.length);
+
+    // Check shared prefix (all messages except the last from turn 1 should be identical)
+    const sharedCount = turn1Request.messages.length - 1; // Exclude turn 1's final user message
+    for (let i = 0; i < sharedCount; i++) {
+      const turn1Msg = turn1Request.messages[i];
+      const turn2Msg = turn2Request.messages[i];
+      const turn1Str = JSON.stringify(turn1Msg);
+      const turn2Str = JSON.stringify(turn2Msg);
+      expect(turn1Str).toBe(turn2Str);
+    }
+
+    // AC3.2: Verify turn 2's LAST message contains updated working memory content
+    const turn2LastMsg = turn2Request.messages[turn2Request.messages.length - 1];
+    expect(turn2LastMsg).toBeDefined();
+    hasWorkingMemory = false;
+    if (Array.isArray(turn2LastMsg!.content)) {
+      for (const block of turn2LastMsg!.content) {
+        if (typeof block === 'object' && 'type' in block && (block as Record<string, unknown>)['type'] === 'text') {
+          const textContent = String((block as Record<string, unknown>)['text']);
+          if (textContent.includes('## working-memory')) {
+            hasWorkingMemory = true;
+            expect(textContent).toContain('Updated state');
+          }
+        }
+      }
+    }
+    expect(hasWorkingMemory).toBe(true);
+  });
+
+  it('cache-friendliness.AC3.3 (unit): with no working-memory blocks, no working-memory section in request', async () => {
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [];
+      },
+      async buildSystemPrompt() {
+        return 'You are helpful.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'test',
+            owner: 'test',
+            tier: 'working',
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const mockModel = createMockModelProvider(
+      [
+        {
+          content: [{ type: 'text', text: 'Response' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      ],
+      tracker,
+    );
+
+    const { createWorkingMemoryContextProvider } = await import('@/memory/index.js');
+    const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'working-memory',
+          provider: workingMemoryContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+      workingMemoryContextState: workingMemoryContextProvider,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello');
+
+    expect(tracker.requests.length).toBeGreaterThan(0);
+    const requestStr = JSON.stringify(tracker.requests[0]);
+
+    // AC3.3: "working-memory" should not appear anywhere in the request
+    expect(requestStr).not.toContain('working-memory');
+    expect(requestStr).not.toContain('## working-memory');
+  });
+});
+
 // Integration test (requires real Postgres)
 if (process.env['DATABASE_URL']) {
   describe('Agent loop (integration with Postgres)', () => {

@@ -25,12 +25,11 @@ export function formatWorkingMemorySection(
 export function createWorkingMemoryContextProvider(): ContextProvider & WorkingMemoryContextState {
   let currentBlocks: ReadonlyArray<MemoryBlock> = [];
 
-  const provider = (() => formatWorkingMemorySection(currentBlocks)) as ContextProvider &
-    WorkingMemoryContextState;
+  const provider = () => formatWorkingMemorySection(currentBlocks);
 
-  provider.setBlocks = (blocks: ReadonlyArray<MemoryBlock>) => {
-    currentBlocks = blocks;
-  };
-
-  return provider;
+  return Object.assign(provider, {
+    setBlocks(blocks: ReadonlyArray<MemoryBlock>): void {
+      currentBlocks = blocks;
+    },
+  });
 }

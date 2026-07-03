@@ -2882,7 +2882,22 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
       workingMemoryContextState: workingMemoryContextProvider,
     };
 
-    const agent = createAgent(deps);
+    // Prepend a prior turn to establish a real shared prefix for AC3.2 verification
+    const priorResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Prior response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+    const priorModel = createMockModelProvider([priorResponse, turn1Response, turn2Response], tracker);
+    const depsWithPrior: AgentDependencies = {
+      ...deps,
+      model: priorModel,
+    };
+    const priorAgent = createAgent(depsWithPrior);
+    await priorAgent.processMessage('Prior message');
+
+    tracker.requests = []; // Reset tracker to measure turn 1 and turn 2 only
+    const agent = createAgent(deps, priorAgent.conversationId);
 
     // Turn 1
     await agent.processMessage('First message');
@@ -2921,6 +2936,7 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
 
     // Check shared prefix (all messages except the last from turn 1 should be identical)
     const sharedCount = turn1Request.messages.length - 1; // Exclude turn 1's final user message
+    expect(sharedCount).toBeGreaterThan(0); // REQUIRED: Ensure the loop verifies something; without this, the test silently passes vacuously
     for (let i = 0; i < sharedCount; i++) {
       const turn1Msg = turn1Request.messages[i];
       const turn2Msg = turn2Request.messages[i];

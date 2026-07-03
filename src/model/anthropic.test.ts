@@ -1,9 +1,15 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { createAnthropicAdapter, buildAnthropicSystemParam, normalizeMessage } from "./anthropic.js";
+import {
+  createAnthropicAdapter,
+  buildAnthropicSystemParam,
+  applyCacheControlToLastBlock,
+  normalizeMessage,
+  buildRequestParams,
+} from "./anthropic.js";
 import { ModelError } from "./types.js";
-import type { Message } from "./types.js";
+import type { Message, ModelRequest } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
 
 describe("createAnthropicAdapter", () => {
@@ -473,8 +479,30 @@ describe("createAnthropicAdapter", () => {
     });
 
     it("applyCacheControlToLastBlock converts string content to text block with cache_control (AC6.1)", () => {
-      // Placeholder test for applyCacheControlToLastBlock helper
-      expect(true).toBe(true);
+      const result = applyCacheControlToLastBlock([
+        {
+          role: "user",
+          content: "hi",
+        },
+      ]);
+
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(1);
+
+      const lastMessage = result[0]!;
+      expect(typeof lastMessage.content).not.toBe("string");
+      expect(Array.isArray(lastMessage.content)).toBe(true);
+
+      if (Array.isArray(lastMessage.content)) {
+        expect(lastMessage.content.length).toBe(1);
+        const lastBlock = lastMessage.content[0]!;
+        expect(lastBlock.type).toBe("text");
+        expect((lastBlock as { type: string; text: string }).text).toBe("hi");
+        expect((lastBlock as { cache_control?: unknown }).cache_control).toEqual({
+          type: "ephemeral",
+        });
+      }
     });
 
     it("should return undefined when no system content exists (AC6.2)", () => {
@@ -502,6 +530,160 @@ describe("createAnthropicAdapter", () => {
 
       expect(result).toBeUndefined();
       expect(Array.isArray(result)).toBe(false);
+    });
+
+    it("applyCacheControlToLastBlock on block-array content only marks final block with cache_control (AC6.1)", () => {
+      const result = applyCacheControlToLastBlock([
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "first" },
+            {
+              type: "tool_result" as const,
+              tool_use_id: "tool-1",
+              content: "result",
+            },
+          ],
+        },
+      ]);
+
+      expect(result.length).toBe(1);
+      const lastMessage = result[0]!;
+      expect(Array.isArray(lastMessage.content)).toBe(true);
+
+      if (Array.isArray(lastMessage.content)) {
+        expect(lastMessage.content.length).toBe(2);
+
+        // First block should not have cache_control
+        const firstBlock = lastMessage.content[0]!;
+        expect(firstBlock.type).toBe("text");
+        expect((firstBlock as { cache_control?: unknown }).cache_control).toBeUndefined();
+
+        // Last block should have cache_control
+        const lastBlock = lastMessage.content[1]!;
+        expect(lastBlock.type).toBe("tool_result");
+        expect((lastBlock as { cache_control?: unknown }).cache_control).toEqual({
+          type: "ephemeral",
+        });
+      }
+    });
+
+    it("applyCacheControlToLastBlock returns empty array unchanged (AC6.1 edge case)", () => {
+      const result = applyCacheControlToLastBlock([]);
+
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(0);
+    });
+
+    it("applyCacheControlToLastBlock with empty content array returns unchanged (AC6.1 edge case)", () => {
+      const result = applyCacheControlToLastBlock([
+        {
+          role: "user",
+          content: [],
+        },
+      ]);
+
+      expect(result.length).toBe(1);
+      const lastMessage = result[0]!;
+      expect(Array.isArray(lastMessage.content)).toBe(true);
+
+      if (Array.isArray(lastMessage.content)) {
+        expect(lastMessage.content.length).toBe(0);
+      }
+    });
+
+    it("buildRequestParams with system prompt produces exactly 2 cache_control breakpoints (AC6.3)", () => {
+      const request: ModelRequest = {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 100,
+        system: "Base system",
+        messages: [
+          {
+            role: "user",
+            content: "First message",
+          },
+          {
+            role: "assistant",
+            content: "Response",
+          },
+          {
+            role: "user",
+            content: "Second message",
+          },
+        ],
+      };
+
+      const params = buildRequestParams(request);
+
+      // Serialize to JSON and count cache_control occurrences
+      const jsonStr = JSON.stringify(params);
+      const matches = jsonStr.match(/cache_control/g);
+      const count = matches ? matches.length : 0;
+
+      expect(count).toBe(2); // One on system, one on last message
+    });
+
+    it("buildRequestParams without system prompt produces exactly 1 cache_control breakpoint (AC6.3)", () => {
+      const request: ModelRequest = {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "First message",
+          },
+          {
+            role: "assistant",
+            content: "Response",
+          },
+          {
+            role: "user",
+            content: "Last message",
+          },
+        ],
+      };
+
+      const params = buildRequestParams(request);
+
+      // Serialize to JSON and count cache_control occurrences
+      const jsonStr = JSON.stringify(params);
+      const matches = jsonStr.match(/cache_control/g);
+      const count = matches ? matches.length : 0;
+
+      expect(count).toBe(1); // Only on last message
+    });
+
+    it("buildRequestParams ensures non-final messages have no cache_control (AC6.3)", () => {
+      const request: ModelRequest = {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 100,
+        system: "System",
+        messages: [
+          {
+            role: "user",
+            content: "Message 1",
+          },
+          {
+            role: "assistant",
+            content: "Message 2",
+          },
+        ],
+      };
+
+      const params = buildRequestParams(request);
+
+      // First message content should not have cache_control
+      const firstMessage = params.messages[0]!;
+      if (typeof firstMessage.content === "string") {
+        expect(firstMessage.content).not.toContain("cache_control");
+      } else if (Array.isArray(firstMessage.content)) {
+        for (const block of firstMessage.content) {
+          expect(
+            (block as { cache_control?: unknown }).cache_control
+          ).toBeUndefined();
+        }
+      }
     });
   });
 

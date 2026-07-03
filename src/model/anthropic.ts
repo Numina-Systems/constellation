@@ -98,7 +98,7 @@ export function applyCacheControlToLastBlock(
   return [...messages.slice(0, -1), { ...last, content }];
 }
 
-function buildRequestParams(request: ModelRequest): {
+type AnthropicRequestParams = {
   system: Array<Anthropic.Messages.TextBlockParam> | undefined;
   messages: Array<Anthropic.Messages.MessageParam>;
   tools: Array<Anthropic.Messages.Tool> | undefined;
@@ -106,7 +106,9 @@ function buildRequestParams(request: ModelRequest): {
   max_tokens: number;
   temperature?: number;
   timeout?: number;
-} {
+};
+
+export function buildRequestParams(request: ModelRequest): AnthropicRequestParams {
   const systemParam = buildAnthropicSystemParam(request.system, request.messages);
   const nonSystemMessages = request.messages.filter((m) => m.role !== "system");
   const normalizedMessages = nonSystemMessages.map(normalizeMessage) as Array<Anthropic.Messages.MessageParam>;

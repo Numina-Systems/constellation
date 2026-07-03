@@ -165,119 +165,50 @@ describe("BlueskyConfigSchema", () => {
 });
 
 describe("SummarizationConfigSchema", () => {
-  describe("compaction-v2.AC3.5: Scoring config fields with defaults", () => {
-    it("should parse minimal summarization config and apply scoring defaults", () => {
-      const config = {
-        agent: {},
-        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
-        embedding: { provider: "openai", model: "text-embedding-3-small" },
-        database: { url: "postgresql://localhost/test" },
-        runtime: {},
-        bluesky: {},
-        summarization: {
-          provider: "openai-compat",
-          name: "test-model",
-        },
-      };
+  it("should parse minimal summarization config", () => {
+    const config = {
+      agent: {},
+      model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+      embedding: { provider: "openai", model: "text-embedding-3-small" },
+      database: { url: "postgresql://localhost/test" },
+      runtime: {},
+      bluesky: {},
+      summarization: {
+        provider: "openai-compat",
+        name: "test-model",
+      },
+    };
 
-      const result = AppConfigSchema.parse(config);
+    const result = AppConfigSchema.parse(config);
 
-      expect(result.summarization).toBeDefined();
-      expect(result.summarization!.provider).toBe("openai-compat");
-      expect(result.summarization!.name).toBe("test-model");
+    expect(result.summarization).toBeDefined();
+    expect(result.summarization!.provider).toBe("openai-compat");
+    expect(result.summarization!.name).toBe("test-model");
+  });
 
-      // Verify scoring defaults are applied
-      expect(result.summarization!.role_weight_system).toBe(10.0);
-      expect(result.summarization!.role_weight_user).toBe(5.0);
-      expect(result.summarization!.role_weight_assistant).toBe(3.0);
-      expect(result.summarization!.recency_decay).toBe(0.95);
-      expect(result.summarization!.question_bonus).toBe(2.0);
-      expect(result.summarization!.tool_call_bonus).toBe(4.0);
-      expect(result.summarization!.keyword_bonus).toBe(1.5);
-      expect(result.summarization!.important_keywords).toEqual([
-        "error",
-        "fail",
-        "bug",
-        "fix",
-        "decision",
-        "agreed",
-        "constraint",
-        "requirement",
-      ]);
-      expect(result.summarization!.content_length_weight).toBe(1.0);
-    });
+  it("should ignore removed importance-scoring keys in existing configs", () => {
+    // Importance scoring was removed (compaction is chronological); configs
+    // that still carry the old weight keys must keep loading.
+    const config = {
+      agent: {},
+      model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+      embedding: { provider: "openai", model: "text-embedding-3-small" },
+      database: { url: "postgresql://localhost/test" },
+      runtime: {},
+      bluesky: {},
+      summarization: {
+        provider: "anthropic",
+        name: "claude-3-sonnet",
+        role_weight_system: 15.0,
+        recency_decay: 0.9,
+        important_keywords: ["critical", "urgent"],
+      },
+    };
 
-    it("should accept custom scoring values", () => {
-      const config = {
-        agent: {},
-        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
-        embedding: { provider: "openai", model: "text-embedding-3-small" },
-        database: { url: "postgresql://localhost/test" },
-        runtime: {},
-        bluesky: {},
-        summarization: {
-          provider: "anthropic",
-          name: "claude-3-sonnet",
-          role_weight_system: 15.0,
-          role_weight_user: 8.0,
-          role_weight_assistant: 5.0,
-          recency_decay: 0.9,
-          question_bonus: 3.0,
-          tool_call_bonus: 5.0,
-          keyword_bonus: 2.0,
-          important_keywords: ["critical", "urgent"],
-          content_length_weight: 1.5,
-        },
-      };
+    const result = AppConfigSchema.parse(config);
 
-      const result = AppConfigSchema.parse(config);
-
-      expect(result.summarization!.role_weight_system).toBe(15.0);
-      expect(result.summarization!.role_weight_user).toBe(8.0);
-      expect(result.summarization!.role_weight_assistant).toBe(5.0);
-      expect(result.summarization!.recency_decay).toBe(0.9);
-      expect(result.summarization!.question_bonus).toBe(3.0);
-      expect(result.summarization!.tool_call_bonus).toBe(5.0);
-      expect(result.summarization!.keyword_bonus).toBe(2.0);
-      expect(result.summarization!.important_keywords).toEqual(["critical", "urgent"]);
-      expect(result.summarization!.content_length_weight).toBe(1.5);
-    });
-
-    it("should reject recency_decay > 1", () => {
-      const config = {
-        agent: {},
-        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
-        embedding: { provider: "openai", model: "text-embedding-3-small" },
-        database: { url: "postgresql://localhost/test" },
-        runtime: {},
-        bluesky: {},
-        summarization: {
-          provider: "openai-compat",
-          name: "test-model",
-          recency_decay: 1.5,
-        },
-      };
-
-      expect(() => AppConfigSchema.parse(config)).toThrow();
-    });
-
-    it("should reject negative weights", () => {
-      const config = {
-        agent: {},
-        model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
-        embedding: { provider: "openai", model: "text-embedding-3-small" },
-        database: { url: "postgresql://localhost/test" },
-        runtime: {},
-        bluesky: {},
-        summarization: {
-          provider: "openai-compat",
-          name: "test-model",
-          role_weight_system: -5.0,
-        },
-      };
-
-      expect(() => AppConfigSchema.parse(config)).toThrow();
-    });
+    expect(result.summarization!.name).toBe("claude-3-sonnet");
+    expect(result.summarization).not.toHaveProperty("role_weight_system");
   });
 });
 
@@ -401,12 +332,14 @@ describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
       expect(() => AppConfigSchema.parse(config)).toThrow();
     });
 
-    it("should reject min_output_reserve above output_tokens_per_minute (would hang the rate limiter) on [model]", () => {
+    it("should reject min_output_reserve above output_tokens_per_minute (rate limiter would reject every request) on [model]", () => {
       const config = {
         agent: {},
         model: {
           provider: "anthropic",
           name: "claude-3-5-sonnet-20241022",
+          requests_per_minute: 100,
+          input_tokens_per_minute: 40000,
           output_tokens_per_minute: 500,
           min_output_reserve: 1024,
         },
@@ -425,6 +358,8 @@ describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
         model: {
           provider: "anthropic",
           name: "claude-3-5-sonnet-20241022",
+          requests_per_minute: 100,
+          input_tokens_per_minute: 40000,
           output_tokens_per_minute: 500, // below DEFAULT_MIN_OUTPUT_RESERVE (1024)
         },
         embedding: { provider: "openai", model: "text-embedding-3-small" },
@@ -434,6 +369,28 @@ describe("ModelConfigSchema and SummarizationConfigSchema rate limits", () => {
       };
 
       expect(() => AppConfigSchema.parse(config)).toThrow(/min_output_reserve/);
+    });
+
+    it("should accept an infeasible output_tokens_per_minute when the rate limiter is not fully configured on [model]", () => {
+      // Only output_tokens_per_minute is set: hasRateLimitConfig is false, no
+      // rate limiter is ever built, so the value is inert and must not fail
+      // config load (previously-valid configs keep working).
+      const config = {
+        agent: {},
+        model: {
+          provider: "anthropic",
+          name: "claude-3-5-sonnet-20241022",
+          output_tokens_per_minute: 500, // below the default reserve, but inert
+        },
+        embedding: { provider: "openai", model: "text-embedding-3-small" },
+        database: { url: "postgresql://localhost/test" },
+        runtime: {},
+        bluesky: {},
+      };
+
+      const result = AppConfigSchema.parse(config);
+
+      expect(result.model.output_tokens_per_minute).toBe(500);
     });
 
     it("should reject output_tokens_per_minute: 1.5 (non-integer) on [model]", () => {

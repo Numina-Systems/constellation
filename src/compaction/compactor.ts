@@ -18,10 +18,7 @@ import type {
   CompactionResult,
   CompactionConfig,
   Compactor,
-  ImportanceScoringConfig,
 } from './types.js';
-import { DEFAULT_SCORING_CONFIG } from './types.js';
-import { scoreMessage } from './scoring.js';
 import {
   buildSummarizationRequest,
   buildResummarizationRequest,
@@ -126,12 +123,13 @@ export function adjustSplitForToolPairs(
  * Split history into two parts: messages to compress and messages to keep.
  * If the first message is a prior compaction summary (role='system' and content starts with '[Context Summary —'),
  * extract it separately to avoid re-summarizing it.
- * Messages in toCompress are sorted by importance (lowest-scored first) using the provided scoring config.
+ * Both parts preserve the original conversation order: summarization prompts
+ * assume chronological messages, and batch start/end timestamps are read from
+ * the first/last message of each chunk.
  */
 export function splitHistory(
   history: ReadonlyArray<ConversationMessage>,
   keepRecent: number,
-  scoringConfig: Readonly<ImportanceScoringConfig> = DEFAULT_SCORING_CONFIG,
 ): {
   toCompress: ReadonlyArray<ConversationMessage>;
   toKeep: ReadonlyArray<ConversationMessage>;
@@ -169,32 +167,8 @@ export function splitHistory(
   // to include the assistant message that owns it (and any sibling tool results).
   splitIndex = adjustSplitForToolPairs(history, splitIndex, compressStartIndex);
 
-  // Score and sort compressible messages by importance (lowest first)
-  const compressSlice = history.slice(compressStartIndex, splitIndex);
-
-  if (compressSlice.length > 1) {
-    const scored = compressSlice.map((msg, idx) => ({
-      msg,
-      originalIndex: idx,
-      score: scoreMessage(msg, idx, compressSlice.length, scoringConfig),
-    }));
-
-    // Stable sort: equal scores maintain original chronological order (AC3.6)
-    scored.sort((a, b) => {
-      const scoreDiff = a.score - b.score;
-      if (scoreDiff !== 0) return scoreDiff;
-      return a.originalIndex - b.originalIndex;
-    });
-
-    return {
-      toCompress: scored.map((s) => s.msg),
-      toKeep: history.slice(splitIndex),
-      priorSummary,
-    };
-  }
-
   return {
-    toCompress: compressSlice,
+    toCompress: history.slice(compressStartIndex, splitIndex),
     toKeep: history.slice(splitIndex),
     priorSummary,
   };
@@ -638,6 +612,11 @@ export function createCompactor(
 
   function isContextSizeError(error: unknown): boolean {
     if (!(error instanceof ModelError)) return false;
+    // Structured signal first: the rate limiter reports requests that cannot
+    // fit its window as CONTEXT_OVERFLOW, and shrinking chunks recovers from
+    // both true context overflows and per-minute input budget overflows.
+    if (error.code === 'CONTEXT_OVERFLOW') return true;
+    // Fallback heuristic for providers that only surface a message
     const msg = error.message.toLowerCase();
     return msg.includes('exceed') && msg.includes('context');
   }
@@ -732,19 +711,13 @@ export function createCompactor(
     }
 
     try {
-      // 1. Split history. `splitHistory` orders `toCompress` by importance to
-      // decide which messages are compressed, but summarization and batch
-      // timestamps require chronological order (the summary prompt assumes it,
-      // and batch start/end times are read from the first/last message). Restore
-      // chronological order here; message selection is fixed by the split index,
-      // not by score order, so re-sorting is safe.
-      const { toCompress: selected, toKeep, priorSummary } = splitHistory(
+      // 1. Split history. `toCompress` preserves the original conversation
+      // order — summarization prompts and batch timestamps depend on it, and
+      // re-sorting by created_at is not equivalent (messages persisted in the
+      // same millisecond, e.g. a tool call and its result, tie).
+      const { toCompress, toKeep, priorSummary } = splitHistory(
         history,
         config.keepRecent,
-        config.scoring,
-      );
-      const toCompress = [...selected].sort(
-        (a, b) => a.created_at.getTime() - b.created_at.getTime(),
       );
 
       // 2. Check if there's anything to compress

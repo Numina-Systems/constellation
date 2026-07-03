@@ -25,30 +25,6 @@ export type CompactionResult = {
   readonly failed?: boolean;
 };
 
-export type ImportanceScoringConfig = {
-  readonly roleWeightSystem: number;
-  readonly roleWeightUser: number;
-  readonly roleWeightAssistant: number;
-  readonly recencyDecay: number;
-  readonly questionBonus: number;
-  readonly toolCallBonus: number;
-  readonly keywordBonus: number;
-  readonly importantKeywords: ReadonlyArray<string>;
-  readonly contentLengthWeight: number;
-};
-
-export const DEFAULT_SCORING_CONFIG: ImportanceScoringConfig = {
-  roleWeightSystem: 10.0,
-  roleWeightUser: 5.0,
-  roleWeightAssistant: 3.0,
-  recencyDecay: 0.95,
-  questionBonus: 2.0,
-  toolCallBonus: 4.0,
-  keywordBonus: 1.5,
-  importantKeywords: ['error', 'fail', 'bug', 'fix', 'decision', 'agreed', 'constraint', 'requirement'],
-  contentLengthWeight: 1.0,
-};
-
 export type CompactionConfig = {
   readonly chunkSize: number;
   readonly keepRecent: number;
@@ -56,7 +32,6 @@ export type CompactionConfig = {
   readonly clipFirst: number;
   readonly clipLast: number;
   readonly prompt: string | null;
-  readonly scoring?: ImportanceScoringConfig;
   readonly timeout?: number;
   readonly maxRetries?: number;
   readonly backoffBaseMs?: number;

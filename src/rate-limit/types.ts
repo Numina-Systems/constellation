@@ -1,3 +1,10 @@
+/**
+ * Default output-token reserve deducted per request when `minOutputReserve`
+ * is not configured. Shared with config-schema validation so load-time
+ * feasibility checks and the runtime limiter agree on the same value.
+ */
+export const DEFAULT_MIN_OUTPUT_RESERVE = 1024;
+
 export type TokenBucketConfig = {
   readonly capacity: number;
   readonly refillRate: number; // tokens per millisecond

@@ -578,18 +578,29 @@ describe('createRateLimitedProvider', () => {
       ).rejects.toThrow(/input rate limit capacity/);
     });
 
-    it('rejects when minOutputReserve exceeds the output bucket capacity', async () => {
+    it('rejects at construction when minOutputReserve exceeds the output bucket capacity', () => {
       const badConfig: RateLimiterConfig = {
         requestsPerMinute: 100,
         inputTokensPerMinute: 10000,
         outputTokensPerMinute: 100,
         minOutputReserve: 1024, // reserve larger than the whole per-minute budget
       };
-      const rateLimited = createRateLimitedProvider(createMockProvider(), badConfig);
 
-      await expect(
-        rateLimited.complete(createRequest()),
-      ).rejects.toThrow(/output rate limit capacity/);
+      expect(() => createRateLimitedProvider(createMockProvider(), badConfig)).toThrow(
+        /output rate limit capacity/,
+      );
+    });
+
+    it('rejects at construction when the default reserve exceeds the output bucket capacity', () => {
+      const badConfig: RateLimiterConfig = {
+        requestsPerMinute: 100,
+        inputTokensPerMinute: 10000,
+        outputTokensPerMinute: 100, // below the default reserve of 1024
+      };
+
+      expect(() => createRateLimitedProvider(createMockProvider(), badConfig)).toThrow(
+        /output rate limit capacity/,
+      );
     });
   });
 });

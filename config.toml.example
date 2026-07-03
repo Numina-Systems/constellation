@@ -50,17 +50,6 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # clip_last = 2
 # prompt = "Custom system prompt for the summarization model"
 #
-# # Importance scoring weights (all optional, defaults shown)
-# role_weight_system = 10.0
-# role_weight_user = 5.0
-# role_weight_assistant = 3.0
-# recency_decay = 0.95
-# question_bonus = 2.0
-# tool_call_bonus = 4.0
-# keyword_bonus = 1.5
-# important_keywords = ["error", "fail", "bug", "fix", "decision", "agreed", "constraint", "requirement"]
-# content_length_weight = 1.0
-#
 # # Context overflow guard settings
 # compaction_timeout = 120000       # Timeout in ms for summarisation LLM calls (default: 120000)
 # compaction_max_retries = 2        # Number of retries with halved chunk size on timeout (default: 2)

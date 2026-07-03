@@ -9,8 +9,7 @@ import type { ModelProvider, ModelRequest, ModelResponse, Message } from '../mod
 import { ModelError } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.js';
-import type { SummaryBatch, ImportanceScoringConfig } from './types.js';
-import { DEFAULT_SCORING_CONFIG } from './types.js';
+import type { SummaryBatch } from './types.js';
 import {
   splitHistory,
   chunkMessages,
@@ -360,8 +359,9 @@ describe('Pure helper functions', () => {
       const { toCompress, toKeep } = splitHistory(messages, 5);
       expect(toCompress.length).toBe(5);
       expect(toKeep.length).toBe(5);
-      // With importance scoring, assistant messages score lower and should appear first
-      expect(toCompress[0]?.role).toBe('assistant');
+      // toCompress preserves the original conversation order
+      expect(toCompress[0]?.id).toBe('1');
+      expect(toCompress[4]?.id).toBe('5');
       expect(toKeep[0]?.id).toBe('6');
       expect(toKeep[4]?.id).toBe('10');
     });
@@ -413,11 +413,11 @@ describe('Pure helper functions', () => {
       expect(priorSummary).toBeNull();
     });
 
-    it('AC3.4: sorts toCompress by importance ascending (lowest-scored first)', () => {
+    it('preserves conversation order in toCompress', () => {
       const messages = [
         createMessage('sys', 'system', '[Context Summary — 50]', 0),
         createMessage('1', 'assistant', 'short', 100),
-        createMessage('2', 'user', 'longer message with more content for scoring', 200),
+        createMessage('2', 'user', 'longer message with more content', 200),
         createMessage('3', 'assistant', 'msg3', 300),
         createMessage('4', 'user', 'recent user message', 400),
         createMessage('5', 'assistant', 'kept recent', 500),
@@ -429,80 +429,25 @@ describe('Pure helper functions', () => {
       expect(toCompress.length).toBe(4);
       expect(toKeep.length).toBe(1);
       expect(toKeep[0]?.id).toBe('5');
-
-      // Within toCompress, messages should be sorted by importance ascending
-      // Message '1' (short assistant) should be first (lowest score)
-      // Message '2' (longer user) should be later (higher score)
-      expect(toCompress[0]?.id).toBe('1');
-      expect(toCompress[toCompress.length - 1]?.id).not.toBe('1');
+      expect(toCompress.map((m) => m.id)).toEqual(['1', '2', '3', '4']);
     });
 
-    it('AC3.6: maintains chronological order when messages have equal scores', () => {
+    it('preserves conversation order for messages with identical timestamps', () => {
+      // A tool call and its result are typically persisted in the same
+      // millisecond; ordering must not depend on created_at tiebreaks.
       const messages = [
-        createMessage('1', 'user', 'identical', 0),
-        createMessage('2', 'user', 'identical', 100),
-        createMessage('3', 'user', 'identical', 200),
-        createMessage('4', 'assistant', 'kept', 300),
+        createToolCallMessage('1', 'calling tool', [{ id: 'tc-1', name: 'lookup' }], 0),
+        createToolResultMessage('2', 'tc-1', 'tool output', 0),
+        createMessage('3', 'assistant', 'interpreting output', 0),
+        createMessage('4', 'user', 'kept', 100),
       ];
 
-      const noDecayConfig: Readonly<ImportanceScoringConfig> = {
-        ...DEFAULT_SCORING_CONFIG,
-        recencyDecay: 1.0,
-      };
+      const { toCompress } = splitHistory(messages, 1);
 
-      const { toCompress } = splitHistory(messages, 1, noDecayConfig);
-
-      // All toCompress messages have the same role, content, and recency (decay=1.0)
-      // They should maintain chronological order (1, 2, 3) due to stable sort
-      expect(toCompress.length).toBe(3);
-      expect(toCompress[0]?.id).toBe('1');
-      expect(toCompress[1]?.id).toBe('2');
-      expect(toCompress[2]?.id).toBe('3');
+      expect(toCompress.map((m) => m.id)).toEqual(['1', '2', '3']);
     });
 
-    it('uses DEFAULT_SCORING_CONFIG when no config provided', () => {
-      const messages = [
-        createMessage('1', 'assistant', 'short', 0),
-        createMessage('2', 'user', 'longer message with content', 100),
-        createMessage('3', 'assistant', 'kept', 200),
-      ];
-
-      const { toCompress: toCompress1 } = splitHistory(messages, 1);
-
-      // Should use default config (user > assistant)
-      // So message '2' should score higher than '1', and '1' should be first
-      expect(toCompress1.length).toBe(2);
-      expect(toCompress1[0]?.id).toBe('1');
-    });
-
-    it('respects custom scoring config when provided', () => {
-      const customConfig = {
-        roleWeightSystem: 10.0,
-        roleWeightUser: 2.0,  // Lower than default (5.0)
-        roleWeightAssistant: 20.0,  // Much higher than default (3.0)
-        recencyDecay: 0.95,
-        questionBonus: 2.0,
-        toolCallBonus: 4.0,
-        keywordBonus: 1.5,
-        importantKeywords: ['error', 'fail', 'bug', 'fix', 'decision', 'agreed', 'constraint', 'requirement'],
-        contentLengthWeight: 1.0,
-      };
-
-      const messages = [
-        createMessage('1', 'user', 'short', 0),
-        createMessage('2', 'assistant', 'short', 100),
-        createMessage('3', 'assistant', 'kept', 200),
-      ];
-
-      const { toCompress } = splitHistory(messages, 1, customConfig);
-
-      // With custom config, assistant (20.0) weights more than user (2.0)
-      // So user message '1' should have lower score and appear first
-      expect(toCompress.length).toBe(2);
-      expect(toCompress[0]?.id).toBe('1');
-    });
-
-    it('handles single compressible message without sorting', () => {
+    it('handles single compressible message', () => {
       const messages = [
         createMessage('1', 'user', 'msg', 0),
         createMessage('2', 'assistant', 'kept', 100),
@@ -510,7 +455,6 @@ describe('Pure helper functions', () => {
 
       const { toCompress } = splitHistory(messages, 1);
 
-      // Only 1 message to compress, no sorting needed
       expect(toCompress.length).toBe(1);
       expect(toCompress[0]?.id).toBe('1');
     });
@@ -891,11 +835,10 @@ describe('Compaction pipeline with mocked dependencies', () => {
     expect(result.tokensEstimateAfter).toBeLessThan(result.tokensEstimateBefore);
   });
 
-  it('archived batch timestamps stay chronological even when importance sorting reorders messages', async () => {
-    // The earliest message carries a high-scoring keyword so importance sorting
-    // would place it LAST in its chunk. Before the chronological re-sort, the
-    // batch would read startTime from a late message and endTime from an early
-    // one, producing startTime > endTime. Assert the ordering survives.
+  it('archived batch timestamps stay chronological', async () => {
+    // Batch startTime/endTime are read from the first/last message of each
+    // chunk; toCompress must preserve conversation order or a batch could
+    // report startTime > endTime.
     const messages = [
       createMessage('0', 'user', 'critical error decision constraint', 0),
       ...Array.from({ length: 9 }, (_, i) =>
@@ -1831,7 +1774,6 @@ describe('compaction pipeline integration', () => {
       clipFirst: 1,
       clipLast: 1,
       prompt: null,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const compactor = createCompactor({
@@ -1912,7 +1854,6 @@ describe('compaction pipeline integration', () => {
       clipFirst: 1,
       clipLast: 1,
       prompt: null,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const compactor = createCompactor({
@@ -1966,7 +1907,6 @@ describe('compaction pipeline integration', () => {
       clipFirst: 1,
       clipLast: 1,
       prompt: null,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const compactor = createCompactor({
@@ -1989,18 +1929,14 @@ describe('compaction pipeline integration', () => {
     expect(firstConversationMessage?.role).not.toBe('system');
   });
 
-  it('AC3.1, AC3.4: importance scoring orders messages, lowest-score first', async () => {
-    // Create messages with varied importance scores
-    // Short assistant messages should score low
-    // User questions should score higher
-    // Messages with important keywords should score higher
+  it('summarization requests receive messages in conversation order', async () => {
     const messages: Array<ConversationMessage> = [
-      createMessage('user-1', 'user', 'What should we do about this?', 0), // question bonus
-      createMessage('assistant-1', 'assistant', 'ok', 100), // short, low score
-      createMessage('user-2', 'user', 'There is an error in the system', 200), // "error" keyword
-      createMessage('assistant-2', 'assistant', 'x', 300), // short
-      createMessage('user-3', 'user', 'Made an important decision', 400), // "decision" keyword
-      createMessage('assistant-3', 'assistant', 'yes', 500), // short
+      createMessage('user-1', 'user', 'What should we do about this?', 0),
+      createMessage('assistant-1', 'assistant', 'ok', 100),
+      createMessage('user-2', 'user', 'There is an error in the system', 200),
+      createMessage('assistant-2', 'assistant', 'x', 300),
+      createMessage('user-3', 'user', 'Made an important decision', 400),
+      createMessage('assistant-3', 'assistant', 'yes', 500),
       createMessage('user-4', 'user', 'more context here', 600),
       createMessage('assistant-4', 'assistant', 'short', 700),
       createMessage('user-5', 'user', 'another message', 800),
@@ -2011,7 +1947,7 @@ describe('compaction pipeline integration', () => {
     ];
 
     const mockPersistence = createMockPersistenceProvider();
-    const mockModel = createMockModelProvider(['Summarized']);
+    const mockModel = createMockModelProvider(['Summarized', 'Summarized']);
     const mockMemory = createMockMemoryManager();
 
     const config = {
@@ -2021,7 +1957,6 @@ describe('compaction pipeline integration', () => {
       clipFirst: 1,
       clipLast: 1,
       prompt: null,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const compactor = createCompactor({
@@ -2034,14 +1969,12 @@ describe('compaction pipeline integration', () => {
 
     await compactor.compress(messages, 'test-conv');
 
-    // AC3.4: Verify splitHistory returned toCompress sorted by importance ascending
-    // by checking that compress was called and messages were processed
-    // The short assistant messages should have been selected for compression
-    // before the longer, higher-scoring user messages
+    // The summarization prompt assumes chronological messages; the first
+    // chunk must start with the earliest message, in original order.
     const model = mockModel as unknown as { _calls: Array<ModelRequest> };
     expect(model._calls.length).toBeGreaterThan(0);
-    // At least one call was made to the model
-    expect(model._calls[0]?.messages).toBeDefined();
+    const firstCall = model._calls[0];
+    expect(firstCall?.messages?.[0]?.content).toContain('What should we do about this?');
   });
 
   it('AC4.2: createCompactor does not accept getPersona callback', async () => {
@@ -2057,7 +1990,6 @@ describe('compaction pipeline integration', () => {
       clipFirst: 1,
       clipLast: 1,
       prompt: null,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     // This should compile without error, and createCompactor should not accept getPersona
@@ -2098,7 +2030,6 @@ describe('compaction pipeline integration', () => {
       clipFirst: 2,
       clipLast: 2,
       prompt: null,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     await resummarizeBatches({
@@ -2163,7 +2094,6 @@ describe('compaction pipeline integration', () => {
       timeout: 5000,
       maxRetries: 2,
       backoffBaseMs: 0,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 20 }, (_, i) =>
@@ -2224,7 +2154,6 @@ describe('compaction pipeline integration', () => {
       timeout: 5000,
       maxRetries: 3,
       backoffBaseMs: 0,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 30 }, (_, i) =>
@@ -2285,7 +2214,6 @@ describe('compaction pipeline integration', () => {
       timeout: 5000,
       maxRetries: 1,
       backoffBaseMs: 0,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 10 }, (_, i) =>
@@ -2335,7 +2263,6 @@ describe('compaction pipeline integration', () => {
       timeout: 5000,
       maxRetries: 3,
       backoffBaseMs: 0,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 15 }, (_, i) =>
@@ -2389,7 +2316,6 @@ describe('compaction pipeline integration', () => {
       clipLast: 1,
       prompt: null,
       timeout: timeoutValue,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 10 }, (_, i) =>
@@ -2440,7 +2366,6 @@ describe('compaction pipeline integration', () => {
       clipLast: 1,
       prompt: null,
       // timeout is undefined
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 10 }, (_, i) =>
@@ -2489,7 +2414,6 @@ describe('compaction pipeline integration', () => {
       timeout: 5000,
       maxRetries: 1,
       backoffBaseMs: 0,
-      scoring: DEFAULT_SCORING_CONFIG,
     };
 
     const messages = Array.from({ length: 20 }, (_, i) =>
@@ -2801,6 +2725,67 @@ describe('token-budget chunking in compress()', () => {
     expect(result.failed).toBeUndefined();
     expect(result.messagesCompressed).toBe(8);
     // First call failed, then retried with halved budget — more chunks, more calls
+    expect(callCount).toBeGreaterThan(1);
+  });
+
+  it('retries with smaller chunks on rate-limit CONTEXT_OVERFLOW errors', async () => {
+    // The rate limiter fails fast with code CONTEXT_OVERFLOW and a message
+    // that does not contain the word "context"; recovery must key off the
+    // error code, not the message text.
+    let callCount = 0;
+    const mockModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        callCount++;
+        if (callCount === 1) {
+          throw new ModelError(
+            'CONTEXT_OVERFLOW',
+            'estimated input tokens (600) exceed the input rate limit capacity (500); the request can never fit the rate-limit window',
+            false,
+            { estimatedInputTokens: 600, inputTokensPerMinute: 500 },
+          );
+        }
+        return {
+          content: [{ type: 'text', text: `Summary ${callCount}` }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream() {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    } as unknown as ModelProvider;
+
+    const { mockMemory } = createResummarizeTestContext();
+    const mockPersistence = createMockPersistenceProvider();
+
+    const config = {
+      chunkSize: 20,
+      keepRecent: 2,
+      maxSummaryTokens: 64,
+      clipFirst: 2,
+      clipLast: 2,
+      prompt: null,
+      maxChunkTokens: 500,
+      maxRetries: 2,
+      backoffBaseMs: 0,
+    };
+
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'a'.repeat(400), i * 100),
+    );
+
+    const compactor = createCompactor({
+      model: mockModel,
+      memory: mockMemory,
+      persistence: mockPersistence,
+      config,
+      modelName: 'test-model',
+    });
+
+    const result = await compactor.compress(messages, 'test-conv');
+
+    expect(result.failed).toBeUndefined();
+    expect(result.messagesCompressed).toBe(8);
     expect(callCount).toBeGreaterThan(1);
   });
 });

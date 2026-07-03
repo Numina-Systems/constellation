@@ -1,6 +1,6 @@
 # Agent
 
-Last verified: 2026-05-16
+Last verified: 2026-07-02
 
 ## Purpose
 Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency, injects relevant skills into the system prompt per turn via optional `SkillRegistry` dependency, optionally records operation traces for every tool dispatch via `TraceRecorder`, and supports session checkpointing for state persistence and restoration across restarts.
@@ -14,6 +14,7 @@ Implements the core agent loop: receives user messages, builds context from memo
   - `processEvent` formats external events as structured user messages (with expanded reply metadata and source-specific `[Instructions:]` blocks) and delegates to `processMessage`
   - Context compression triggers automatically when estimated tokens (including overhead from system prompt, tools, and output reservation) exceed `context_budget * model_max_tokens` (requires `compactor` in deps)
   - Pre-flight guard: after context building, if estimated total request tokens exceed the model's context window, `truncateOldest` drops oldest droppable messages while preserving leading system messages and the most recent user message
+  - Overflow recovery: when `model.complete` throws `ModelError` code `CONTEXT_OVERFLOW` (e.g. the rate limiter's input budget is below the compaction trigger threshold), the agent compacts history and retries the round once per turn (requires `compactor` in deps); the error propagates if compaction is absent or compresses nothing
   - The agent can also be triggered to compact via the `compact_context` tool call
   - Core memory blocks are always included in the system prompt
   - Working memory blocks are prepended to the message context

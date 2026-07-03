@@ -15,10 +15,11 @@ import { createCacheDiagnostics, serializeTools } from './cache-diagnostics.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
 import { isConstellationError, wrapError } from '@/errors/index.js';
+import { ModelError } from '@/errors/model.js';
 import { traceError } from '@/errors/trace.js';
 import { stripQuotedContent } from '@/loop-detection/strip-quotes.js';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider, CheckpointState } from './types.ts';
-import type { TextBlock, ToolUseBlock } from '../model/types.ts';
+import type { ModelResponse, TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
 import type { MemoryManager } from '../memory/manager.ts';
 
@@ -230,6 +231,12 @@ export function createAgent(
     let cachedRecallResult: RecallResult | null = null;
     let recallExecuted = false;
 
+    // One recovery attempt per turn when the provider reports the request can
+    // never fit (context window or rate-limit input budget). Compaction is
+    // normally triggered by the context budget check above, but a rate-limit
+    // input cap below that threshold surfaces here first.
+    let overflowRecoveryAttempted = false;
+
     while (roundCount < maxRounds) {
       roundCount++;
 
@@ -390,7 +397,43 @@ export function createAgent(
         max_tokens: maxTokens,
       };
 
-      const response = await deps.model.complete(modelRequest);
+      let response: ModelResponse;
+      try {
+        response = await deps.model.complete(modelRequest);
+      } catch (error) {
+        const compactor = deps.compactor;
+        if (
+          !compactor ||
+          overflowRecoveryAttempted ||
+          !(error instanceof ModelError) ||
+          error.code !== 'CONTEXT_OVERFLOW'
+        ) {
+          throw error;
+        }
+
+        overflowRecoveryAttempted = true;
+        console.warn('context overflow reported by model provider; compacting history and retrying');
+
+        if (deps.checkpointFn) {
+          await deps.checkpointFn('pre_compaction');
+        }
+
+        const result = await compactor.compress(history, id);
+        if (result.messagesCompressed === 0) {
+          // Compaction could not shrink the request; surface the original error
+          throw error;
+        }
+
+        history = Array.from(result.history);
+        snapshotState.reset();
+        compactionOccurredThisTurn = true;
+        lastCompactionMessageCount = history.length;
+        lastCompactionSummaryCount = result.batchesCreated ?? 0;
+
+        // Retry this round with the compacted history without consuming a tool round
+        roundCount--;
+        continue;
+      }
 
       // Post-response loop detection check
       if (deps.loopDetector) {

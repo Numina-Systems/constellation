@@ -20,7 +20,8 @@
       "Bash(git push 2>&1)",
       "Bash(gh pr edit 25 --body \"$\\(cat <<'EOF'\n## Summary\n\nTwo bugs causing compaction to either break conversations or never trigger:\n\n1. **splitHistory breaks tool call/result pairs** — `splitHistory\\(\\)` split messages by count without ensuring assistant+tool_call messages stayed paired with their tool result messages. After compaction, orphaned `tool_call_id`s caused permanent 400 errors.\n\n2. **Auto-compaction threshold hardcoded to 200k** — `model_max_tokens` was hardcoded to Claude 3 Sonnet's 200k context window. For KimiK-2.5 \\(128k\\), the trigger threshold \\(160k\\) exceeded the model's actual limit, so auto-compaction never fired.\n\n### Changes\n\n- Added `adjustSplitForToolPairs\\(\\)` that scans the split boundary and pulls it back when a tool result references an assistant on the other side \\(or vice versa\\)\n- Added `max_context_tokens` to the `[agent]` config schema \\(default: 200000\\) so it can be set per-model in `config.toml`\n- Removed hardcoded `DEFAULT_MODEL_MAX_TOKENS` constant from composition root\n\nCloses #24\n\n## Test plan\n\n- [x] 4 new compaction tests covering tool pair splitting edge cases\n- [x] 2 new config tests for `max_context_tokens` default and override\n- [x] All 92 existing compaction tests pass\n- [x] All 169 affected unit tests pass\n- [x] Type-check clean \\(`tsc --noEmit`\\)\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\nEOF\n\\)\")",
       "Bash(bun test src/compaction/ --test-name-pattern \"GH-24\" 2>&1)",
-      "Bash(bun run build 2>&1 && bun test src/compaction/ 2>&1)"
+      "Bash(bun run build 2>&1 && bun test src/compaction/ 2>&1)",
+      "WebSearch"
     ]
   }
 }

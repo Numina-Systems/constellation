@@ -15,6 +15,7 @@ import type {
   ExternalEvent,
 } from './types.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.ts';
+import { ModelError } from '../errors/model.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime } from '../runtime/types.ts';
@@ -409,6 +410,91 @@ describe('Agent loop', () => {
     // Verify conversation ID persists
     expect(typeof agent.conversationId).toBe('string');
     expect(agent.conversationId.length).toBeGreaterThan(0);
+  });
+
+  it('recovers from a provider CONTEXT_OVERFLOW by compacting and retrying', async () => {
+    // A rate-limited provider fails fast with CONTEXT_OVERFLOW when the request
+    // can never fit its input window. The agent should compact history and
+    // retry instead of surfacing the error on every turn.
+    let completeCalls = 0;
+    const overflowingModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        completeCalls++;
+        if (completeCalls === 1) {
+          throw new ModelError(
+            'CONTEXT_OVERFLOW',
+            'estimated input tokens (5000) exceed the input rate limit capacity (4000); the request can never fit the rate-limit window',
+            false,
+          );
+        }
+        return {
+          content: [{ type: 'text', text: 'Recovered response' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream(_request: ModelRequest) {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    const compressCalls: Array<string> = [];
+    const compactor: Compactor = {
+      consecutiveFailures: 0,
+      async compress(history, conversationId) {
+        compressCalls.push(conversationId);
+        return {
+          history: [...history],
+          batchesCreated: 1,
+          messagesCompressed: 1,
+          tokensEstimateBefore: 5000,
+          tokensEstimateAfter: 500,
+        };
+      },
+    };
+
+    const deps = createAgentDependencies({ model: overflowingModel, compactor });
+    const agent = createAgent(deps);
+    const response = await agent.processMessage('Hello');
+
+    expect(response).toBe('Recovered response');
+    expect(completeCalls).toBe(2);
+    expect(compressCalls.length).toBe(1);
+  });
+
+  it('rethrows CONTEXT_OVERFLOW when compaction cannot shrink the request', async () => {
+    const overflowError = new ModelError(
+      'CONTEXT_OVERFLOW',
+      'estimated input tokens (5000) exceed the input rate limit capacity (4000); the request can never fit the rate-limit window',
+      false,
+    );
+    const overflowingModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        throw overflowError;
+      },
+      async *stream(_request: ModelRequest) {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    const compactor: Compactor = {
+      consecutiveFailures: 0,
+      async compress(history, _conversationId) {
+        return {
+          history,
+          batchesCreated: 0,
+          messagesCompressed: 0,
+          tokensEstimateBefore: 5000,
+          tokensEstimateAfter: 5000,
+          failed: true,
+        };
+      },
+    };
+
+    const deps = createAgentDependencies({ model: overflowingModel, compactor });
+    const agent = createAgent(deps);
+
+    await expect(agent.processMessage('Hello')).rejects.toThrow(/input rate limit capacity/);
   });
 
   it('AC4.2: depends only on port interfaces', async () => {

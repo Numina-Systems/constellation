@@ -33,7 +33,8 @@ function formatAttachment(content: string, mode: SnapshotMode): string {
  * returns a plain string message.
  *
  * If snapshot.mode is 'full' or 'delta' with non-null content,
- * returns a message with a content array: [attachment block, user message].
+ * returns a message with a single-string content: composed attachment + user text.
+ * This format is byte-identical and persistable without schema migration.
  *
  * @param text - The user's actual message text
  * @param snapshot - The snapshot result from the batch-anchored snapshot pipeline, or null
@@ -51,21 +52,12 @@ export function buildUserMessage(
     };
   }
 
-  // Full or delta mode with content: build content array
+  // Full or delta mode with content: compose into single string
   if ((snapshot.mode === 'full' || snapshot.mode === 'delta') && snapshot.content !== null) {
-    const attachmentBlock = {
-      type: 'text' as const,
-      text: formatAttachment(snapshot.content, snapshot.mode),
-    };
-
-    const userBlock = {
-      type: 'text' as const,
-      text: text,
-    };
-
+    const composedContent = `${formatAttachment(snapshot.content, snapshot.mode)}\n\n${text}`;
     return {
       role: 'user',
-      content: [attachmentBlock, userBlock],
+      content: composedContent,
     };
   }
 

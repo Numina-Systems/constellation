@@ -1,12 +1,12 @@
 # Compaction
 
-Last verified: 2026-04-15
+Last verified: 2026-07-02
 
 ## Purpose
 Compresses conversation history to stay within context budget. Replaces old messages with LLM-generated summaries archived to memory, producing a "clip-archive" system message that preserves earliest and most recent context while keeping the middle searchable via memory.
 
 ## Contracts
-- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`, `consecutiveFailures`), `createCompactor(options)`, `chunkMessagesByTokenBudget()`, `SummaryBatch`, `CompactionResult` (includes optional `failed`), `CompactionConfig` (includes optional `timeout`, `maxRetries`, `backoffBaseMs`, `maxChunkTokens`, `maxConsecutiveFailures`), `ImportanceScoringConfig`, `DEFAULT_SCORING_CONFIG`, `scoreMessage()`, prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
+- **Exposes**: `Compactor` interface (`compress(history, conversationId) -> CompactionResult`, `consecutiveFailures`), `createCompactor(options)`, `chunkMessagesByTokenBudget()`, `SummaryBatch`, `CompactionResult` (includes optional `failed`), `CompactionConfig` (includes optional `timeout`, `maxRetries`, `backoffBaseMs`, `maxChunkTokens`, `maxConsecutiveFailures`), prompt builders (`buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`)
 - **Guarantees**:
   - `compress` never throws; pipeline failures return original history unchanged (with `failed: true`)
   - Circuit breaker: after `maxConsecutiveFailures` (default 3) consecutive failures, `compress` short-circuits without calling the model; resets on success
@@ -14,11 +14,10 @@ Compresses conversation history to stay within context budget. Replaces old mess
   - Summary batches are archived to memory (archival tier) with metadata headers before messages are deleted
   - Clip-archive shows first N and last N batches; omitted middle is searchable via `memory_read`
   - Recursive re-summarization triggers when batch count exceeds clip window + buffer, producing higher-depth batches
-  - Messages to be compressed are sorted by importance (lowest-scored first) using configurable heuristic scoring
-  - Messages with identical importance scores maintain chronological order (stable sort)
+  - Messages to be compressed are a contiguous prefix of history (oldest first) and preserve original conversation order end-to-end — summarization prompts and batch start/end timestamps depend on it
   - Token estimation uses heuristic (1 token ~ 4 chars)
   - Summarisation calls use `ModelRequest.timeout` when `CompactionConfig.timeout` is set
-  - On timeout or context-size errors, retry loop halves chunk size (floor: 2 messages) and token budget (floor: 100 tokens) up to `maxRetries` attempts (default 4). Exponential backoff applies on timeout; context-size retries skip backoff since the fix is smaller chunks, not waiting. Context-size errors (model reports request exceeds available context) are treated as retryable even though the model marks them non-retryable, because the compactor can recover by shrinking chunks. Non-ModelError exceptions throw immediately without retry
+  - On timeout or context-size errors, retry loop halves chunk size (floor: 2 messages) and token budget (floor: 100 tokens) up to `maxRetries` attempts (default 4). Exponential backoff applies on timeout; context-size retries skip backoff since the fix is smaller chunks, not waiting. Context-size errors are detected by `ModelError` code `CONTEXT_OVERFLOW` (thrown by the rate limiter for requests that can never fit its input window) or by message text (model reports request exceeds available context); both are treated as retryable even when marked non-retryable, because the compactor can recover by shrinking chunks. Non-ModelError exceptions throw immediately without retry
 - **Expects**: `ModelProvider` for LLM summarization, `MemoryManager` for archival writes/reads, `PersistenceProvider` for message deletion, valid `CompactionConfig`
 
 ## Dependencies
@@ -43,8 +42,7 @@ Compresses conversation history to stay within context budget. Replaces old mess
 - Clip-archive system messages start with `[Context Summary`
 
 ## Key Files
-- `types.ts` -- `Compactor`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`, `ImportanceScoringConfig`, `DEFAULT_SCORING_CONFIG`
-- `compactor.ts` -- Pipeline implementation, pure helpers, `splitHistory()` with importance-based sorting, `chunkMessagesByTokenBudget()`, `createCompactor` factory (with circuit breaker state)
-- `scoring.ts` -- Pure `scoreMessage()` function for importance-based message ranking (Functional Core)
+- `types.ts` -- `Compactor`, `SummaryBatch`, `CompactionResult`, `CompactionConfig`
+- `compactor.ts` -- Pipeline implementation, pure helpers, `splitHistory()` (chronological split with tool-pair adjustment), `chunkMessagesByTokenBudget()`, `createCompactor` factory (with circuit breaker state)
 - `prompt.ts` -- Structured message builders for summarization and re-summarization LLM calls; exports `buildSummarizationRequest`, `buildResummarizationRequest`, `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_DIRECTIVE`
 - `index.ts` -- Barrel exports

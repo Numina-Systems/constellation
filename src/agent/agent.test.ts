@@ -15,13 +15,17 @@ import type {
   ExternalEvent,
 } from './types.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '../model/types.ts';
+import { ModelError } from '../errors/model.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ToolRegistry } from '../tool/types.ts';
 import type { CodeRuntime } from '../runtime/types.ts';
 import type { PersistenceProvider, QueryFunction } from '../persistence/types.ts';
 import type { Compactor, CompactionResult } from '../compaction/types.ts';
-import type { SkillRegistry } from '../skill/types.ts';
+import type { SkillRegistry, SkillDefinition } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
+import type { SearchStore } from '../search/store.ts';
+import type { RecallContextState } from '../recall/context.ts';
+import type { RecallResult } from '../recall/types.ts';
 
 /**
  * Mock implementations for testing
@@ -58,6 +62,17 @@ function createMockPersistenceProvider(): PersistenceProvider & { capturedInsert
       list.push(message);
       messages.set(String(conversationId), list);
       return [{ id } as unknown as T];
+    }
+
+    if (sql.includes('UPDATE messages')) {
+      const [content, id] = params ? Array.from(params) : [];
+      for (const list of messages.values()) {
+        const msg = list.find((m) => m.id === id);
+        if (msg) {
+          msg.content = content as string;
+        }
+      }
+      return [] as Array<T>;
     }
 
     if (sql.includes('SELECT') && sql.includes('FROM messages')) {
@@ -409,6 +424,91 @@ describe('Agent loop', () => {
     // Verify conversation ID persists
     expect(typeof agent.conversationId).toBe('string');
     expect(agent.conversationId.length).toBeGreaterThan(0);
+  });
+
+  it('recovers from a provider CONTEXT_OVERFLOW by compacting and retrying', async () => {
+    // A rate-limited provider fails fast with CONTEXT_OVERFLOW when the request
+    // can never fit its input window. The agent should compact history and
+    // retry instead of surfacing the error on every turn.
+    let completeCalls = 0;
+    const overflowingModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        completeCalls++;
+        if (completeCalls === 1) {
+          throw new ModelError(
+            'CONTEXT_OVERFLOW',
+            'estimated input tokens (5000) exceed the input rate limit capacity (4000); the request can never fit the rate-limit window',
+            false,
+          );
+        }
+        return {
+          content: [{ type: 'text', text: 'Recovered response' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        };
+      },
+      async *stream(_request: ModelRequest) {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    const compressCalls: Array<string> = [];
+    const compactor: Compactor = {
+      consecutiveFailures: 0,
+      async compress(history, conversationId) {
+        compressCalls.push(conversationId);
+        return {
+          history: [...history],
+          batchesCreated: 1,
+          messagesCompressed: 1,
+          tokensEstimateBefore: 5000,
+          tokensEstimateAfter: 500,
+        };
+      },
+    };
+
+    const deps = createAgentDependencies({ model: overflowingModel, compactor });
+    const agent = createAgent(deps);
+    const response = await agent.processMessage('Hello');
+
+    expect(response).toBe('Recovered response');
+    expect(completeCalls).toBe(2);
+    expect(compressCalls.length).toBe(1);
+  });
+
+  it('rethrows CONTEXT_OVERFLOW when compaction cannot shrink the request', async () => {
+    const overflowError = new ModelError(
+      'CONTEXT_OVERFLOW',
+      'estimated input tokens (5000) exceed the input rate limit capacity (4000); the request can never fit the rate-limit window',
+      false,
+    );
+    const overflowingModel: ModelProvider = {
+      async complete(_request: ModelRequest): Promise<ModelResponse> {
+        throw overflowError;
+      },
+      async *stream(_request: ModelRequest) {
+        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
+      },
+    };
+
+    const compactor: Compactor = {
+      consecutiveFailures: 0,
+      async compress(history, _conversationId) {
+        return {
+          history,
+          batchesCreated: 0,
+          messagesCompressed: 0,
+          tokensEstimateBefore: 5000,
+          tokensEstimateAfter: 5000,
+          failed: true,
+        };
+      },
+    };
+
+    const deps = createAgentDependencies({ model: overflowingModel, compactor });
+    const agent = createAgent(deps);
+
+    await expect(agent.processMessage('Hello')).rejects.toThrow(/input rate limit capacity/);
   });
 
   it('AC4.2: depends only on port interfaces', async () => {
@@ -2218,6 +2318,1005 @@ describe('Cache Diagnostics Integration', () => {
       // The cache bust should happen on turn 2 (after the system prompt changed)
       expect(trace.input['turn']).toBe(2);
     }
+  });
+});
+
+describe('recall system prompt stability', () => {
+  it('cache-friendliness.AC1.1 (unit): builds the system prompt exactly once per round on recall-enabled turns', async () => {
+    // Test that when recall is enabled and executes, the system prompt is built
+    // exactly once per round (no post-recall rebuild).
+
+    const buildSystemPromptCalls = { count: 0 };
+    const baseMemory = createMockMemoryManager();
+    const countingMemory: MemoryManager = {
+      ...baseMemory,
+      async buildSystemPrompt() {
+        buildSystemPromptCalls.count++;
+        return baseMemory.buildSystemPrompt();
+      },
+    };
+
+    // Create a minimal mock SearchStore that returns empty results
+    const mockSearchStore: SearchStore = {
+      search: async () => {
+        return [];
+      },
+      registerDomain: () => {
+        // no-op
+      },
+    };
+
+    // Create a RecallContextState holder
+    let recallResult: RecallResult | null = null;
+    const recallContextState: RecallContextState = {
+      setResult: (result: RecallResult | null) => {
+        recallResult = result;
+      },
+      getResult: () => recallResult,
+    };
+
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Test response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse]);
+    const config: AgentConfig = {
+      max_tool_rounds: 5,
+      context_budget: 0.8,
+      recall_enabled: true,
+      recall_token_budget: 4096,
+    };
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: countingMemory,
+      registry: createMockToolRegistry(),
+      runtime: createMockCodeRuntime(),
+      persistence: createMockPersistenceProvider(),
+      config,
+      recallContextState,
+      searchStore: mockSearchStore,
+      embedding: createMockEmbeddingProvider(),
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello');
+
+    // On recall-enabled turns with one round, buildSystemPrompt should be called exactly twice:
+    // - Once at line 203 (preliminary build for overhead calculation)
+    // - Once at line 244 (inside the round loop, sent to the model)
+    // - NOT again after recall is set (lines 278-283 dead code removed)
+    // This verifies there's no post-recall rebuild that would add a 3rd call.
+    expect(buildSystemPromptCalls.count).toBe(2);
+  });
+
+  it('cache-friendliness.AC2.1 (unit): system prompt is byte-identical across turns when skills are unchanged', async () => {
+    // Create a mock skill registry that returns the same skills both times
+    const skillDefinition: SkillDefinition = {
+      id: 'skill-1',
+      metadata: {
+        name: 'Test Skill',
+        description: 'A test skill',
+        version: '1.0.0',
+      },
+      body: 'This is a test skill body.',
+      companions: [],
+      source: 'builtin',
+      filePath: '/test/skill.md',
+      contentHash: 'abc123',
+    };
+
+    const fakeSkillRegistry: SkillRegistry = {
+      async load() {},
+      getAll() {
+        return [skillDefinition];
+      },
+      getByName() {
+        return null;
+      },
+      async search() {
+        return [];
+      },
+      async getRelevant(_context: string, _limit?: number, _threshold?: number) {
+        // Return the same skill both times
+        return [skillDefinition];
+      },
+      async createAgentSkill() {
+        return skillDefinition;
+      },
+      async updateAgentSkill() {
+        return skillDefinition;
+      },
+      async injectSkills() {},
+    };
+
+    // Create skills context provider
+    const { createSkillsContextProvider } = await import('../skill/index.js');
+    const skillsContextProvider = createSkillsContextProvider();
+
+    // Track requests
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse, modelResponse], tracker);
+    const mockMem = createMockMemoryManager();
+    const mockReg = createMockToolRegistry();
+    const mockRun = createMockCodeRuntime();
+    const mockPers = createMockPersistenceProvider();
+
+    // Create dependencies with skills and skillsContextState
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMem,
+      registry: mockReg,
+      runtime: mockRun,
+      persistence: mockPers,
+      config: {
+        max_tool_rounds: 5,
+        context_budget: 0.8,
+      },
+      skills: fakeSkillRegistry,
+      skillsContextState: skillsContextProvider,
+      classifiedProviders: [
+        {
+          name: 'skills',
+          provider: skillsContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+
+    // First message
+    await agent.processMessage('Hello');
+    const firstSystemPrompt = tracker.requests[0]?.system ?? '';
+
+    // Reset tracker for second message
+    tracker.requests = [];
+
+    // Second message (skills unchanged)
+    await agent.processMessage('Hello again');
+    const secondSystemPrompt = tracker.requests[0]?.system ?? '';
+
+    // System prompt should be byte-identical (no skills section in system prompt)
+    expect(firstSystemPrompt).toBe(secondSystemPrompt);
+    // Verify skills section is NOT in system prompt
+    expect(firstSystemPrompt).not.toMatch(/## Active Skills/);
+  });
+
+  it('cache-friendliness.AC2.2 (unit): skill content appears in dynamic context attachment', async () => {
+    // Create a mock skill registry
+    const skillDefinition: SkillDefinition = {
+      id: 'skill-1',
+      metadata: {
+        name: 'Test Skill',
+        description: 'A test skill',
+        version: '1.0.0',
+      },
+      body: 'This is a test skill body.',
+      companions: [],
+      source: 'builtin',
+      filePath: '/test/skill.md',
+      contentHash: 'abc123',
+    };
+
+    const fakeSkillRegistry: SkillRegistry = {
+      async load() {},
+      getAll() {
+        return [skillDefinition];
+      },
+      getByName() {
+        return null;
+      },
+      async search() {
+        return [];
+      },
+      async getRelevant(_context: string, _limit?: number, _threshold?: number) {
+        return [skillDefinition];
+      },
+      async createAgentSkill() {
+        return skillDefinition;
+      },
+      async updateAgentSkill() {
+        return skillDefinition;
+      },
+      async injectSkills() {},
+    };
+
+    // Create skills context provider
+    const { createSkillsContextProvider } = await import('../skill/index.js');
+    const skillsContextProvider = createSkillsContextProvider();
+
+    // Track requests
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse], tracker);
+    const mockMem = createMockMemoryManager();
+    const mockReg = createMockToolRegistry();
+    const mockRun = createMockCodeRuntime();
+    const mockPers = createMockPersistenceProvider();
+
+    // Create dependencies
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMem,
+      registry: mockReg,
+      runtime: mockRun,
+      persistence: mockPers,
+      config: {
+        max_tool_rounds: 5,
+        context_budget: 0.8,
+      },
+      skills: fakeSkillRegistry,
+      skillsContextState: skillsContextProvider,
+      classifiedProviders: [
+        {
+          name: 'skills',
+          provider: skillsContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello');
+
+    // Get the last message (should be the composed user message)
+    const messages = tracker.requests[0]?.messages;
+    expect(messages).toBeDefined();
+
+    if (messages && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      expect(lastMessage?.role).toBe('user');
+
+      // Extract message text to verify snapshot content
+      const text = typeof lastMessage?.content === 'string'
+        ? lastMessage.content
+        : Array.isArray(lastMessage?.content)
+          ? lastMessage.content.map(block => (block.type === 'text' ? block.text : '')).join('\n')
+          : JSON.stringify(lastMessage?.content);
+
+      // Verify the snapshot attachment is in the message
+      expect(text).toContain('[Dynamic Context — Full Snapshot]');
+      expect(text).toContain('## skills');
+      expect(text).toContain('## Active Skills');
+      expect(text).toContain('Test Skill');
+
+      // Secondary assertion: verify provider state
+      const skillsSection = skillsContextProvider.getSection();
+      expect(skillsSection).toBeDefined();
+    }
+  });
+
+  it('cache-friendliness.AC2.3 (unit): turn completes normally when skill retrieval throws', async () => {
+    // Create a skill registry that throws
+    const fakeSkillRegistry: SkillRegistry = {
+      async load() {},
+      getAll() {
+        return [];
+      },
+      getByName() {
+        return null;
+      },
+      async search() {
+        return [];
+      },
+      async getRelevant() {
+        throw new Error('Skill retrieval failed');
+      },
+      async createAgentSkill() {
+        throw new Error('not implemented');
+      },
+      async updateAgentSkill() {
+        throw new Error('not implemented');
+      },
+      async injectSkills() {},
+    };
+
+    // Create skills context provider
+    const { createSkillsContextProvider } = await import('../skill/index.js');
+    const skillsContextProvider = createSkillsContextProvider();
+
+    // Track requests
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+    const modelResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Success despite skill error' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([modelResponse], tracker);
+    const mockMem = createMockMemoryManager();
+    const mockReg = createMockToolRegistry();
+    const mockRun = createMockCodeRuntime();
+    const mockPers = createMockPersistenceProvider();
+
+    // Create dependencies
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMem,
+      registry: mockReg,
+      runtime: mockRun,
+      persistence: mockPers,
+      config: {
+        max_tool_rounds: 5,
+        context_budget: 0.8,
+      },
+      skills: fakeSkillRegistry,
+      skillsContextState: skillsContextProvider,
+      classifiedProviders: [
+        {
+          name: 'skills',
+          provider: skillsContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+
+    // Should complete normally despite skill retrieval error
+    const response = await agent.processMessage('Hello');
+
+    expect(response).toBe('Success despite skill error');
+
+    // Verify skills section is undefined after error
+    const skillsSection = skillsContextProvider.getSection();
+    expect(skillsSection).toBeUndefined();
+
+    // Verify system prompt doesn't contain skills
+    const systemPrompt = tracker.requests[0]?.system ?? '';
+    expect(systemPrompt).not.toMatch(/## Active Skills/);
+  });
+});
+
+describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
+  let mockPersistence: PersistenceProvider;
+  let mockMemory: MemoryManager;
+  let mockRegistry: ToolRegistry;
+  let mockRuntime: CodeRuntime;
+
+  beforeEach(() => {
+    mockPersistence = createMockPersistenceProvider();
+    mockRegistry = createMockToolRegistry();
+    mockRuntime = createMockCodeRuntime();
+  });
+
+  it('cache-friendliness.AC3.1 (unit): buildMessages output contains no working-memory message', async () => {
+    // Mock memory manager that returns a working block
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [
+          {
+            id: 'wb-1',
+            owner: 'test',
+            tier: 'working',
+            label: 'Session State',
+            content: 'Currently working on feature X',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        ];
+      },
+      async buildSystemPrompt() {
+        return 'You are a helpful assistant.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'test',
+            owner: 'test',
+            tier: 'working',
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+
+    const { buildMessages } = await import('./context.ts');
+    const history: ReadonlyArray<ConversationMessage> = [
+      {
+        id: 'msg-1',
+        conversation_id: 'conv-1',
+        role: 'user',
+        content: 'Hello',
+        created_at: new Date(),
+      },
+    ];
+
+    const messages = await buildMessages(history);
+
+    // AC3.1: messages should not contain working-memory prepend
+    expect(messages.length).toBe(1);
+    expect(messages[0]!.role).toBe('user');
+    expect(messages[0]!.content).toBe('Hello');
+
+    // Verify no message contains [Working Memory Context]
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        expect(msg.content).not.toContain('[Working Memory Context]');
+      }
+    }
+  });
+
+  it('cache-friendliness.AC3.2 (unit): turn 2 LAST message attachment contains updated working-memory', async () => {
+    // Create a mock memory that returns a working block that changes
+    let workingBlockContent = 'Initial state';
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [
+          {
+            id: 'wb-1',
+            owner: 'test',
+            tier: 'working',
+            label: 'State',
+            content: workingBlockContent,
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        ];
+      },
+      async buildSystemPrompt() {
+        return 'You are helpful.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'wb-1',
+            owner: 'test',
+            tier: 'working',
+            label: 'State',
+            content: workingBlockContent,
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const turn1Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 1 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const turn2Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 2 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([turn1Response, turn2Response], tracker);
+
+    const { createWorkingMemoryContextProvider } = await import('@/memory/index.js');
+    const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'working-memory',
+          provider: workingMemoryContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+      workingMemoryContextState: workingMemoryContextProvider,
+    };
+
+    // Prepend a prior turn to establish a real shared prefix for AC3.2 verification
+    const priorResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Prior response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+    const priorModel = createMockModelProvider([priorResponse, turn1Response, turn2Response], tracker);
+    const depsWithPrior: AgentDependencies = {
+      ...deps,
+      model: priorModel,
+    };
+    const priorAgent = createAgent(depsWithPrior);
+    await priorAgent.processMessage('Prior message');
+
+    tracker.requests = []; // Reset tracker to measure turn 1 and turn 2 only
+    const agent = createAgent(deps, priorAgent.conversationId);
+
+    // Turn 1
+    await agent.processMessage('First message');
+
+    expect(tracker.requests.length).toBe(1);
+    const turn1Request = tracker.requests[0]!;
+
+    // Verify turn 1 has working memory in attachment
+    const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
+    expect(turn1LastMsg).toBeDefined();
+    expect(typeof turn1LastMsg!.content).toBe('string');
+    const turn1ContentStr = String(turn1LastMsg!.content);
+    expect(turn1ContentStr).toContain('## working-memory');
+    expect(turn1ContentStr).toContain('Initial state');
+
+    // Change working memory content
+    workingBlockContent = 'Updated state';
+
+    // Turn 2
+    await agent.processMessage('Second message');
+
+    expect(tracker.requests.length).toBe(2);
+    const turn2Request = tracker.requests[1]!;
+
+    // AC3.2: Verify that all messages from turn 1 are byte-identical in turn 2 (except turn 1's final composed user message)
+    expect(turn2Request.messages.length).toBeGreaterThanOrEqual(turn1Request.messages.length);
+
+    // Check shared prefix (all messages except the last from turn 1 should be identical)
+    const sharedCount = turn1Request.messages.length - 1; // Exclude turn 1's final user message
+    expect(sharedCount).toBeGreaterThan(0); // REQUIRED: Ensure the loop verifies something; without this, the test silently passes vacuously
+    for (let i = 0; i < sharedCount; i++) {
+      const turn1Msg = turn1Request.messages[i];
+      const turn2Msg = turn2Request.messages[i];
+      const turn1Str = JSON.stringify(turn1Msg);
+      const turn2Str = JSON.stringify(turn2Msg);
+      expect(turn1Str).toBe(turn2Str);
+    }
+
+    // AC3.2: Verify turn 2's LAST message contains updated working memory content
+    const turn2LastMsg = turn2Request.messages[turn2Request.messages.length - 1];
+    expect(turn2LastMsg).toBeDefined();
+    expect(typeof turn2LastMsg!.content).toBe('string');
+    const turn2ContentStr = String(turn2LastMsg!.content);
+    expect(turn2ContentStr).toContain('## working-memory');
+    expect(turn2ContentStr).toContain('Updated state');
+  });
+
+  it('cache-friendliness.AC3.3 (unit): with no working-memory blocks, no working-memory section in request', async () => {
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [];
+      },
+      async buildSystemPrompt() {
+        return 'You are helpful.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'test',
+            owner: 'test',
+            tier: 'working',
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const mockModel = createMockModelProvider(
+      [
+        {
+          content: [{ type: 'text', text: 'Response' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      ],
+      tracker,
+    );
+
+    const { createWorkingMemoryContextProvider } = await import('@/memory/index.js');
+    const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'working-memory',
+          provider: workingMemoryContextProvider,
+          classification: 'dynamic',
+        },
+      ],
+      workingMemoryContextState: workingMemoryContextProvider,
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello');
+
+    expect(tracker.requests.length).toBeGreaterThan(0);
+    const requestStr = JSON.stringify(tracker.requests[0]);
+
+    // AC3.3: "working-memory" should not appear anywhere in the request
+    expect(requestStr).not.toContain('working-memory');
+    expect(requestStr).not.toContain('## working-memory');
+  });
+});
+
+describe('cache-friendliness.AC4: Persist composed user messages', () => {
+  let mockMemory: MemoryManager;
+
+  beforeEach(() => {
+    mockMemory = {
+      async getCoreBlocks() {
+        return [];
+      },
+      async getWorkingBlocks() {
+        return [];
+      },
+      async buildSystemPrompt() {
+        return 'You are helpful.';
+      },
+      async read() {
+        return [];
+      },
+      async write() {
+        return {
+          applied: true,
+          block: {
+            id: 'test',
+            owner: 'test',
+            tier: 'working',
+            label: 'test',
+            content: 'test',
+            embedding: null,
+            permission: 'readwrite',
+            pinned: false,
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        };
+      },
+      async list() {
+        return [];
+      },
+      async deleteBlock() {
+        // no-op
+      },
+      async getPendingMutations() {
+        return [];
+      },
+      async approveMutation() {
+        throw new Error('not implemented');
+      },
+      async rejectMutation() {
+        throw new Error('not implemented');
+      },
+      async moveBlock() {
+        throw new Error('not implemented');
+      },
+      async getStats() {
+        return { tier: 'all', block_count: 0, total_bytes: 0 };
+      },
+    };
+  });
+
+  it('cache-friendliness.AC4.1 (unit): composed message persisted and byte-identical on replay', async () => {
+    let providerValue = 'alpha';
+    let providerCalls = 0;
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const turn1Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 1 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const turn2Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 2 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([turn1Response, turn2Response], tracker);
+    const mockPersistence = createMockPersistenceProvider();
+    const mockRegistry = createMockToolRegistry();
+    const mockRuntime = createMockCodeRuntime();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'test-ctx',
+          provider: () => {
+            providerCalls++;
+            return providerValue;
+          },
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    // Turn 1: Compose and persist
+    const agent = createAgent(deps);
+    await agent.processMessage('Hello from turn 1');
+
+    expect(tracker.requests.length).toBe(1);
+    const turn1Request = tracker.requests[0]!;
+
+    // AC4.1(a): Last message contains composed attachment with provider content
+    const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
+    expect(turn1LastMsg).toBeDefined();
+    expect(typeof turn1LastMsg!.content).toBe('string');
+    const turn1ContentStr = String(turn1LastMsg!.content);
+    expect(turn1ContentStr).toContain('[Dynamic Context — Full Snapshot]');
+    expect(turn1ContentStr).toContain('## test-ctx');
+    expect(turn1ContentStr).toContain('alpha');
+    expect(turn1ContentStr).toContain('Hello from turn 1');
+
+    // AC4.1(b): Persisted content equals what was sent
+    const convHistory = await agent.getConversationHistory();
+    const lastUserMsg = convHistory.filter((m) => m.role === 'user').pop();
+    expect(lastUserMsg).toBeDefined();
+    expect(lastUserMsg!.content).toBe(turn1ContentStr);
+
+    // Turn 2: Verify byte-identical replay
+    await agent.processMessage('Hello from turn 2');
+
+    expect(tracker.requests.length).toBe(2);
+    const turn2Request = tracker.requests[1]!;
+
+    // AC4.1(c): Turn 1's last message is byte-identical in turn 2
+    const turn2SharedMsg = turn2Request.messages[turn1Request.messages.length - 1];
+    expect(JSON.stringify(turn1LastMsg)).toBe(JSON.stringify(turn2SharedMsg));
+  });
+
+  it('cache-friendliness.AC4.2 (unit): provider change during tool round not consumed', async () => {
+    let providerValue = 'alpha';
+    let providerCalls = 0;
+
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    // Tool round response + end_turn
+    const toolResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tool-1',
+          name: 'no_op_tool',
+          input: {},
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const endTurnResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const turn2Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 2 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolResponse, endTurnResponse, turn2Response], tracker);
+    const mockPersistence = createMockPersistenceProvider();
+    const mockRegistry = createMockToolRegistry();
+    const mockRuntime = createMockCodeRuntime();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'test-ctx',
+          provider: () => {
+            providerCalls++;
+            return providerValue;
+          },
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+
+    // Turn 1: Initial message, tool round, end_turn
+    await agent.processMessage('Message with tool');
+
+    // Provider should be called exactly once (during first round composition)
+    expect(providerCalls).toBe(1);
+
+    // Mutate provider during turn (simulating dynamic change)
+    providerValue = 'beta';
+
+    // Turn 2: Verify beta appears in composed attachment
+    await agent.processMessage('Next message');
+
+    // Provider called again for turn 2's composition, now returning 'beta'
+    expect(providerCalls).toBe(2);
+
+    const turn2Request = tracker.requests[tracker.requests.length - 1]!;
+    const turn2LastMsg = turn2Request.messages[turn2Request.messages.length - 1];
+    expect(typeof turn2LastMsg!.content).toBe('string');
+    const turn2ContentStr = String(turn2LastMsg!.content);
+    expect(turn2ContentStr).toContain('beta');
+  });
+
+  it('cache-friendliness.AC4: undefined provider returns no composition', async () => {
+    const tracker: { requests: Array<ModelRequest> } = { requests: [] };
+
+    const turn1Response: ModelResponse = {
+      content: [{ type: 'text', text: 'Turn 1 response' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([turn1Response], tracker);
+    const mockPersistence = createMockPersistenceProvider();
+    const mockRegistry = createMockToolRegistry();
+    const mockRuntime = createMockCodeRuntime();
+
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config: { max_tool_rounds: 5, context_budget: 0.8 },
+      classifiedProviders: [
+        {
+          name: 'test-ctx',
+          provider: () => undefined,
+          classification: 'dynamic',
+        },
+      ],
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Simple message');
+
+    expect(tracker.requests.length).toBe(1);
+    const turn1Request = tracker.requests[0]!;
+
+    // Last message should be plain text (no composition)
+    const turn1LastMsg = turn1Request.messages[turn1Request.messages.length - 1];
+    expect(typeof turn1LastMsg!.content).toBe('string');
+    const turn1ContentStr = String(turn1LastMsg!.content);
+    expect(turn1ContentStr).toBe('Simple message');
+    expect(turn1ContentStr).not.toContain('[Dynamic Context');
+
+    // Persisted content should also be plain text
+    const convHistory = await agent.getConversationHistory();
+    const lastUserMsg = convHistory.filter((m) => m.role === 'user').pop();
+    expect(lastUserMsg).toBeDefined();
+    expect(lastUserMsg!.content).toBe('Simple message');
   });
 });
 

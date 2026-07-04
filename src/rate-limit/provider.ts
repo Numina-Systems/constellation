@@ -2,15 +2,30 @@
 
 import type { ModelProvider, ModelRequest, ModelResponse, StreamEvent } from '../model/types.js';
 import type { RateLimiterConfig, RateLimitStatus, ServerRateLimitSync } from './types.js';
+import { DEFAULT_MIN_OUTPUT_RESERVE } from './types.js';
+import { ModelError } from '../errors/model.js';
 import { createTokenBucket, tryConsume, recordConsumption, getStatus, refill } from './bucket.js';
 import { estimateInputTokens } from './estimate.js';
-
-const DEFAULT_MIN_OUTPUT_RESERVE = 1024;
 
 export function createRateLimitedProvider(
   provider: ModelProvider,
   config: RateLimiterConfig,
 ): ModelProvider & { getStatus(): RateLimitStatus; syncFromServer: ServerRateLimitSync } {
+  const minOutputReserve = config.minOutputReserve ?? DEFAULT_MIN_OUTPUT_RESERVE;
+
+  // A reserve larger than the output bucket's capacity can never be consumed,
+  // so every request would hang in the wait loop. This is a pure configuration
+  // error, independent of any request; reject it at construction time.
+  if (minOutputReserve > config.outputTokensPerMinute) {
+    throw new ModelError(
+      'CONTEXT_OVERFLOW',
+      `minimum output reserve (${minOutputReserve}) exceeds the output rate limit capacity (${config.outputTokensPerMinute}); no request can ever fit the rate-limit window`,
+      false,
+      { minOutputReserve, outputTokensPerMinute: config.outputTokensPerMinute },
+      { suggestion: 'lower min_output_reserve or raise output_tokens_per_minute' },
+    );
+  }
+
   const now = Date.now();
 
   // Create three independent token buckets
@@ -38,8 +53,6 @@ export function createRateLimitedProvider(
     now,
   );
 
-  const minOutputReserve = config.minOutputReserve ?? DEFAULT_MIN_OUTPUT_RESERVE;
-
   // State tracking
   let rpmBucketState = rpmBucket;
   let itpmBucketState = itpmBucket;
@@ -60,6 +73,21 @@ export function createRateLimitedProvider(
 
   async function complete(request: ModelRequest): Promise<ModelResponse> {
     const estimatedInputTokens = estimateInputTokens(request);
+
+    // A request that needs more input tokens than the bucket can ever hold
+    // would loop forever, since refill caps at capacity and the consume check
+    // requires tokens >= amount. Fail fast instead of hanging the agent.
+    // Callers recover by shrinking the request: the compactor halves its
+    // chunks and the agent loop compacts history on CONTEXT_OVERFLOW.
+    if (estimatedInputTokens > config.inputTokensPerMinute) {
+      throw new ModelError(
+        'CONTEXT_OVERFLOW',
+        `estimated input tokens (${estimatedInputTokens}) exceed the input rate limit capacity (${config.inputTokensPerMinute}); the request can never fit the rate-limit window`,
+        false,
+        { estimatedInputTokens, inputTokensPerMinute: config.inputTokensPerMinute },
+        { suggestion: 'raise input_tokens_per_minute or reduce the request size' },
+      );
+    }
 
     return withMutex(async () => {
       queueDepth++;

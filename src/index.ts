@@ -92,6 +92,8 @@ import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/da
 import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
 import type { McpClient } from '@/mcp';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { createSkillsContextProvider } from '@/skill/index.js';
+import { createWorkingMemoryContextProvider } from '@/memory/index.js';
 import { buildDiarySection } from '@/diary';
 import { createShellSession } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
@@ -735,6 +737,12 @@ async function main(): Promise<void> {
   const recallContextProvider = createRecallContextProvider();
   const subconsciousRecallContextProvider = createRecallContextProvider();
 
+  // Create skills context provider
+  const skillsContextProvider = createSkillsContextProvider();
+
+  // Create working memory context provider
+  const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -1008,17 +1016,6 @@ async function main(): Promise<void> {
     clipFirst: config.summarization?.clip_first ?? 2,
     clipLast: config.summarization?.clip_last ?? 2,
     prompt: config.summarization?.prompt ?? null,
-    scoring: config.summarization ? {
-      roleWeightSystem: config.summarization.role_weight_system,
-      roleWeightUser: config.summarization.role_weight_user,
-      roleWeightAssistant: config.summarization.role_weight_assistant,
-      recencyDecay: config.summarization.recency_decay,
-      questionBonus: config.summarization.question_bonus,
-      toolCallBonus: config.summarization.tool_call_bonus,
-      keywordBonus: config.summarization.keyword_bonus,
-      importantKeywords: config.summarization.important_keywords,
-      contentLengthWeight: config.summarization.content_length_weight,
-    } : undefined,
     timeout: config.summarization?.compaction_timeout ?? 120000,
     maxRetries: config.summarization?.compaction_max_retries ?? 2,
     maxChunkTokens: config.summarization?.max_chunk_tokens,
@@ -1148,6 +1145,20 @@ async function main(): Promise<void> {
   classifiedProviders.push({
     name: 'recall',
     provider: recallContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Skills context provider
+  classifiedProviders.push({
+    name: 'skills',
+    provider: skillsContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Working memory context provider
+  classifiedProviders.push({
+    name: 'working-memory',
+    provider: workingMemoryContextProvider,
     classification: 'dynamic',
   });
 
@@ -1307,6 +1318,7 @@ async function main(): Promise<void> {
     ],
     classifiedProviders,
     skills: skillRegistry,
+    skillsContextState: skillsContextProvider,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
     recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
     searchStore: searchStore,
@@ -1316,6 +1328,7 @@ async function main(): Promise<void> {
     checkpointStateRef: agentStateRef,
     loopDetector,
     diarySection,
+    workingMemoryContextState: workingMemoryContextProvider,
   }, mainConversationId);
 
   // Create subconscious agent if enabled

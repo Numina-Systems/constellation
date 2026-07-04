@@ -1,7 +1,7 @@
 // pattern: Functional Core
 
 import { describe, test, expect } from 'bun:test';
-import { buildSystemPrompt, shouldCompress, estimateOverheadTokens, truncateOldest } from './context.ts';
+import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest } from './context.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { ConversationMessage } from './types.ts';
 import type { Message } from '../model/types.ts';
@@ -31,6 +31,61 @@ describe('buildSystemPrompt', () => {
     const mockMemory = createMockMemory('You are the spirit.');
     const result = await buildSystemPrompt(mockMemory);
     expect(result).toBe('You are the spirit.');
+  });
+});
+
+describe('buildMessages', () => {
+  test('cache-friendliness.AC3.1 (unit): no working-memory prepend in output', async () => {
+    // buildMessages now derives output solely from history, no prepend
+    const history: Array<ConversationMessage> = [
+      {
+        id: 'msg-1',
+        conversation_id: 'conv-1',
+        role: 'user',
+        content: 'Hello',
+        created_at: new Date(),
+      },
+      {
+        id: 'msg-2',
+        conversation_id: 'conv-1',
+        role: 'assistant',
+        content: 'Hi there',
+        created_at: new Date(),
+      },
+    ];
+
+    const messages: Array<Message> = await buildMessages(history);
+
+    expect(messages.length).toBe(2);
+    expect(messages[0]!.role).toBe('user');
+    expect(messages[0]!.content).toBe('Hello');
+    expect(messages[1]!.role).toBe('assistant');
+    expect(messages[1]!.content).toBe('Hi there');
+
+    // Assert no message contains the old [Working Memory Context] prefix
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        expect(msg.content).not.toMatch(/\[Working Memory Context\]/);
+      }
+    }
+  });
+
+  test('converts user and assistant messages without prepend', async () => {
+    const history: Array<ConversationMessage> = [
+      {
+        id: 'msg-1',
+        conversation_id: 'conv-1',
+        role: 'user',
+        content: 'Test message',
+        created_at: new Date(),
+      },
+    ];
+
+    const messages: Array<Message> = await buildMessages(history);
+
+    expect(messages.length).toBe(1);
+    expect(messages[0]!.role).toBe('user');
+    expect(messages[0]!.content).toBe('Test message');
   });
 });
 

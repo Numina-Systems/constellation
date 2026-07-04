@@ -16,6 +16,8 @@ import type { TraceRecorder } from '../reflexion/types.ts';
 import type { SkillRegistry } from '../skill/types.ts';
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { RecallContextState } from '../recall/index.js';
+import type { SkillsContextState } from '../skill/index.js';
+import type { WorkingMemoryContextState } from '../memory/index.js';
 import type { SearchStore } from '../search/store.js';
 import type { CheckpointTrigger, CheckpointAgentState } from './checkpoint-types.ts';
 import type { LoopDetector } from '@/loop-detection/types.js';
@@ -93,6 +95,7 @@ export type AgentDependencies = {
   contextProviders?: ReadonlyArray<ContextProvider>;
   classifiedProviders?: ReadonlyArray<ClassifiedProvider>;
   skills?: SkillRegistry;
+  skillsContextState?: SkillsContextState;
   sourceInstructions?: ReadonlyMap<string, string>;
   recallContextState?: RecallContextState;
   searchStore?: SearchStore;
@@ -102,6 +105,7 @@ export type AgentDependencies = {
   checkpointStateRef?: { current: CheckpointAgentState };
   loopDetector?: LoopDetector;
   diarySection?: string;
+  workingMemoryContextState?: WorkingMemoryContextState;
 };
 
 export type Agent = {

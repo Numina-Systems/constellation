@@ -1,18 +1,20 @@
 # Rate Limit
 
-Last verified: 2026-03-01
+Last verified: 2026-07-02
 
 ## Purpose
 Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-model throughput limits. Prevents 429 errors from API rate limit exhaustion by proactively throttling requests.
 
 ## Contracts
-- **Exposes**: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`, `BucketStatus` (types); `createTokenBucket()`, `refill()`, `tryConsume()`, `recordConsumption()`, `getStatus()` (pure bucket functions); `estimateInputTokens()` (heuristic); `createRateLimitedProvider()` (imperative wrapper); `hasRateLimitConfig()`, `buildRateLimiterConfig()`, `createRateLimitContextProvider()` (config/context helpers)
+- **Exposes**: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`, `BucketStatus` (types); `DEFAULT_MIN_OUTPUT_RESERVE` (constant, shared with config-schema validation); `createTokenBucket()`, `refill()`, `tryConsume()`, `recordConsumption()`, `getStatus()` (pure bucket functions); `estimateInputTokens()` (heuristic); `createRateLimitedProvider()` (imperative wrapper); `hasRateLimitConfig()`, `buildRateLimiterConfig()`, `createRateLimitContextProvider()` (config/context helpers)
 - **Guarantees**:
   - Token buckets refill continuously based on elapsed time, never exceeding capacity
   - `tryConsume` returns exact wait time when insufficient capacity
   - `recordConsumption` corrects buckets with actual usage, allowing negative balances
   - `RateLimitedProvider` serialises concurrent callers via mutex
-  - Requests are queued (never dropped) when rate limited
+  - Requests that can eventually fit the window are queued (never dropped) when rate limited
+  - Requests that can *never* fit the window (estimated input tokens above `inputTokensPerMinute`) fail fast with a non-retryable `ModelError` code `CONTEXT_OVERFLOW` instead of hanging; callers recover by shrinking the request (the compactor halves chunks, the agent loop compacts history)
+  - `createRateLimitedProvider` throws `ModelError` code `CONTEXT_OVERFLOW` at construction when `minOutputReserve` (default `DEFAULT_MIN_OUTPUT_RESERVE`) exceeds `outputTokensPerMinute` — this misconfiguration is request-independent (config schema also rejects it at load time)
 - **Expects**: Valid `RateLimiterConfig` with positive values, `ModelProvider` interface for wrapping
 
 ## Dependencies
@@ -28,7 +30,7 @@ Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-
 - Negative bucket balances allowed (natural backpressure from underestimation)
 
 ## Key Files
-- `types.ts` -- Domain types: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`, `BucketStatus`
+- `types.ts` -- Domain types: `TokenBucket`, `TokenBucketConfig`, `ConsumeResult`, `RateLimiterConfig`, `RateLimitStatus`, `BucketStatus`; `DEFAULT_MIN_OUTPUT_RESERVE` constant
 - `bucket.ts` -- Pure token bucket functions: `createTokenBucket`, `refill`, `tryConsume`, `recordConsumption`, `getStatus`
 - `estimate.ts` -- Input token estimation: `estimateInputTokens` heuristic (chars/4)
 - `provider.ts` -- `RateLimitedProvider` imperative wrapper with mutex

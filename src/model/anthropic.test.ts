@@ -1,9 +1,15 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { createAnthropicAdapter, buildAnthropicSystemParam, normalizeMessage } from "./anthropic.js";
+import {
+  createAnthropicAdapter,
+  buildAnthropicSystemParam,
+  applyCacheControlToLastBlock,
+  normalizeMessage,
+  buildRequestParams,
+} from "./anthropic.js";
 import { ModelError } from "./types.js";
-import type { Message } from "./types.js";
+import type { Message, ModelRequest } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
 
 describe("createAnthropicAdapter", () => {
@@ -259,12 +265,16 @@ describe("createAnthropicAdapter", () => {
       const result = buildAnthropicSystemParam("Base system instruction", messages);
 
       expect(result).toBeDefined();
-      expect(result).toContain("Base system instruction");
-      expect(result).toContain("You are a helpful assistant.");
-      expect(result).toContain("Always be concise.");
-      // Verify they're joined with double newlines
-      const parts = result!.split("\n\n");
-      expect(parts.length).toBe(3);
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        const textContent = result[0]!.text;
+        expect(textContent).toContain("Base system instruction");
+        expect(textContent).toContain("You are a helpful assistant.");
+        expect(textContent).toContain("Always be concise.");
+        // Verify they're joined with double newlines
+        const parts = textContent.split("\n\n");
+        expect(parts.length).toBe(3);
+      }
     });
 
     it("should pass through request.system unchanged when no system-role messages exist", () => {
@@ -281,7 +291,12 @@ describe("createAnthropicAdapter", () => {
 
       const result = buildAnthropicSystemParam("My system instruction", messages);
 
-      expect(result).toBe("My system instruction");
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        expect(result[0]!.text).toBe("My system instruction");
+        expect(result[0]!.cache_control).toEqual({ type: "ephemeral" });
+      }
     });
 
     it("should return undefined when no system param or messages exist", () => {
@@ -321,10 +336,14 @@ describe("createAnthropicAdapter", () => {
       const result = buildAnthropicSystemParam(undefined, messages);
 
       expect(result).toBeDefined();
-      expect(result).toContain("First instruction");
-      expect(result).toContain("Second instruction");
-      // Text blocks are joined with newlines within a message, then messages are joined with double newlines
-      expect(result).toContain("First instruction\nSecond instruction");
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        const textContent = result[0]!.text;
+        expect(textContent).toContain("First instruction");
+        expect(textContent).toContain("Second instruction");
+        // Text blocks are joined with newlines within a message, then messages are joined with double newlines
+        expect(textContent).toContain("First instruction\nSecond instruction");
+      }
     });
 
     it("should concatenate multiple system-role messages with double newlines", () => {
@@ -353,7 +372,12 @@ describe("createAnthropicAdapter", () => {
 
       const result = buildAnthropicSystemParam(undefined, messages);
 
-      expect(result).toBe("System 1\n\nSystem 2\n\nSystem 3");
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        expect(result[0]!.text).toBe("System 1\n\nSystem 2\n\nSystem 3");
+        expect(result[0]!.cache_control).toEqual({ type: "ephemeral" });
+      }
     });
 
     it("should merge request.system with system-role messages in order", () => {
@@ -366,8 +390,13 @@ describe("createAnthropicAdapter", () => {
 
       const result = buildAnthropicSystemParam("Request system", messages);
 
-      // request.system comes first, then inline system messages
-      expect(result).toBe("Request system\n\nInline system");
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        // request.system comes first, then inline system messages
+        expect(result[0]!.text).toBe("Request system\n\nInline system");
+        expect(result[0]!.cache_control).toEqual({ type: "ephemeral" });
+      }
     });
 
     it("should handle empty string requestSystem explicitly (not drop it)", () => {
@@ -380,8 +409,13 @@ describe("createAnthropicAdapter", () => {
 
       const result = buildAnthropicSystemParam("", messages);
 
-      // Empty string should be preserved (not treated as falsy and dropped)
-      expect(result).toBe("");
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        // Empty string should be preserved (not treated as falsy and dropped)
+        expect(result[0]!.text).toBe("");
+        expect(result[0]!.cache_control).toEqual({ type: "ephemeral" });
+      }
     });
 
     it("should throw when normalizeMessage receives system-role message", () => {
@@ -391,6 +425,265 @@ describe("createAnthropicAdapter", () => {
       };
 
       expect(() => normalizeMessage(msg)).toThrow("system-role messages must be extracted before normalizeMessage");
+    });
+  });
+
+  describe("cache_control breakpoints", () => {
+    it("buildAnthropicSystemParam with system content should return block array with cache_control (AC6.1)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("Base system", messages);
+
+      expect(result).toBeDefined();
+      // After implementation, result should be an array (block structure), not a string
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        const lastBlock = result[result.length - 1]!;
+        expect(lastBlock).toHaveProperty("cache_control");
+        expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+        expect(lastBlock.type).toBe("text");
+        expect(lastBlock.text).toBe("Base system");
+      }
+    });
+
+    it("buildAnthropicSystemParam concatenates request.system and inline system-role messages with cache_control (AC6.1)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "system",
+          content: "Inline system",
+        },
+        {
+          role: "user",
+          content: "hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam("Request system", messages);
+
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      if (Array.isArray(result) && result.length > 0) {
+        const lastBlock = result[result.length - 1]!;
+        expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+        // Text should be concatenation of both parts
+        expect(lastBlock.text).toContain("Request system");
+        expect(lastBlock.text).toContain("Inline system");
+        // Verify concatenation order: request.system first, then inline
+        expect(lastBlock.text).toBe("Request system\n\nInline system");
+      }
+    });
+
+    it("applyCacheControlToLastBlock converts string content to text block with cache_control (AC6.1)", () => {
+      const result = applyCacheControlToLastBlock([
+        {
+          role: "user",
+          content: "hi",
+        },
+      ]);
+
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(1);
+
+      const lastMessage = result[0]!;
+      expect(typeof lastMessage.content).not.toBe("string");
+      expect(Array.isArray(lastMessage.content)).toBe(true);
+
+      if (Array.isArray(lastMessage.content)) {
+        expect(lastMessage.content.length).toBe(1);
+        const lastBlock = lastMessage.content[0]!;
+        expect(lastBlock.type).toBe("text");
+        expect((lastBlock as { type: string; text: string }).text).toBe("hi");
+        expect((lastBlock as { cache_control?: unknown }).cache_control).toEqual({
+          type: "ephemeral",
+        });
+      }
+    });
+
+    it("should return undefined when no system content exists (AC6.2)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam(undefined, messages);
+
+      expect(result).toBeUndefined();
+    });
+
+    it("should return undefined (not empty array) when request.system is undefined and no system-role messages (AC6.2)", () => {
+      const messages: ReadonlyArray<Message> = [
+        {
+          role: "user",
+          content: "Hello",
+        },
+      ];
+
+      const result = buildAnthropicSystemParam(undefined, messages);
+
+      expect(result).toBeUndefined();
+      expect(Array.isArray(result)).toBe(false);
+    });
+
+    it("applyCacheControlToLastBlock on block-array content only marks final block with cache_control (AC6.1)", () => {
+      const result = applyCacheControlToLastBlock([
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "first" },
+            {
+              type: "tool_result" as const,
+              tool_use_id: "tool-1",
+              content: "result",
+            },
+          ],
+        },
+      ]);
+
+      expect(result.length).toBe(1);
+      const lastMessage = result[0]!;
+      expect(Array.isArray(lastMessage.content)).toBe(true);
+
+      if (Array.isArray(lastMessage.content)) {
+        expect(lastMessage.content.length).toBe(2);
+
+        // First block should not have cache_control
+        const firstBlock = lastMessage.content[0]!;
+        expect(firstBlock.type).toBe("text");
+        expect((firstBlock as { cache_control?: unknown }).cache_control).toBeUndefined();
+
+        // Last block should have cache_control
+        const lastBlock = lastMessage.content[1]!;
+        expect(lastBlock.type).toBe("tool_result");
+        expect((lastBlock as { cache_control?: unknown }).cache_control).toEqual({
+          type: "ephemeral",
+        });
+      }
+    });
+
+    it("applyCacheControlToLastBlock returns empty array unchanged (AC6.1 edge case)", () => {
+      const result = applyCacheControlToLastBlock([]);
+
+      expect(result).toBeDefined();
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(0);
+    });
+
+    it("applyCacheControlToLastBlock with empty content array returns unchanged (AC6.1 edge case)", () => {
+      const result = applyCacheControlToLastBlock([
+        {
+          role: "user",
+          content: [],
+        },
+      ]);
+
+      expect(result.length).toBe(1);
+      const lastMessage = result[0]!;
+      expect(Array.isArray(lastMessage.content)).toBe(true);
+
+      if (Array.isArray(lastMessage.content)) {
+        expect(lastMessage.content.length).toBe(0);
+      }
+    });
+
+    it("buildRequestParams with system prompt produces exactly 2 cache_control breakpoints (AC6.3)", () => {
+      const request: ModelRequest = {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 100,
+        system: "Base system",
+        messages: [
+          {
+            role: "user",
+            content: "First message",
+          },
+          {
+            role: "assistant",
+            content: "Response",
+          },
+          {
+            role: "user",
+            content: "Second message",
+          },
+        ],
+      };
+
+      const params = buildRequestParams(request);
+
+      // Serialize to JSON and count cache_control occurrences
+      const jsonStr = JSON.stringify(params);
+      const matches = jsonStr.match(/cache_control/g);
+      const count = matches ? matches.length : 0;
+
+      expect(count).toBe(2); // One on system, one on last message
+    });
+
+    it("buildRequestParams without system prompt produces exactly 1 cache_control breakpoint (AC6.3)", () => {
+      const request: ModelRequest = {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content: "First message",
+          },
+          {
+            role: "assistant",
+            content: "Response",
+          },
+          {
+            role: "user",
+            content: "Last message",
+          },
+        ],
+      };
+
+      const params = buildRequestParams(request);
+
+      // Serialize to JSON and count cache_control occurrences
+      const jsonStr = JSON.stringify(params);
+      const matches = jsonStr.match(/cache_control/g);
+      const count = matches ? matches.length : 0;
+
+      expect(count).toBe(1); // Only on last message
+    });
+
+    it("buildRequestParams ensures non-final messages have no cache_control (AC6.3)", () => {
+      const request: ModelRequest = {
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 100,
+        system: "System",
+        messages: [
+          {
+            role: "user",
+            content: "Message 1",
+          },
+          {
+            role: "assistant",
+            content: "Message 2",
+          },
+        ],
+      };
+
+      const params = buildRequestParams(request);
+
+      // First message content should not have cache_control
+      const firstMessage = params.messages[0]!;
+      if (typeof firstMessage.content === "string") {
+        expect(firstMessage.content).not.toContain("cache_control");
+      } else if (Array.isArray(firstMessage.content)) {
+        for (const block of firstMessage.content) {
+          expect(
+            (block as { cache_control?: unknown }).cache_control
+          ).toBeUndefined();
+        }
+      }
     });
   });
 

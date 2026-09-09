@@ -791,6 +791,9 @@ export function createAgent(
         const startedCallIds = new Set<string>();
         const transcriptPersistedCallIds = new Set<string>();
         let unresolvedEffectReason: string | null = null;
+        let unresolvedEffectCallId: string | null = null;
+        let unresolvedEffectOutcome: import('@/contracts/outcomes.ts').ToolOutcome | null = null;
+        let unresolvedMarkerConfirmed = false;
         try {
           if (deps.integrityLifecycle) {
             try {
@@ -841,27 +844,39 @@ export function createAgent(
                   ? {kind: 'cancelled', code: 'cancelled', message, details: unresolvedOutcomeDetails(result)}
                   : {kind: 'outcome_unknown', code: 'runtime_outcome_unknown', message, details: unresolvedOutcomeDetails(result)};
                 if (result.outcome === 'outcome_unknown') {
-                  // Persist the typed uncertain outcome first, then latch durably and
-                  // stop the batch: remaining calls backfill as cancelled and the turn
-                  // fails closed.
+                  // Latch the uncertainty state BEFORE any fallible I/O: a persistence
+                  // failure must never downgrade this effect to an ordinary dispatch
+                  // error or allow later tools or provider calls to run.
                   unresolvedEffectReason = `${message} (unresolved calls: ${(result.unresolved_call_ids ?? []).join(', ') || 'unreported'})`;
-                  await persistMessage({
-                    conversation_id: id,
-                    role: 'tool',
-                    content: toolResult,
-                    tool_call_id: toolUse.id,
-                    tool_outcome: runtimeOutcome,
-                  });
-                  transcriptPersistedCallIds.add(toolUse.id);
+                  unresolvedEffectCallId = toolUse.id;
+                  unresolvedEffectOutcome = runtimeOutcome;
                   recoveryRequired = true;
                   recoveryReason = unresolvedEffectReason;
                   recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, unresolvedEffectReason);
+                  let markerConfirmed = false;
                   if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
                     try {
                       await deps.integrityLifecycle.markConversationRecoveryRequired(unresolvedEffectReason, 'unresolved-effect');
+                      markerConfirmed = true;
                     } catch {
-                      // The in-memory latch remains fail-closed if the durable marker also fails.
+                      // Cleanup keeps the original receipt unfinished instead, so
+                      // restart still observes recovery-required state.
                     }
+                  }
+                  unresolvedMarkerConfirmed = markerConfirmed;
+                  // Best-effort transcript truth; the marker (or unfinished receipt)
+                  // carries the fail-closed state when this write fails.
+                  try {
+                    await persistMessage({
+                      conversation_id: id,
+                      role: 'tool',
+                      content: toolResult,
+                      tool_call_id: toolUse.id,
+                      tool_outcome: runtimeOutcome,
+                    });
+                    transcriptPersistedCallIds.add(toolUse.id);
+                  } catch {
+                    recoveryRequired = true;
                   }
                   throw unresolvedEffectSignal;
                 }
@@ -957,10 +972,25 @@ export function createAgent(
         }
         } catch (error) {
           if (error === unresolvedEffectSignal) {
-            // The uncertain effect latched its durable marker at detection time. Finish
-            // batch bookkeeping (remaining calls backfill as cancelled) and propagate
-            // the fail-closed signal; ordinary batch-failure semantics do not apply.
+            // The uncertainty state latched at detection time. Finish batch
+            // bookkeeping — the started uncertain call keeps its true outcome in the
+            // receipt, only never-run calls are recorded as cancelled — and propagate
+            // the fail-closed signal. The batch is completed only when a durable
+            // uncertainty marker is confirmed; otherwise the receipt itself stays
+            // unfinished so restart observes recovery-required state.
             if (batchId && deps.integrityLifecycle) {
+              for (const toolUse of toolUseBlocks) {
+                if (recordedCallIds.has(toolUse.id)) continue;
+                const isUncertainCall = toolUse.id === unresolvedEffectCallId && unresolvedEffectOutcome !== null;
+                try {
+                  await deps.integrityLifecycle.recordOutcome(batchId, toolUse.id, isUncertainCall
+                    ? unresolvedEffectOutcome!
+                    : {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'});
+                  recordedCallIds.add(toolUse.id);
+                } catch {
+                  recoveryRequired = true;
+                }
+              }
               for (const toolUse of toolUseBlocks) {
                 if (transcriptPersistedCallIds.has(toolUse.id)) continue;
                 try {
@@ -976,19 +1006,18 @@ export function createAgent(
                   recoveryRequired = true;
                 }
               }
-              for (const toolUse of toolUseBlocks) {
-                if (recordedCallIds.has(toolUse.id)) continue;
+              if (unresolvedMarkerConfirmed) {
                 try {
-                  await deps.integrityLifecycle.recordOutcome(batchId, toolUse.id, {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'});
-                  recordedCallIds.add(toolUse.id);
+                  await deps.integrityLifecycle.completeBatch(batchId);
                 } catch {
                   recoveryRequired = true;
                 }
-              }
-              try {
-                await deps.integrityLifecycle.completeBatch(batchId);
-              } catch {
-                recoveryRequired = true;
+              } else {
+                try {
+                  await deps.integrityLifecycle.markRecoveryRequired?.(batchId, unresolvedEffectReason ?? 'unresolved host tool effect');
+                } catch {
+                  recoveryRequired = true;
+                }
               }
             }
             throw error;

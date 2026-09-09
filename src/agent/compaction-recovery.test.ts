@@ -151,6 +151,14 @@ describe('Unresolved execution effects and interrupted batches', () => {
     const history = await agent.getConversationHistory();
     const resultMessage = history.find((item) => item.role === 'tool' && item.tool_call_id === 'exec-1');
     expect(resultMessage?.tool_outcome?.kind).toBe('outcome_unknown');
+    // The lifecycle receipt records the same true outcome — not 'cancelled'.
+    const receiptRows = await persistence.query<{readonly details: unknown}>(
+      `SELECT details FROM operation_receipts WHERE operation_type = 'agent_batch' AND details->>'conversationId' = $1`, ['conv-unresolved'],
+    );
+    const outcomes = (Array.isArray(receiptRows) && receiptRows[0] !== undefined && typeof receiptRows[0].details === 'object' && receiptRows[0].details !== null
+      ? (receiptRows[0].details as Record<string, unknown>)['outcomes']
+      : undefined) as Record<string, {readonly kind?: string}> | undefined;
+    expect(outcomes?.['exec-1']?.kind).toBe('outcome_unknown');
   });
 
   it('mid_batch_cancellation_backfills_transcript_results_and_next_turn_succeeds', async () => {
@@ -266,6 +274,62 @@ describe('Unresolved execution effects and interrupted batches', () => {
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
     // A restarted agent is blocked by durable state alone.
     const restarted = createAgent(deps({conversationId: 'conv-uncertain-cancel', persistence, integrityLifecycle: lifecycle, model: fakeModel([text('blocked')]), runtime, registry}), 'conv-uncertain-cancel');
+    await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+  });
+
+  it('uncertain_outcome_persistence_failure_still_fails_closed', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-append-fail');
+    const historyStore = createConversationHistoryStore(persistence);
+    let toolResultAppends = 0;
+    const flakyHistoryStore = {
+      ...historyStore,
+      append: async (input: Parameters<typeof historyStore.append>[0]): Promise<ConversationMessage> => {
+        if (input.role === 'tool') {
+          toolResultAppends += 1;
+          if (toolResultAppends === 1) throw new Error('injected uncertain outcome write failure');
+        }
+        return historyStore.append(input);
+      },
+    };
+    let regularInvocations = 0;
+    const registry = createToolRegistry();
+    registry.register({definition: {name: 'execute_code', description: 'run code', parameters: []}, handler: async () => ({success: true, output: ''})});
+    registry.register({definition: {name: 'later_tool', description: 'later', parameters: []}, handler: async () => { regularInvocations += 1; return {success: true, output: 'must not run'}; }});
+    const model = fakeModel([toolUse({id: 'exec-1', name: 'execute_code'}, {id: 'call-2', name: 'later_tool'}), text('unreachable')]);
+    const runtime: CodeRuntime = {execute: async () => ({success: false, output: '', error: 'unresolved host tool calls', tool_calls_made: 1, duration_ms: 5, outcome: 'outcome_unknown', unresolved_call_ids: ['host-call-1'], unresolved_call_count: 1})};
+    const agent = createAgent(deps({conversationId: 'conv-append-fail', persistence, historyStore: flakyHistoryStore, model, runtime, registry, integrityLifecycle: lifecycle, config: normalConfig}), 'conv-append-fail');
+
+    // The uncertain outcome write fails once, but the effect must still fail closed:
+    // no further dispatch, durable latch, and restart blocking.
+    await expect(agent.processMessage('go')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    expect(regularInvocations).toBe(0);
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    const restarted = createAgent(deps({conversationId: 'conv-append-fail', persistence, integrityLifecycle: lifecycle, model: fakeModel([text('blocked')]), runtime, registry}), 'conv-append-fail');
+    await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+  });
+
+  it('unconfirmed_uncertainty_marker_keeps_the_batch_unfinished', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-marker-fail');
+    const failingMarkerLifecycle = {
+      ...lifecycle,
+      markConversationRecoveryRequired: async (): Promise<string> => {
+        throw new Error('injected marker write failure');
+      },
+    };
+    const historyStore = createConversationHistoryStore(persistence);
+    const registry = createToolRegistry();
+    registry.register({definition: {name: 'execute_code', description: 'run code', parameters: []}, handler: async () => ({success: true, output: ''})});
+    const model = fakeModel([toolUse({id: 'exec-1', name: 'execute_code'}), text('unreachable')]);
+    const runtime: CodeRuntime = {execute: async () => ({success: false, output: '', error: 'unresolved host tool calls', tool_calls_made: 1, duration_ms: 5, outcome: 'outcome_unknown', unresolved_call_ids: ['host-call-1'], unresolved_call_count: 1})};
+    const agent = createAgent(deps({conversationId: 'conv-marker-fail', historyStore, model, runtime, registry, integrityLifecycle: failingMarkerLifecycle, config: normalConfig}), 'conv-marker-fail');
+
+    // Without a confirmed durable marker the original receipt must stay unfinished,
+    // so a restarted agent (reading receipts only) still observes recovery-required.
+    await expect(agent.processMessage('go')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    const restarted = createAgent(deps({conversationId: 'conv-marker-fail', persistence, historyStore, model: fakeModel([text('blocked')]), runtime, registry, integrityLifecycle: lifecycle}), 'conv-marker-fail');
     await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
   });
 });

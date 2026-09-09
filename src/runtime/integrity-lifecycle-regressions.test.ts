@@ -378,4 +378,33 @@ describe('Phase 1 Package B named runtime regressions', () => {
 
     firstCompletion.resolve({success: true, output: 'late'});
   });
+
+  it('runtime_stderr_exit_with_unresolved_reports_outcome_unknown', async () => {
+    const firstStarted = createDeferred<void>();
+    const firstCompletion = createDeferred<ToolResult>();
+    const registry = createRegistry(async (_name, _params) => {
+      firstStarted.resolve(undefined);
+      return firstCompletion.promise;
+    });
+    const process = createControlledRuntimeProcess();
+    const executor = createExecutorWithProcess(createRuntimeConfig({working_dir: workdir}), registry, process);
+
+    const execution = executor.execute('', '');
+    await waitForProcessCapture(process);
+    // No output frame at all: a diagnostic on stderr must not downgrade an unresolved
+    // host call to an ordinary error.
+    process.pushStdout(toolCall('started'));
+    process.pushStderr(new TextEncoder().encode('diagnostic noise'));
+    process.finish(0);
+    await firstStarted.promise;
+
+    const result = await execution;
+    console.log('execution settled', result.outcome);
+
+    expect(result.success).toBe(false);
+    expect(result.outcome).toBe('outcome_unknown');
+    expect(result.unresolved_call_ids).toEqual(['started']);
+
+    firstCompletion.resolve({success: true, output: 'late'});
+  });
 });

@@ -96,6 +96,13 @@ function toToolOutcome(output: string, isError: boolean, errorCode = 'tool_faile
   return {kind: 'error', code: errorCode, message: output.slice(0, 4096)};
 }
 
+/**
+ * Internal signal thrown the moment an uncertain host effect is observed. The marker
+ * is latched before the throw; the batch catch finishes cleanup and the turn fails
+ * closed without dispatching any further tool.
+ */
+const unresolvedEffectSignal = new AgentError('RECOVERY_REQUIRED', 'unresolved host tool effect requires trusted recovery', {});
+
 /** Bounded outcome details describing unresolved host tool calls from a runtime run. */
 function unresolvedOutcomeDetails(result: {readonly unresolved_call_ids?: ReadonlyArray<string>; readonly unresolved_call_count?: number}): import('@/contracts/outcomes.ts').OutcomeDetails | undefined {
   const ids = result.unresolved_call_ids ?? [];
@@ -834,7 +841,29 @@ export function createAgent(
                   ? {kind: 'cancelled', code: 'cancelled', message, details: unresolvedOutcomeDetails(result)}
                   : {kind: 'outcome_unknown', code: 'runtime_outcome_unknown', message, details: unresolvedOutcomeDetails(result)};
                 if (result.outcome === 'outcome_unknown') {
+                  // Persist the typed uncertain outcome first, then latch durably and
+                  // stop the batch: remaining calls backfill as cancelled and the turn
+                  // fails closed.
                   unresolvedEffectReason = `${message} (unresolved calls: ${(result.unresolved_call_ids ?? []).join(', ') || 'unreported'})`;
+                  await persistMessage({
+                    conversation_id: id,
+                    role: 'tool',
+                    content: toolResult,
+                    tool_call_id: toolUse.id,
+                    tool_outcome: runtimeOutcome,
+                  });
+                  transcriptPersistedCallIds.add(toolUse.id);
+                  recoveryRequired = true;
+                  recoveryReason = unresolvedEffectReason;
+                  recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, unresolvedEffectReason);
+                  if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
+                    try {
+                      await deps.integrityLifecycle.markConversationRecoveryRequired(unresolvedEffectReason, 'unresolved-effect');
+                    } catch {
+                      // The in-memory latch remains fail-closed if the durable marker also fails.
+                    }
+                  }
+                  throw unresolvedEffectSignal;
                 }
                 recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, message);
               } else {
@@ -864,6 +893,7 @@ export function createAgent(
               recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
             }
           } catch (error) {
+            if (error === unresolvedEffectSignal) throw error;
             const errorMsg = error instanceof Error ? error.message : String(error);
             toolResult = `Error executing tool ${toolUse.name}: ${errorMsg}`;
             toolOutcomeError = 'tool_dispatch_failed';
@@ -926,6 +956,43 @@ export function createAgent(
           }
         }
         } catch (error) {
+          if (error === unresolvedEffectSignal) {
+            // The uncertain effect latched its durable marker at detection time. Finish
+            // batch bookkeeping (remaining calls backfill as cancelled) and propagate
+            // the fail-closed signal; ordinary batch-failure semantics do not apply.
+            if (batchId && deps.integrityLifecycle) {
+              for (const toolUse of toolUseBlocks) {
+                if (transcriptPersistedCallIds.has(toolUse.id)) continue;
+                try {
+                  await persistMessage({
+                    conversation_id: id,
+                    role: 'tool',
+                    content: unresolvedEffectReason ?? 'unresolved host tool effect',
+                    tool_call_id: toolUse.id,
+                    tool_outcome: {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'},
+                  });
+                  transcriptPersistedCallIds.add(toolUse.id);
+                } catch {
+                  recoveryRequired = true;
+                }
+              }
+              for (const toolUse of toolUseBlocks) {
+                if (recordedCallIds.has(toolUse.id)) continue;
+                try {
+                  await deps.integrityLifecycle.recordOutcome(batchId, toolUse.id, {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'});
+                  recordedCallIds.add(toolUse.id);
+                } catch {
+                  recoveryRequired = true;
+                }
+              }
+              try {
+                await deps.integrityLifecycle.completeBatch(batchId);
+              } catch {
+                recoveryRequired = true;
+              }
+            }
+            throw error;
+          }
           const reason = error instanceof Error ? error.message : String(error);
           if (batchId && deps.integrityLifecycle) {
             // Backfill the durable transcript before anything else: a batch whose
@@ -1000,26 +1067,6 @@ export function createAgent(
         // Then add tool results
         for (const result of toolResults) {
           history.push(result);
-        }
-
-        if (unresolvedEffectReason !== null) {
-          // Fail closed: an unresolved host effect may or may not have happened, so no
-          // further execution may run until trusted recovery reconciles it. The batch
-          // itself is complete and its outcome is durably typed as outcome_unknown.
-          recoveryRequired = true;
-          recoveryReason = unresolvedEffectReason;
-          recordTrace('execute_code', {}, 'unresolved host tool effect; halting turn for trusted recovery', 0, false, recoveryReason);
-          if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
-            try {
-              await deps.integrityLifecycle.markConversationRecoveryRequired(recoveryReason, 'unresolved-effect');
-            } catch {
-              // The in-memory latch remains fail-closed if the durable marker also fails.
-            }
-          }
-          throw new AgentError('RECOVERY_REQUIRED', `conversation ${id} requires trusted recovery after unresolved tool effect`, {
-            conversationId: id,
-            reason: recoveryReason,
-          }, {suggestion: 'reconcile unresolved tool effects through the trusted recovery accessor'});
         }
 
         // A completed tool batch closes this admission boundary; the next provider request may admit once.

@@ -62,6 +62,36 @@ export type RestorationResult = {
   readonly messageCount: number;
 };
 
+/**
+ * Restores for one conversation serialize in-process: history commit, working-memory
+ * publication, and marker completion form one logical critical section. Marker
+ * supersession may therefore only retire markers from operations that have fully
+ * finished, never from a restore that is still mid-flight.
+ */
+const restoreGates = new Map<string, Promise<unknown>>();
+
+function runSerializedRestore<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = restoreGates.get(conversationId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(
+    (): Promise<void> => gate,
+    (): Promise<void> => gate,
+  );
+  restoreGates.set(conversationId, tail);
+  return (async () => {
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (restoreGates.get(conversationId) === tail) restoreGates.delete(conversationId);
+    }
+  })();
+}
+
 export async function restoreFromCheckpoint(
   checkpoint: SessionCheckpoint,
   deps: RestorationDependencies,
@@ -80,12 +110,14 @@ export async function restoreFromCheckpoint(
 
   // Production restoration is durable-first: active membership and its receipt commit before any in-memory publication.
   if (deps.historyStore) {
+    const historyStore = deps.historyStore;
+    return runSerializedRestore(checkpoint.conversationId, async () => {
     const isNativeV2 = checkpoint.version === 2 && checkpoint.migratedFromVersion !== 1;
     if (isNativeV2 && checkpoint.messageIds.length === 0) {
       throw new AgentError('CHECKPOINT_FAILED', 'cannot restore checkpoint: v2 active history is empty', {conversationId: checkpoint.conversationId, checkpointId: checkpoint.id});
     }
     if (!isNativeV2) log('checkpoint restore: v1 provenance gap; archive selection cannot be resolved from legacy metadata');
-    const current = await deps.historyStore.readActive(checkpoint.conversationId);
+    const current = await historyStore.readActive(checkpoint.conversationId);
     // Latch before any durable mutation: if the process dies between the history
     // commit and working-memory replacement, restart must observe recovery-required
     // state instead of silently resuming with history and memory out of step.
@@ -93,7 +125,7 @@ export async function restoreFromCheckpoint(
     if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
       recoveryMarkerId = await deps.integrityLifecycle.markConversationRecoveryRequired(`checkpoint restore ${checkpoint.id} is in progress for conversation ${checkpoint.conversationId}`, 'restore');
     }
-    const restored = await deps.historyStore.restoreExactHistory({
+    const restored = await historyStore.restoreExactHistory({
       // Each restore request owns a distinct operation identity so a repeat restore
       // after new appends re-runs membership replacement instead of short-circuiting
       // on this checkpoint's earlier committed receipt. The identity is reconciled
@@ -148,6 +180,7 @@ export async function restoreFromCheckpoint(
       compactionMeta: checkpoint.compactionMeta,
       messageCount: restored.history.messages.length,
     };
+    });
   }
 
   // ── Legacy compatibility path for callers without the history-store boundary ──

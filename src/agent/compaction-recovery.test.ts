@@ -214,4 +214,58 @@ describe('Unresolved execution effects and interrupted batches', () => {
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
     await expect(agent.processMessage('continue')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
   });
+
+  it('outcome_unknown_stops_remaining_dispatch_and_backfills_as_cancelled', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-stop-dispatch');
+    let modelCalls = 0;
+    let regularInvocations = 0;
+    const model = fakeModel([
+      toolUse({id: 'exec-1', name: 'execute_code', input: {code: 'await tools.host_mutation()'}}, {id: 'call-2', name: 'regular_tool'}),
+      text('unreachable'),
+    ], () => { modelCalls += 1; });
+    const runtime: CodeRuntime = {execute: async () => ({success: false, output: '', error: 'unresolved host tool calls', tool_calls_made: 1, duration_ms: 5, outcome: 'outcome_unknown', unresolved_call_ids: ['host-call-1'], unresolved_call_count: 1})};
+    const registry = createToolRegistry();
+    registry.register({definition: {name: 'execute_code', description: 'run code', parameters: []}, handler: async () => ({success: true, output: ''})});
+    registry.register({definition: {name: 'regular_tool', description: 'regular', parameters: []}, handler: async () => { regularInvocations += 1; return {success: true, output: 'must not run'}; }});
+    const agent = createAgent(deps({conversationId: 'conv-stop-dispatch', model, runtime, registry, integrityLifecycle: lifecycle, config: normalConfig}), 'conv-stop-dispatch');
+
+    await expect(agent.processMessage('go')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    // The uncertain effect stops the batch immediately: the queued tool never runs.
+    expect(regularInvocations).toBe(0);
+    expect(modelCalls).toBe(1);
+    // The not-dispatched call is backfilled as a typed cancelled outcome.
+    const history = await agent.getConversationHistory();
+    const backfilled = history.find((item) => item.role === 'tool' && item.tool_call_id === 'call-2');
+    expect(backfilled?.tool_outcome?.kind).toBe('cancelled');
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+  });
+
+  it('uncertainty_marker_survives_cancellation_cleanup', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-uncertain-cancel');
+    const controller = new AbortController();
+    const model = fakeModel([
+      toolUse({id: 'exec-1', name: 'execute_code'}, {id: 'call-2', name: 'later_tool'}),
+      text('unreachable'),
+    ]);
+    const runtime: CodeRuntime = {
+      execute: async () => {
+        controller.abort();
+        return {success: false, output: '', error: 'sandbox timed out on an uncancellable host mutation', tool_calls_made: 1, duration_ms: 5, outcome: 'outcome_unknown', unresolved_call_ids: ['host-call-9'], unresolved_call_count: 1};
+      },
+    };
+    const registry = createToolRegistry();
+    registry.register({definition: {name: 'execute_code', description: 'run code', parameters: []}, handler: async () => ({success: true, output: ''})});
+    registry.register({definition: {name: 'later_tool', description: 'later', parameters: []}, handler: async () => ({success: true, output: 'must not run'})});
+    const agent = createAgent(deps({conversationId: 'conv-uncertain-cancel', model, runtime, registry, integrityLifecycle: lifecycle, config: normalConfig}), 'conv-uncertain-cancel');
+
+    // Cancellation lands during the uncertain execution: cleanup backfills, completes
+    // the batch, and must still preserve the durable unresolved-effect marker.
+    await expect(agent.processMessage('go', {signal: controller.signal})).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    // A restarted agent is blocked by durable state alone.
+    const restarted = createAgent(deps({conversationId: 'conv-uncertain-cancel', persistence, integrityLifecycle: lifecycle, model: fakeModel([text('blocked')]), runtime, registry}), 'conv-uncertain-cancel');
+    await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+  });
 });

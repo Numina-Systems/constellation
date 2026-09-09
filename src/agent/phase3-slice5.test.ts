@@ -47,6 +47,14 @@ function checkpoint(conversationId: string, messageIds: ReadonlyArray<string>): 
   };
 }
 
+async function waitFor(condition: () => boolean, description: string): Promise<void> {
+  const deadlineMs = Date.now() + 2000;
+  while (!condition()) {
+    if (Date.now() > deadlineMs) throw new Error(`timeout waiting for ${description}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 describe('Phase 3 exact restore wiring', () => {
   it('restore_failure_has_no_partial_state', async () => {
     const persistence = createInMemoryPersistence();
@@ -183,6 +191,59 @@ describe('Phase 3 exact restore wiring', () => {
 
     await restoreFromCheckpoint(checkpoint('restore-clear', [first.id]), deps);
     // Only a fully applied restore clears the marker; the latch never outlives success.
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: false});
+  });
+
+  it('overlapping_restores_serialize_per_conversation', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'restore-serialize');
+    const historyStore = createConversationHistoryStore(persistence);
+    const first = await historyStore.append({conversation_id: 'restore-serialize', role: 'user', content: 'first'});
+    const second = await historyStore.append({conversation_id: 'restore-serialize', role: 'assistant', content: 'second'});
+    const replacements: Array<ReadonlyArray<{label: string; content: string}>> = [];
+    const events: Array<string> = [];
+    let releaseAMemory!: () => void;
+    const aMemoryGate = new Promise<void>((resolve) => { releaseAMemory = resolve; });
+    const memoryFor = (tag: string, wait?: Promise<void>): MemoryManager => ({
+      getCoreBlocks: async () => [], getWorkingBlocks: async () => [], buildSystemPrompt: async () => '', read: async () => [],
+      write: async () => ({applied: false, error: 'unused'}), list: async () => [], deleteBlock: async () => undefined,
+      moveBlock: async () => { throw new Error('unused'); },
+      getStats: async () => ({tier: 'all', block_count: 0, total_bytes: 0}),
+      getPendingMutations: async () => [], approveMutation: async () => { throw new Error('unused'); },
+      rejectMutation: async () => { throw new Error('unused'); },
+      replaceWorkingMemory: async (blocks) => {
+        events.push(`${tag}-start`);
+        if (wait) await wait;
+        replacements.push(blocks);
+        events.push(`${tag}-end`);
+        return [];
+      },
+    });
+    const baseDeps = {
+      persistence,
+      messageStore: createMessageStore(persistence, historyStore),
+      historyStore,
+      integrityLifecycle: lifecycle,
+      traceRecorder: {record: async () => undefined},
+      owner: 'phase3',
+    } as const;
+    const depsA: RestorationDependencies = {...baseDeps, memory: memoryFor('A', aMemoryGate)};
+    const depsB: RestorationDependencies = {...baseDeps, memory: memoryFor('B')};
+    const checkpointA = checkpoint('restore-serialize', [first.id]);
+    const checkpointB = checkpoint('restore-serialize', [first.id, second.id]);
+
+    const restoreA = restoreFromCheckpoint(checkpointA, depsA);
+    await waitFor(() => events.includes('A-start'), 'A memory publication');
+    const restoreB = restoreFromCheckpoint(checkpointB, depsB);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // B is serialized behind A: while A's memory publication is pending, B must not
+    // begin history or memory mutation for the same conversation.
+    expect(events).toEqual(['A-start']);
+    releaseAMemory();
+    await restoreA;
+    await restoreB;
+    expect(events).toEqual(['A-start', 'A-end', 'B-start', 'B-end']);
+    expect((await historyStore.readActive('restore-serialize')).messages.map((item) => item.id)).toEqual([first.id, second.id]);
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: false});
   });
 });

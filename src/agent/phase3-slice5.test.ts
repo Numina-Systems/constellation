@@ -3,6 +3,7 @@ import {createConversationHistoryStore} from '@/persistence/conversation-history
 import {createMessageStore} from '@/persistence/message-store.ts';
 import {createInMemoryPersistence} from '@/testing/ports.ts';
 import {restoreFromCheckpoint, type RestorationDependencies} from './checkpoint-restore.ts';
+import {createIntegrityLifecycle} from './integrity-lifecycle.ts';
 import type {MemoryManager} from '@/memory/manager.ts';
 import type {SessionCheckpointV2} from './checkpoint-types.ts';
 
@@ -125,5 +126,53 @@ describe('Phase 3 exact restore wiring', () => {
     expect(active.revision).toBe(5);
     expect((await historyStore.readHistorical('restore-repeat', 10)).some((item) => item.message.id === appended.id && item.status === 'superseded')).toBe(true);
     expect(replacements).toHaveLength(2);
+  });
+
+  it('restore_working_memory_failure_latches_durable_recovery', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'restore-latch');
+    const historyStore = createConversationHistoryStore(persistence);
+    const first = await historyStore.append({conversation_id: 'restore-latch', role: 'user', content: 'first'});
+    const failingMemory = {
+      ...memory([]),
+      replaceWorkingMemory: async (): Promise<ReadonlyArray<{label: string; content: string}>> => {
+        throw new Error('protected working block');
+      },
+    };
+    const deps: RestorationDependencies = {
+      persistence,
+      memory: failingMemory as unknown as MemoryManager,
+      messageStore: createMessageStore(persistence, historyStore),
+      historyStore,
+      integrityLifecycle: lifecycle,
+      traceRecorder: {record: async () => undefined},
+      owner: 'phase3',
+    };
+
+    // History may commit, but the working-memory failure must leave the conversation
+    // latched for trusted recovery instead of silently half-restored.
+    await expect(restoreFromCheckpoint(checkpoint('restore-latch', [first.id]), deps)).rejects.toMatchObject({code: 'CHECKPOINT_FAILED'});
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+  });
+
+  it('successful_restore_clears_its_recovery_marker', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'restore-clear');
+    const historyStore = createConversationHistoryStore(persistence);
+    const first = await historyStore.append({conversation_id: 'restore-clear', role: 'user', content: 'first'});
+    const replacements: Array<ReadonlyArray<{label: string; content: string}>> = [];
+    const deps: RestorationDependencies = {
+      persistence,
+      memory: memory(replacements),
+      messageStore: createMessageStore(persistence, historyStore),
+      historyStore,
+      integrityLifecycle: lifecycle,
+      traceRecorder: {record: async () => undefined},
+      owner: 'phase3',
+    };
+
+    await restoreFromCheckpoint(checkpoint('restore-clear', [first.id]), deps);
+    // Only a fully applied restore clears the marker; the latch never outlives success.
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: false});
   });
 });

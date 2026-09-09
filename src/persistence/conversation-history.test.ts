@@ -333,4 +333,21 @@ describe('Package D retained history real-store fake contracts', () => {
     expect(after.messages.map((item) => item.id)).toEqual(['m2']);
     expect(after.revision).toBe(3);
   });
+
+  it('exact_restore_reactivates_compacted_sources_for_later_compaction', async () => {
+    const persistence = createInMemoryPersistence();
+    const history = createConversationHistoryStore(persistence);
+    await seed(history, message('m1', 'conv'), message('m2', 'conv'));
+
+    const compacted = await history.commitCompaction(createPlan('conv', ['m1'], 2, 'lineage-op'));
+    // While the compaction owns the active summary, its sources stay ineligible.
+    expect((await history.enumerateCompactionSources('conv', 10)).map((item) => item.id)).toEqual(['m2', 'summary-lineage-op']);
+
+    // Exact restore reactivates m1; the retired lineage must not suppress it forever.
+    await history.restoreExactHistory({
+      operationId: 'lineage-restore', conversationId: 'conv', expectedRevision: compacted.history.revision,
+      messageIds: ['m1', 'm2'], checkpointId: 'checkpoint-lineage', sourceArchiveIds: [], provenanceRefs: [],
+    });
+    expect((await history.enumerateCompactionSources('conv', 10)).map((item) => item.id)).toEqual(['m1', 'm2']);
+  });
 });

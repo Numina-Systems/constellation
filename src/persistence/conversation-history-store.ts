@@ -323,6 +323,8 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
             SELECT 1
               FROM conversation_history_provenance p
               JOIN operation_receipts r ON r.operation_id = p.operation_id
+              JOIN conversation_history_membership sm
+                ON sm.conversation_id = p.conversation_id AND sm.message_id = p.summary_message_id
              WHERE p.conversation_id = h.conversation_id
                AND r.operation_type = 'compaction'
                AND m.id = ANY(p.source_message_ids)
@@ -343,8 +345,13 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
              JOIN messages m ON m.conversation_id = h.conversation_id AND m.id = h.message_id
             WHERE h.conversation_id = $1
               AND NOT EXISTS (
-                SELECT 1 FROM conversation_history_provenance p
-                WHERE m.id = ANY(p.source_message_ids)
+                SELECT 1
+                  FROM conversation_history_provenance p
+                  JOIN operation_receipts r ON r.operation_id = p.operation_id
+                  JOIN conversation_history_membership sm
+                    ON sm.conversation_id = p.conversation_id AND sm.message_id = p.summary_message_id
+                 WHERE r.operation_type = 'compaction'
+                   AND m.id = ANY(p.source_message_ids)
               )
             ORDER BY h.position ASC
             LIMIT $2`, [conversationId, limit + callCount],

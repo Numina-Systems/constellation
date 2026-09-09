@@ -198,7 +198,11 @@ export async function runDurableCompaction(
 ): Promise<CompactionResult> {
   if (!options.breaker.allow()) return failure(history, 'breaker_open');
   const operationId = `compaction-${randomUUID()}`;
-  const deadline = preparation?.request?.deadline ?? now(options.clock) + (options.config.timeout ?? 120_000);
+  // The whole operation is bounded by the earlier of the configured timeout and any
+  // caller deadline; a distant caller deadline never extends the operation.
+  const configuredLimit = now(options.clock) + (options.config.timeout ?? 120_000);
+  const callerDeadline = preparation?.request?.deadline;
+  const deadline = callerDeadline === undefined ? configuredLimit : Math.min(callerDeadline, configuredLimit);
   const signal = preparation?.request?.signal;
   try {
     const active = await options.historyStore.readActive(conversationId);
@@ -246,6 +250,9 @@ export async function runDurableCompaction(
       displayBatches = [recursiveBatch, ...batches.slice(batches.length - options.config.clipLast)];
       archiveUnits.push({batch: recursiveBatch, projected: {messages: [], sourceMessageIds: recursiveBatch.sourceMessageIds ?? [], omitted: ['recursive source projections retained in initial archives']}});
     }
+    // A late-resolving provider response can arrive after the last boundary check;
+    // the operation must still stop before any durable history replacement.
+    if (isDeadline(deadline, options.clock) || signal?.aborted) return failure(history, signal?.aborted ? 'cancelled' : 'deadline_exceeded', operationId);
     const clipContent = `[Context Summary — operationId:${operationId} — ${selected.source.reduce((sum, group) => sum + group.messages.length, 0)} messages compressed across 1 compaction cycle]\n${displayBatches.map((batch) => `[Batch depth ${batch.depth} — ${batch.startTime.toISOString()} to ${batch.endTime.toISOString()}]\n${batch.content}`).join('\n\n')}${continuation.text ? `\n\n${continuation.text}` : ''}`;
     const archiveBlocks = archiveUnits.map((unit, index) => ({owner: conversationId, label: `compaction-batch-${conversationId}-${operationId}-${index}`, content: archiveContent(unit, operationId), tier: 'archival' as const}));
     const sourceIds = selected.source.flatMap((group) => group.messages.map((message) => message.id));

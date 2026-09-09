@@ -308,12 +308,18 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
   }
   if (/FROM conversation_history_membership h/i.test(normalized) && /JOIN messages m/i.test(normalized) && /NOT EXISTS/i.test(normalized) && /operation_receipts/i.test(normalized)) {
     const conversationId = textParameter(params, 0);
-    const compactionOperationIds = new Set((rows.get('operation_receipts') ?? [])
-      .filter((receipt) => receipt['operation_type'] === 'compaction' && receipt['status'] === 'committed')
-      .map((receipt) => String(receipt['operation_id'])));
+    const activeIds = new Set(activeMembership(rows, conversationId).map((row) => String(row['message_id'])));
+    // Current-lineage rule: a source is excluded only while the compaction that
+    // consumed it still owns the active summary; an exact restore that reactivates
+    // sources retires the old lineage and makes them compactable again.
     const excludedMessageIds = new Set((rows.get('conversation_history_provenance') ?? [])
-      .filter((provenance) => compactionOperationIds.has(String(provenance['operation_id'])))
-      .flatMap((provenance) => Array.isArray(provenance['source_message_ids']) ? provenance['source_message_ids'].map(String) : []));
+      .filter((provenance) => {
+        if (!Array.isArray(provenance['source_message_ids'])) return false;
+        const receipt = (rows.get('operation_receipts') ?? []).find((candidate) => candidate['operation_id'] === provenance['operation_id']);
+        return receipt?.['operation_type'] === 'compaction' && receipt?.['status'] === 'committed'
+          && activeIds.has(String(provenance['summary_message_id']));
+      })
+      .flatMap((provenance) => (provenance['source_message_ids'] as Array<unknown>).map(String)));
     const byId = new Map(messageRows(rows, conversationId).map((row) => [String(row['id']), row]));
     return activeMembership(rows, conversationId).flatMap((membership) => {
       const row = byId.get(String(membership['message_id']));
@@ -358,7 +364,15 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
   if (/FROM messages m/i.test(normalized) && /NOT EXISTS/i.test(normalized)) {
     const conversationId = textParameter(params, 0);
     const limit = Number(parameter(params, 1));
-    const sourceIds = new Set((rows.get('conversation_history_provenance') ?? []).flatMap((row) => (row['source_message_ids'] as Array<string> | undefined) ?? []));
+    const activeIds = new Set(activeMembership(rows, conversationId).map((row) => String(row['message_id'])));
+    const sourceIds = new Set((rows.get('conversation_history_provenance') ?? [])
+      .filter((provenance) => {
+        if (!Array.isArray(provenance['source_message_ids'])) return false;
+        const receipt = (rows.get('operation_receipts') ?? []).find((candidate) => candidate['operation_id'] === provenance['operation_id']);
+        return receipt?.['operation_type'] === 'compaction' && receipt?.['status'] === 'committed'
+          && activeIds.has(String(provenance['summary_message_id']));
+      })
+      .flatMap((row) => (row['source_message_ids'] as Array<unknown>).map(String)));
     const byId = new Map(messageRows(rows, conversationId).map((row) => [String(row['id']), row]));
     return activeMembership(rows, conversationId).flatMap((membership) => {
       const id = String(membership['message_id']);

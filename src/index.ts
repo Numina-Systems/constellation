@@ -1302,6 +1302,7 @@ async function main(): Promise<void> {
       memory,
       messageStore,
       historyStore,
+      integrityLifecycle,
       predictionStore,
       interestRegistry,
       recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,

@@ -81,6 +81,10 @@ describe('Agent compaction ambiguity and cancellation propagation', () => {
     expect(modelCalls).toBe(0);
     // The latch is durable: a restart re-derives recovery-required from the receipt.
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    // A freshly constructed agent (restart simulation) is blocked by durable state alone.
+    const restarted = createAgent(deps({conversationId: 'conv-ambiguous', persistence, integrityLifecycle: lifecycle, model: fakeModel([text('blocked')]), compactor}), 'conv-ambiguous');
+    await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    expect(modelCalls).toBe(0);
     // Subsequent turns stay blocked through the in-memory latch as well.
     await expect(agent.processMessage('again')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
     expect(modelCalls).toBe(0);

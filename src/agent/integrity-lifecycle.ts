@@ -23,8 +23,13 @@ export type IntegrityLifecycle = Readonly<{
   completeBatch(batchId: string): Promise<void>;
   /** Mark an incomplete batch as requiring trusted recovery when a write fails. */
   markRecoveryRequired?: (batchId: string, reason: string) => Promise<void>;
-  /** Latch durable recovery-required state for a non-batch fault such as ambiguous compaction. */
-  markCompactionRecoveryRequired?: (reason: string) => Promise<void>;
+  /**
+   * Latch durable recovery-required state for a non-batch fault such as ambiguous
+   * compaction or an in-progress restore; returns the marker id for later completion.
+   */
+  markConversationRecoveryRequired?: (reason: string) => Promise<string>;
+  /** Complete exactly one recovery marker once the faulting operation fully finished. */
+  completeRecoveryMarker?: (batchId: string) => Promise<void>;
   /** Request and consume coalesced deferred compaction at a completed-batch boundary. */
   requestCompaction?: () => Promise<void>;
   consumeCompactionIntent?: () => Promise<boolean>;
@@ -157,12 +162,12 @@ export function createIntegrityLifecycle(
     await writeBatch({...batch, recoveryRequired: true, reason});
   }
 
-  async function markCompactionRecoveryRequired(reason: string): Promise<void> {
+  async function markConversationRecoveryRequired(reason: string): Promise<string> {
     // A synthetic empty batch keeps the recovery latch inside the existing receipt
     // schema: getRecoveryState treats any unfinished batch as recovery-required, and
     // recover() clears it once trusted backfill has acknowledged the conversation.
     const batch: BatchDetails = {
-      batchId: `compaction-recovery-${randomUUID()}`,
+      batchId: `recovery-marker-${randomUUID()}`,
       callIds: [],
       outcomes: {},
       completed: false,
@@ -170,6 +175,19 @@ export function createIntegrityLifecycle(
       reason,
     };
     await writeBatch(batch);
+    return batch.batchId;
+  }
+
+  async function completeRecoveryMarker(batchId: string): Promise<void> {
+    const batches = await readBatches();
+    const marker = batches.find((candidate) => candidate.batchId === batchId);
+    if (!marker) {
+      throw new AgentError('INTEGRITY_FAILED', `unknown recovery marker: ${batchId}`, {
+        conversationId,
+        batchId,
+      });
+    }
+    await writeBatch({...marker, completed: true, recoveryRequired: false});
   }
 
   async function requestCompaction(): Promise<void> {
@@ -278,5 +296,5 @@ export function createIntegrityLifecycle(
     }
   }
 
-  return {beginBatch, recordOutcome, completeBatch, markRecoveryRequired, markCompactionRecoveryRequired, requestCompaction, consumeCompactionIntent, getCompletedTurnCount, recordCompletedTurn, getRecoveryState, recover};
+  return {beginBatch, recordOutcome, completeBatch, markRecoveryRequired, markConversationRecoveryRequired, completeRecoveryMarker, requestCompaction, consumeCompactionIntent, getCompletedTurnCount, recordCompletedTurn, getRecoveryState, recover};
 }

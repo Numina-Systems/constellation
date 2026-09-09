@@ -207,4 +207,57 @@ describe('Phase 4 durable compactor fake-level matrices', () => {
     expect(compactor.status?.().breaker.interventionRequired).toBe(false);
     expect((await setupResult.historyStore.readActive(setupResult.conversationId)).messages.some((item) => item.role === 'system')).toBe(true);
   });
+
+  it('caller_deadline_never_extends_configured_operation_timeout', async () => {
+    // Config timeout 100ms from clock start 1000 → operation bound 1100, while the
+    // caller deadline (start + 10 minutes) is far away; the operation must still stop.
+    let current = 1000;
+    const setupResult = await setup({
+      responses: [new ModelError('TIMEOUT', 'retry', true), new ModelError('TIMEOUT', 'retry', true)],
+      config: {timeout: 100, maxRetries: 2, backoffBaseMs: 5},
+      clock: {now: () => current},
+      sleep: async () => { current = 5000; },
+    });
+    const result = await setupResult.compactor.compress([], setupResult.conversationId, {request: {deadline: current + 600_000}});
+    expect(result.failureCode).toBe('deadline_exceeded');
+    // The configured cap stopped the operation after the first attempt; without the
+    // cap the retry loop would consume every remaining attempt against the far deadline.
+    expect(setupResult.calls).toHaveLength(1);
+    expect(await activeSourceIds(setupResult.historyStore, setupResult.conversationId)).toEqual(['source-user', 'source-assistant']);
+  });
+
+  it('late_resolving_recursive_response_cannot_commit_after_cancellation', async () => {
+    const persistence = createInMemoryPersistence();
+    const historyStore = createConversationHistoryStore(persistence);
+    const conversationId = `recursive-cancel-${crypto.randomUUID()}`;
+    for (let pair = 0; pair < 4; pair += 1) {
+      await historyStore.append(message(`${pair}-user`, conversationId, 'user', `Build ${pair}`, pair * 2 + 1));
+      await historyStore.append(message(`${pair}-assistant`, conversationId, 'assistant', `working ${pair}`, pair * 2 + 2));
+    }
+    const controller = new AbortController();
+    let modelCalls = 0;
+    const unitSummaries = 4;
+    const model: ModelProvider = {
+      complete: async () => {
+        modelCalls += 1;
+        if (modelCalls <= unitSummaries) return response('unit summary');
+        // The recursive call resolves only after cancellation has landed, simulating
+        // a provider response that arrives after the operation should have stopped.
+        await new Promise<void>((resolve) => {
+          const check = (): void => { if (controller.signal.aborted) resolve(); else setTimeout(check, 1); };
+          check();
+        });
+        return response('recursive clip');
+      },
+      stream: async function* () { yield {type: 'message_stop', message: {stop_reason: 'end_turn'}}; },
+    };
+    const compactor = createCompactor({model, memory: memory(), persistence, historyStore, config: {chunkSize: 2, keepRecent: 0, maxSummaryTokens: 32, clipFirst: 0, clipLast: 0, prompt: null, maxRetries: 0}, modelName: 'fake'});
+    const before = await activeSourceIds(historyStore, conversationId);
+    setTimeout(() => controller.abort(), 15);
+    const result = await compactor.compress([], conversationId, {request: {signal: controller.signal}});
+    expect(result.failureCode).toBe('cancelled');
+    expect(modelCalls).toBe(unitSummaries + 1);
+    // Zero durable commits after cancellation, even with a resolved recursive summary.
+    expect(await activeSourceIds(historyStore, conversationId)).toEqual(before);
+  });
 });

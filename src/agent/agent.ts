@@ -566,9 +566,9 @@ export function createAgent(
                 : wrapError(new Error(recoveryReason), 'COMPACTION_FAILED', 'agent', {conversationId: id});
               traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
             }
-            if (deps.integrityLifecycle?.markCompactionRecoveryRequired) {
+            if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
               try {
-                await deps.integrityLifecycle.markCompactionRecoveryRequired(recoveryReason);
+                await deps.integrityLifecycle.markConversationRecoveryRequired(recoveryReason);
               } catch {
                 // The in-memory latch remains fail-closed if the durable marker also fails.
               }

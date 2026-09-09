@@ -15,6 +15,7 @@ import type {InterestRegistry} from '@/subconscious/types.ts';
 import type {RecallContextState} from '@/recall/context.ts';
 import type {MessageStore} from '@/persistence/message-store.ts';
 import type {ConversationHistoryStore} from '@/persistence/conversation-history-store.ts';
+import type {IntegrityLifecycle} from './integrity-lifecycle.ts';
 import { AgentError } from '@/errors/agent.ts';
 import { traceError } from '@/errors/trace.ts';
 
@@ -40,6 +41,8 @@ export type RestorationDependencies = {
   readonly messageStore: MessageStore;
   /** Exact restore boundary; required for production checkpoint restoration. */
   readonly historyStore?: ConversationHistoryStore;
+  /** Durable recovery-marking seam; required for latched production restores. */
+  readonly integrityLifecycle?: IntegrityLifecycle;
   readonly predictionStore?: PredictionStore;
   readonly interestRegistry?: InterestRegistry;
   readonly recallContextState?: RecallContextState;
@@ -83,6 +86,13 @@ export async function restoreFromCheckpoint(
     }
     if (!isNativeV2) log('checkpoint restore: v1 provenance gap; archive selection cannot be resolved from legacy metadata');
     const current = await deps.historyStore.readActive(checkpoint.conversationId);
+    // Latch before any durable mutation: if the process dies between the history
+    // commit and working-memory replacement, restart must observe recovery-required
+    // state instead of silently resuming with history and memory out of step.
+    let recoveryMarkerId: string | null = null;
+    if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
+      recoveryMarkerId = await deps.integrityLifecycle.markConversationRecoveryRequired(`checkpoint restore ${checkpoint.id} is in progress for conversation ${checkpoint.conversationId}`);
+    }
     const restored = await deps.historyStore.restoreExactHistory({
       // Each restore request owns a distinct operation identity so a repeat restore
       // after new appends re-runs membership replacement instead of short-circuiting
@@ -96,10 +106,39 @@ export async function restoreFromCheckpoint(
       sourceArchiveIds: isNativeV2 ? checkpoint.activeArchiveIds : [],
       provenanceRefs: isNativeV2 ? checkpoint.provenanceRefs : [],
     });
-    if (deps.memory.replaceWorkingMemory) {
-      await deps.memory.replaceWorkingMemory(checkpoint.workingMemory);
-    } else {
-      throw new AgentError('CHECKPOINT_FAILED', 'working memory replacement is unavailable', {conversationId: checkpoint.conversationId, checkpointId: checkpoint.id});
+    try {
+      if (deps.memory.replaceWorkingMemory) {
+        await deps.memory.replaceWorkingMemory(checkpoint.workingMemory);
+      } else {
+        throw new AgentError('CHECKPOINT_FAILED', 'working memory replacement is unavailable', {conversationId: checkpoint.conversationId, checkpointId: checkpoint.id});
+      }
+    } catch (error) {
+      // The marker stays set: durable history may be restored while working memory is
+      // not, and only trusted recovery may clear that state. Typed pre-mutation and
+      // ambiguity faults keep their original identity.
+      if (error instanceof AgentError || (typeof error === 'object' && error !== null && 'code' in error)) {
+        throw error;
+      }
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new AgentError('CHECKPOINT_FAILED', `checkpoint restore failed after durable mutation: ${reason}`, {
+        conversationId: checkpoint.conversationId,
+        checkpointId: checkpoint.id,
+        recoveryMarkerId,
+      }, {cause: error instanceof Error ? error : undefined});
+    }
+    if (recoveryMarkerId !== null && deps.integrityLifecycle?.completeRecoveryMarker) {
+      try {
+        await deps.integrityLifecycle.completeRecoveryMarker(recoveryMarkerId);
+      } catch (error) {
+        // Fail closed: an incompletely cleared marker keeps the conversation blocked
+        // on trusted recovery even though the restore itself fully applied.
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new AgentError('INTEGRITY_FAILED', `failed to clear checkpoint restore marker: ${reason}`, {
+          conversationId: checkpoint.conversationId,
+          checkpointId: checkpoint.id,
+          recoveryMarkerId,
+        }, {cause: error instanceof Error ? error : undefined});
+      }
     }
     if (deps.recallContextState) deps.recallContextState.setResult(null);
     return {

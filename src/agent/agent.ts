@@ -8,7 +8,8 @@
 
 // UUID generation is built-in to Bun via crypto
 import { toSql } from 'pgvector/utils';
-import { buildSystemPrompt, buildMessages, shouldCompress, estimateOverheadTokens, truncateOldest, estimateTokens } from './context.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { buildSystemPrompt, buildMessagesWithCurrent, estimateOverheadTokens, estimateTokens, shouldCompress } from './context.ts';
 import { createSnapshotState } from './snapshot.ts';
 import { buildUserMessage } from './messages.ts';
 import { createCacheDiagnostics, serializeTools } from './cache-diagnostics.ts';
@@ -17,6 +18,10 @@ import { performRecall } from '../recall/index.js';
 import { isConstellationError, wrapError } from '@/errors/index.js';
 import { traceError } from '@/errors/trace.js';
 import { stripQuotedContent } from '@/loop-detection/strip-quotes.js';
+import { AgentError } from '@/errors/agent.js';
+import { buildRequestBudget, resolveContextWindow } from '@/model/budget.ts';
+import { groupExchanges, shapeExchanges } from '@/model/exchange.ts';
+import type { Message as ModelMessage } from '@/model/types.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider, CheckpointState } from './types.ts';
 import type { TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
@@ -86,6 +91,11 @@ function formatExternalEvent(
  * Extracts providers with 'dynamic' classification into the format
  * expected by computeSnapshot: ReadonlyMap<string, () => string | undefined>.
  */
+function toToolOutcome(output: string, isError: boolean, errorCode = 'tool_failed'): import('@/contracts/outcomes.ts').ToolOutcome {
+  if (!isError) return {kind: 'success', output};
+  return {kind: 'error', code: errorCode, message: output.slice(0, 4096)};
+}
+
 function buildDynamicProviderMap(
   classified: ReadonlyArray<ClassifiedProvider> | undefined,
 ): ReadonlyMap<string, () => string | undefined> {
@@ -127,12 +137,28 @@ export function createAgent(
   const dynamicProviders = buildDynamicProviderMap(deps.classifiedProviders);
 
   // Checkpoint state reference for tracking agent state (Phase 5)
-  const checkpointStateRef: CheckpointStateRef = { current: null };
+  // The injected reference is the sole state source. A local fallback is only for legacy callers.
+  const checkpointStateRef: CheckpointStateRef = deps.checkpointStateRef
+    ? deps.checkpointStateRef as unknown as CheckpointStateRef
+    : {current: null};
 
-  let turnNumber = 0;
+  let turnNumber = checkpointStateRef.current?.turnNumber ?? 0;
+  let shutdownRequested = false;
+  let shutdownCompleted = false;
+  let completedTurnCount = turnNumber;
+  let completedTurnCountLoaded = false;
+  let explicitCheckpointPending = false;
+  let queueTail: Promise<void> = Promise.resolve();
+  let recoveryRequired = false;
+  let recoveryReason: string | null = null;
   let previousToolsHash: bigint | null = null;
   let lastCompactionMessageCount = 0;
   let lastCompactionSummaryCount = 0;
+  // Durable and legacy modes share this checkpoint surface: durable compaction publishes
+  // receipt/archive provenance, while legacy callers retain the last known empty state.
+  let activeArchiveIds: ReadonlyArray<string> = checkpointStateRef.current?.activeArchiveIds ?? [];
+  let provenanceRefs: ReadonlyArray<string> = checkpointStateRef.current?.provenanceRefs ?? [];
+  const ingressContext = new AsyncLocalStorage<boolean>();
 
   function recordTrace(
     toolName: string,
@@ -165,66 +191,164 @@ export function createAgent(
    * history array passed by the caller (already kept in sync via manual pushes).
    * Verifies: arch-hardening.AC3.1 (single load per turn)
    */
-  function updateCheckpointStateAndTriggerInterval(
+  function freezeSnapshot<T>(value: T): T {
+    if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+    for (const child of Object.values(value as Record<string, unknown>)) freezeSnapshot(child);
+    return Object.freeze(value);
+  }
+
+  async function updateCheckpointState(
     currentTurnNumber: number,
     currentHistory: ReadonlyArray<ConversationMessage>,
-  ): void {
-    const messageIds = currentHistory.map(m => m.id);
-    checkpointStateRef.current = {
+    transcriptRevision?: number,
+  ): Promise<void> {
+    const state: CheckpointState = {
       turnNumber: currentTurnNumber,
       toolRound: 0,
-      messageIds,
+      messageIds: currentHistory.map(m => m.id),
+      transcriptRevision,
+      activeArchiveIds,
+      provenanceRefs,
       compactionMeta: {
         lastCompactedIndex: Math.max(0, lastCompactionMessageCount - 1),
         summaryCount: lastCompactionSummaryCount,
       },
     };
-    // Future: trigger checkpoint creation at configured intervals
+    checkpointStateRef.current = state;
   }
 
-  async function processMessage(userMessage: string): Promise<string> {
-    turnNumber++;
+  async function invokeCheckpoint(
+    trigger: import('./checkpoint-types.ts').CheckpointTrigger,
+    currentTurnNumber: number,
+    currentHistory: ReadonlyArray<ConversationMessage>,
+    transcriptRevision?: number,
+  ): Promise<void> {
+    if (!deps.checkpointFn) return;
+    await updateCheckpointState(currentTurnNumber, currentHistory, transcriptRevision);
+    const current = checkpointStateRef.current;
+    if (!current) return;
+    const snapshot = freezeSnapshot({
+      turnNumber: current.turnNumber,
+      toolRound: current.toolRound,
+      messageIds: Array.from(current.messageIds),
+      transcriptRevision: current.transcriptRevision,
+      activeArchiveIds: Array.from(current.activeArchiveIds ?? []),
+      provenanceRefs: Array.from(current.provenanceRefs ?? []),
+      compactionMeta: {...current.compactionMeta},
+    });
+    try {
+      await deps.checkpointFn(trigger, snapshot);
+    } catch (error) {
+      console.warn(`[checkpoint] ${trigger} checkpoint callback failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (deps.traceRecorder) {
+        const structured = isConstellationError(error)
+          ? error
+          : wrapError(error, 'CHECKPOINT_FAILED', 'agent', {conversationId: id, trigger});
+        traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+      }
+    }
+  }
 
+  async function completeTurn(
+    currentTurnNumber: number,
+    currentHistory: ReadonlyArray<ConversationMessage>,
+  ): Promise<void> {
+    turnNumber = currentTurnNumber;
+    completedTurnCount = currentTurnNumber;
+    let revision: number | undefined;
+    if (deps.historyStore) {
+      try {
+        revision = (await deps.historyStore.readActive(id)).revision;
+      } catch (error) {
+        // The terminal response and completed-turn receipt are already durable. A
+        // transient projection reread must not turn a delivered response into a
+        // rejected turn; omit only the optional revision from this checkpoint.
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[agent] completed turn ${currentTurnNumber} revision reread failed: ${message}`);
+        if (deps.traceRecorder) {
+          const structured = isConstellationError(error)
+            ? error
+            : wrapError(error, 'HISTORY_READ_FAILED', 'agent', {conversationId: id, turnNumber: currentTurnNumber});
+          traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+        }
+      }
+    }
+    if (deps.integrityLifecycle?.recordCompletedTurn) {
+      try {
+        await deps.integrityLifecycle.recordCompletedTurn(currentTurnNumber);
+      } catch (error) {
+        throw new AgentError('INTEGRITY_FAILED', 'failed to persist completed turn counter', {conversationId: id, turnNumber: currentTurnNumber}, {cause: error instanceof Error ? error : undefined});
+      }
+    }
+    await updateCheckpointState(currentTurnNumber, currentHistory, revision);
+    const interval = deps.config.checkpoint_interval ?? 0;
+    if (interval > 0 && currentTurnNumber % interval === 0) {
+      await invokeCheckpoint('interval', currentTurnNumber, currentHistory, revision);
+    }
+  }
+
+  async function runTurn(userMessage: string, ingressOptions?: import('@/contracts/execution.ts').ExecutionOptions): Promise<string> {
+    const options = ingressOptions ?? deps.ingressOptions;
+    if (deps.integrityLifecycle) {
+      try {
+        if (!completedTurnCountLoaded && deps.integrityLifecycle.getCompletedTurnCount) {
+          const durableCount = await deps.integrityLifecycle.getCompletedTurnCount();
+          completedTurnCount = Math.max(completedTurnCount, durableCount);
+          turnNumber = completedTurnCount;
+        }
+        completedTurnCountLoaded = true;
+        const persistedRecovery = await deps.integrityLifecycle.getRecoveryState();
+        if (persistedRecovery.required) {
+          recoveryRequired = true;
+          recoveryReason = persistedRecovery.reason;
+        }
+      } catch (error) {
+        recoveryRequired = true;
+        recoveryReason = `failed to read conversation integrity state: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    if (recoveryRequired) {
+      throw new AgentError('RECOVERY_REQUIRED', `conversation ${id} requires trusted recovery`, {
+        conversationId: id,
+        reason: recoveryReason ?? 'unfinished tool batch',
+      }, {suggestion: 'backfill every unresolved tool outcome through the trusted recovery accessor'});
+    }
+    if (options?.signal?.aborted) {
+      throw new AgentError('TURN_CANCELLED', 'turn cancelled before admission', {conversationId: id});
+    }
+    if (options?.deadline !== undefined && Date.now() >= options.deadline) {
+      throw new AgentError('TURN_CANCELLED', 'turn deadline exceeded before admission', {conversationId: id});
+    }
+    // Allocate the turn number from the last successfully completed turn. A failure
+    // therefore cannot consume an interval boundary.
+    const currentTurnNumber = completedTurnCount + 1;
+    turnNumber = currentTurnNumber;
     // Reset loop detector on new user message
     deps.loopDetector?.reset();
 
     // Step 1: Persist user message
-    await persistMessage({
+    const currentUserMessageId = await persistMessage({
       conversation_id: id,
       role: 'user',
       content: userMessage,
     });
 
-    // Step 2: Load conversation history
-    let history = await loadConversationHistory(id);
+    // Step 2: Load the active projection; historical rows never enter context implicitly.
+    let history = deps.historyStore
+      ? Array.from((await deps.historyStore.readActive(id)).messages)
+      : await loadConversationHistory(id);
 
-    // Step 3: Check context budget and compress if needed
-    const preliminarySystemPrompt = await buildSystemPrompt(deps.memory);
-    const overheadTokens = estimateOverheadTokens(preliminarySystemPrompt, deps.registry.toModelTools(), maxTokens);
-
+    // Step 3: context compaction is admitted only at completed-batch boundaries.
     let compactionOccurredThisTurn = false;
-    if (deps.compactor && shouldCompress(history, deps.config.context_budget, modelMaxTokens, overheadTokens)) {
-      // Pre-compaction checkpoint (AC1.2)
-      if (deps.checkpointFn) {
-        await deps.checkpointFn('pre_compaction');
-      }
-
-      const result = await deps.compactor.compress(history, id);
-      history = Array.from(result.history);
-      // Reset snapshot state after compaction so next turn gets full snapshot
-      snapshotState.reset();
-      compactionOccurredThisTurn = result.messagesCompressed > 0;
-
-      // Track compaction metadata for checkpoint state
-      if (compactionOccurredThisTurn) {
-        lastCompactionMessageCount = history.length;
-        lastCompactionSummaryCount = result.batchesCreated ?? 0;
-      }
-    }
 
     // Step 4 & 5: Build context and call model
     let roundCount = 0;
     const maxRounds = deps.config.max_tool_rounds;
+    let deferredCompactionPending = false;
+    let compactionAdmittedAtBoundary = false;
+    if (deps.integrityLifecycle?.consumeCompactionIntent) {
+      deferredCompactionPending = await deps.integrityLifecycle.consumeCompactionIntent();
+    }
 
     // Recall state — cache result across tool rounds
     let cachedRecallResult: RecallResult | null = null;
@@ -255,6 +379,7 @@ export function createAgent(
             owner: deps.owner,
             conversationId: id,
             coreLabels: getCoreLabels(deps.memory),
+            executionOptions: options,
           });
         } catch (error) {
           console.warn('recall: pipeline failed, continuing without recall', error);
@@ -312,23 +437,29 @@ export function createAgent(
         }
       }
 
-      const messages = await buildMessages(history, deps.memory);
+      const builtContext = await buildMessagesWithCurrent(history, deps.memory, currentUserMessageId);
+      const messages = builtContext.messages;
 
-      // Pre-flight guard: truncate if estimated request exceeds model limit
+      // Validate and shape every provider-visible exchange. The current user is
+      // protected by transcript identity, not by role or position.
+      const grouped = groupExchanges(messages, builtContext.currentMessage);
+      if (!grouped.ok) {
+        throw new AgentError('EXCHANGE_CORRUPT', grouped.error.message, {
+          conversationId: id,
+          exchangeError: grouped.error.code,
+          toolUseId: grouped.error.toolUseId ?? null,
+        }, {suggestion: 'run trusted integrity recovery to backfill missing tool outcomes'});
+      }
       const modelTools = deps.registry.toModelTools();
       const requestOverhead = estimateOverheadTokens(systemPrompt, modelTools, maxTokens);
       const messageTokens = messages.reduce(
         (sum, m) => sum + estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content)),
         0,
       );
-
-      let finalMessages = messages;
-      const safeLimit = Math.floor(modelMaxTokens * 0.9);
-      if (messageTokens + requestOverhead > safeLimit) {
-        console.warn(
-          `pre-flight guard: estimated ${messageTokens + requestOverhead} tokens exceeds safe limit ${safeLimit} (model max: ${modelMaxTokens}), truncating oldest messages`,
-        );
-        finalMessages = truncateOldest(messages, modelMaxTokens, requestOverhead);
+      let finalMessages: Array<ModelMessage> = Array.from(messages);
+      if (messageTokens + requestOverhead > Math.floor(modelMaxTokens * 0.9)) {
+        const shaped = shapeExchanges(grouped.exchanges, Math.max(1, Math.floor(modelMaxTokens * 0.9) - requestOverhead));
+        finalMessages = shaped.flatMap((exchange) => exchange.messages);
       }
 
       // Compute snapshot — first round forces full, subsequent rounds detect delta/noop
@@ -340,6 +471,97 @@ export function createAgent(
       if (lastMessage && lastMessage.role === 'user' && typeof lastMessage.content === 'string') {
         const composedUserMessage = buildUserMessage(lastMessage.content, snapshotResult);
         finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
+      }
+
+      const finalGrouped = groupExchanges(finalMessages, finalMessages.length > 0 ? finalMessages[finalMessages.length - 1] ?? null : null);
+      if (!finalGrouped.ok) {
+        throw new AgentError('EXCHANGE_CORRUPT', finalGrouped.error.message, {
+          conversationId: id,
+          exchangeError: finalGrouped.error.code,
+          toolUseId: finalGrouped.error.toolUseId ?? null,
+        }, {suggestion: 'run trusted integrity recovery to backfill missing tool outcomes'});
+      }
+
+      // Admission is evaluated against the actual provider-shaped request, before diagnostics and model I/O.
+      const admissionWindow = resolveContextWindow({explicit: modelMaxTokens}).window;
+      const admissionTools = modelTools;
+      const admissionBudget = admissionWindow === null
+        ? {ok: false as const, code: 'context_unfittable' as const, message: 'verified model context window is unavailable'}
+        : buildRequestBudget({
+            system: systemPrompt,
+            messages: finalMessages,
+            tools: admissionTools,
+            outputReserve: maxTokens,
+            contextWindow: admissionWindow,
+          });
+      const automaticCompactionNeeded = shouldCompress(history, deps.config.context_budget, modelMaxTokens, requestOverhead);
+      const shouldAdmitCompaction = !compactionAdmittedAtBoundary &&
+        (deferredCompactionPending || automaticCompactionNeeded);
+      if (shouldAdmitCompaction) {
+        compactionAdmittedAtBoundary = true;
+        if (!deps.compactor) {
+          recordTrace('compact_context', {}, 'compaction admission skipped: compactor is not configured', 0, true, null);
+        } else {
+          try {
+            const revision = deps.historyStore ? (await deps.historyStore.readActive(id)).revision : undefined;
+            await invokeCheckpoint('pre_compaction', turnNumber, history, revision);
+            const compactionResult = await deps.compactor.compress(history, id);
+            history = Array.from(compactionResult.history);
+            const committedReplacement = compactionResult.failed !== true && compactionResult.messagesCompressed > 0;
+            if (committedReplacement) {
+              // Cache/snapshot state is published only after the compactor reports a
+              // successful durable replacement. Failed/no-op attempts must not make
+              // the next provider request observe a fabricated cache bust.
+              snapshotState.reset();
+              compactionOccurredThisTurn = true;
+              lastCompactionMessageCount = history.length;
+              lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
+              activeArchiveIds = compactionResult.archiveIds ?? [];
+              provenanceRefs = compactionResult.provenanceRefs ?? (compactionResult.operationId ? [compactionResult.operationId] : []);
+            }
+            deferredCompactionPending = false;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            recordTrace('compact_context', {}, 'compaction admission failed; continuing without replacement', 0, false, message);
+            if (deps.traceRecorder) {
+              const structured = isConstellationError(error)
+                ? error
+                : wrapError(error, 'COMPACTION_FAILED', 'agent', {conversationId: id});
+              traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+            }
+          }
+        }
+        roundCount--;
+        continue;
+      }
+      if (!admissionBudget.ok || !admissionBudget.budget.fits) {
+        const groupedMessages = shapeExchanges(finalGrouped.exchanges, Math.max(1, Math.floor(modelMaxTokens * 0.9) - requestOverhead)).flatMap((exchange) => exchange.messages);
+        const currentExchangeMessage = finalGrouped.exchanges.find((exchange) => exchange.isCurrent)?.messages.at(-1) ?? null;
+        const shapedGrouped = groupExchanges(groupedMessages, currentExchangeMessage);
+        if (!shapedGrouped.ok) {
+          throw new AgentError('EXCHANGE_CORRUPT', shapedGrouped.error.message, {
+            conversationId: id,
+            exchangeError: shapedGrouped.error.code,
+            toolUseId: shapedGrouped.error.toolUseId ?? null,
+          }, {suggestion: 'run trusted integrity recovery to backfill missing tool outcomes'});
+        }
+        const regroupedMessages = shapedGrouped.exchanges.flatMap((exchange) => exchange.messages);
+        const groupedBudget = buildRequestBudget({
+          system: systemPrompt,
+          messages: groupedMessages,
+          tools: admissionTools,
+          outputReserve: maxTokens,
+          contextWindow: admissionWindow ?? modelMaxTokens,
+        });
+        if (!groupedBudget.ok || !groupedBudget.budget.fits) {
+          throw new AgentError('CONTEXT_UNFITTABLE', 'context is unfittable within the resolved model budget', {
+            conversationId: id,
+            estimatedInputTokens: groupedBudget.ok ? groupedBudget.budget.estimatedInputTokens : null,
+            contextWindow: admissionWindow,
+            outputReserve: maxTokens,
+          });
+        }
+        finalMessages = regroupedMessages;
       }
 
       // Call cache diagnostics before model.complete()
@@ -388,6 +610,8 @@ export function createAgent(
         tools: modelTools,
         model: modelName,
         max_tokens: maxTokens,
+         signal: options?.signal,
+        deadline: options?.deadline,
       };
 
       const response = await deps.model.complete(modelRequest);
@@ -410,11 +634,15 @@ export function createAgent(
             // End the turn with an error message
             const haltMessage = 'I appear to be stuck in a repetitive loop and cannot make progress. Please try rephrasing your request or providing additional context.';
 
-            await persistMessage({
+            const haltMessageId = await persistMessage({
               conversation_id: id,
               role: 'assistant',
               content: haltMessage,
             });
+            await completeTurn(turnNumber, [...history, {
+              id: haltMessageId, conversation_id: id, role: 'assistant', content: haltMessage,
+              created_at: new Date(),
+            }]);
 
             return haltMessage;
           }
@@ -427,11 +655,17 @@ export function createAgent(
 
           // Inject as system context for next model call
           // Implementation: append to conversation history as a system-injected message
-          history.push({
-            id: crypto.randomUUID(),
+          const warningContent = `[System: ${warningMessage}${redirectHint}]`;
+          const warningMessageId = await persistMessage({
             conversation_id: id,
             role: 'user',
-            content: `[System: ${warningMessage}${redirectHint}]`,
+            content: warningContent,
+          });
+          history.push({
+            id: warningMessageId,
+            conversation_id: id,
+            role: 'user',
+            content: warningContent,
             created_at: new Date(),
           });
         }
@@ -463,8 +697,8 @@ export function createAgent(
           created_at: new Date(),
         });
 
-        // Update checkpoint state with current history (verifies AC3.1, AC3.2)
-        updateCheckpointStateAndTriggerInterval(turnNumber, history);
+        // Publish checkpoint state only after the terminal assistant message is durable.
+        await completeTurn(turnNumber, history);
 
         return text;
       }
@@ -487,10 +721,31 @@ export function createAgent(
           reasoning_content: response.reasoning_content,
         });
 
-        // Dispatch each tool use and collect results
+        // Dispatch each tool use and collect results. Begin durable lifecycle before any effect.
         const toolResults: Array<ConversationMessage> = [];
-        for (const toolUse of toolUseBlocks) {
-          let toolResult: string;
+        let batchId: string | null = null;
+        const recordedCallIds = new Set<string>();
+        const startedCallIds = new Set<string>();
+        try {
+          if (deps.integrityLifecycle) {
+            try {
+              batchId = await deps.integrityLifecycle.beginBatch(toolUseBlocks.map((toolUse) => toolUse.id));
+            } catch (error) {
+              recoveryRequired = true;
+              recoveryReason = `tool batch could not be durably started: ${error instanceof Error ? error.message : String(error)}`;
+              throw new AgentError('RECOVERY_REQUIRED', recoveryReason, {conversationId: id});
+            }
+          }
+          for (const toolUse of toolUseBlocks) {
+            if (options?.signal?.aborted) {
+              throw new AgentError('TURN_CANCELLED', 'turn cancelled during tool batch', {conversationId: id, batchId});
+            }
+            if (options?.deadline !== undefined && Date.now() >= options.deadline) {
+              throw new AgentError('TURN_CANCELLED', 'turn deadline exceeded during tool batch', {conversationId: id, batchId});
+            }
+            let toolResult: string;
+            let toolOutcomeError: string | null = null;
+            startedCallIds.add(toolUse.id);
 
           const startTime = Date.now();
           try {
@@ -499,52 +754,35 @@ export function createAgent(
               const code = String(toolUse.input['code']);
               const stubs = deps.registry.generateStubs();
               const context = await deps.getExecutionContext?.();
-              const result = await deps.runtime.execute(code, stubs, context);
+              const result = await ingressContext.run(true, () => deps.runtime.execute(code, stubs, context));
 
-              toolResult = result.success ? result.output : `Error: ${result.error}`;
-              recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? null));
+              toolResult = result.success ? result.output : `Error: ${result.error ?? 'code execution failed'}`;
+              toolOutcomeError = result.success ? null : 'execute_code_failed';
+              recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? 'code execution failed'));
+            } else if (toolUse.name === 'checkpoint') {
+              // Explicit checkpoints are deferred until this complete tool batch is durable.
+              explicitCheckpointPending = true;
+              toolResult = JSON.stringify({accepted: true, deferred: true});
+              recordTrace('checkpoint', toolUse.input, toolResult, Date.now() - startTime, true, null);
             } else if (toolUse.name === 'compact_context') {
-              // Special case: context compaction
-              const compactSuccess = !!deps.compactor;
-              if (deps.compactor) {
-                // Pre-compaction checkpoint (AC1.2)
-                if (deps.checkpointFn) {
-                  await deps.checkpointFn('pre_compaction');
-                }
-
-                const compactionResult = await deps.compactor.compress(history, id);
-                history = Array.from(compactionResult.history);
-                // Reset snapshot state after compaction so next tool round gets full snapshot
-                snapshotState.reset();
-                compactionOccurredThisTurn = compactionResult.messagesCompressed > 0;
-                // Track compaction metadata for checkpoint state
-                if (compactionOccurredThisTurn) {
-                  lastCompactionMessageCount = history.length;
-                  lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
-                }
-
-                toolResult = JSON.stringify({
-                  messagesCompressed: compactionResult.messagesCompressed,
-                  batchesCreated: compactionResult.batchesCreated,
-                  tokensEstimateBefore: compactionResult.tokensEstimateBefore,
-                  tokensEstimateAfter: compactionResult.tokensEstimateAfter,
-                });
-              } else {
-                toolResult = JSON.stringify({
-                  success: false,
-                  output: 'Compaction not configured',
-                });
+              // Compaction is deferred until the completed-batch admission boundary.
+              if (deps.integrityLifecycle?.requestCompaction) {
+                await deps.integrityLifecycle.requestCompaction();
               }
-              recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, compactSuccess, compactSuccess ? null : 'Compaction not configured');
+              deferredCompactionPending = true;
+              toolResult = JSON.stringify({accepted: true, deferred: true});
+              recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, true, null);
             } else {
               // Regular tool dispatch
-              const result = await deps.registry.dispatch(toolUse.name, toolUse.input);
+              const result = await ingressContext.run(true, () => deps.registry.dispatch(toolUse.name, toolUse.input));
               toolResult = result.output;
+              toolOutcomeError = result.success ? null : (result.error ?? 'tool dispatch failed');
               recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
             }
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             toolResult = `Error executing tool ${toolUse.name}: ${errorMsg}`;
+            toolOutcomeError = 'tool_dispatch_failed';
             recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, false, errorMsg);
 
             // Record structured error trace if available
@@ -556,12 +794,14 @@ export function createAgent(
             }
           }
 
-          // Persist tool result
+          // Persist the typed tool outcome together with its correlated call.
+          const persistedOutcome = toToolOutcome(toolResult, toolOutcomeError !== null, toolOutcomeError ?? 'tool_failed');
           await persistMessage({
             conversation_id: id,
             role: 'tool',
             content: toolResult,
             tool_call_id: toolUse.id,
+            tool_outcome: persistedOutcome,
           });
 
           // Collect tool result for history (added after assistant message below)
@@ -571,8 +811,73 @@ export function createAgent(
             role: 'tool' as const,
             content: toolResult,
             tool_call_id: toolUse.id,
+            tool_outcome: persistedOutcome,
             created_at: new Date(),
           });
+          if (batchId && deps.integrityLifecycle) {
+            try {
+              await deps.integrityLifecycle.recordOutcome(batchId, toolUse.id, persistedOutcome);
+              recordedCallIds.add(toolUse.id);
+            } catch (error) {
+              throw new AgentError(
+                'INTEGRITY_FAILED',
+                'failed to persist tool outcome',
+                {conversationId: id, batchId, callId: toolUse.id},
+                {cause: error instanceof Error ? error : undefined},
+              );
+            }
+          }
+        }
+        if (batchId && deps.integrityLifecycle) {
+          try {
+            await deps.integrityLifecycle.completeBatch(batchId);
+          } catch (error) {
+            throw new AgentError(
+              'INTEGRITY_FAILED',
+              'failed to complete tool batch',
+              {conversationId: id, batchId},
+              {cause: error instanceof Error ? error : undefined},
+            );
+          }
+        }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          if (batchId && deps.integrityLifecycle) {
+            let backfillFailed = false;
+            for (const toolUse of toolUseBlocks) {
+              if (recordedCallIds.has(toolUse.id)) continue;
+              try {
+                await deps.integrityLifecycle.recordOutcome(batchId, toolUse.id, startedCallIds.has(toolUse.id)
+                  ? {kind: 'outcome_unknown', code: 'outcome_persistence_failed', message: reason}
+                  : {kind: 'cancelled', code: 'cancelled', message: reason});
+                recordedCallIds.add(toolUse.id);
+              } catch {
+                backfillFailed = true;
+              }
+            }
+            if (backfillFailed) {
+              recoveryRequired = true;
+              recoveryReason = `tool batch ${batchId} outcome persistence failed: ${reason}`;
+              try {
+                await deps.integrityLifecycle.markRecoveryRequired?.(batchId, recoveryReason);
+              } catch {
+                // The in-memory latch remains fail-closed if the durable marker also fails.
+              }
+            } else {
+              try {
+                await deps.integrityLifecycle.completeBatch(batchId);
+              } catch {
+                recoveryRequired = true;
+                recoveryReason = `tool batch ${batchId} could not be completed: ${reason}`;
+                try {
+                  await deps.integrityLifecycle.markRecoveryRequired?.(batchId, recoveryReason);
+                } catch {
+                  // Preserve the local fail-closed latch.
+                }
+              }
+            }
+          }
+          throw error;
         }
 
         // Add assistant message FIRST (must precede tool results for API ordering)
@@ -590,6 +895,15 @@ export function createAgent(
         for (const result of toolResults) {
           history.push(result);
         }
+        // A completed tool batch closes this admission boundary; the next provider request may admit once.
+        compactionAdmittedAtBoundary = false;
+        if (explicitCheckpointPending) {
+          explicitCheckpointPending = false;
+          await invokeCheckpoint('explicit', turnNumber, history);
+        }
+        if (deps.integrityLifecycle?.consumeCompactionIntent) {
+          deferredCompactionPending = await deps.integrityLifecycle.consumeCompactionIntent();
+        }
 
         // Continue loop for next round
         continue;
@@ -600,6 +914,13 @@ export function createAgent(
     }
 
     // Max rounds exceeded
+    if (explicitCheckpointPending) {
+      explicitCheckpointPending = false;
+      await invokeCheckpoint('explicit', turnNumber, history);
+    }
+    if (deps.integrityLifecycle?.consumeCompactionIntent) {
+      deferredCompactionPending = await deps.integrityLifecycle.consumeCompactionIntent();
+    }
     const warningMessage = `[Warning: max tool rounds (${maxRounds}) reached. Stopping tool execution.]`;
 
     const warningMessageId = await persistMessage({
@@ -620,19 +941,41 @@ export function createAgent(
       created_at: new Date(),
     });
 
-    // Update checkpoint state with current history (verifies AC3.1, AC3.2)
-    updateCheckpointStateAndTriggerInterval(turnNumber, history);
+    // A max-round warning is still a successfully completed turn.
+    await completeTurn(turnNumber, history);
 
     return warningMessage;
   }
 
+  async function processMessage(userMessage: string, options?: import('@/contracts/execution.ts').ExecutionOptions): Promise<string> {
+    if (shutdownRequested) throw new AgentError('TURN_CANCELLED', 'agent is shutting down', {conversationId: id});
+    if (ingressContext.getStore() === true) {
+      throw new AgentError('REENTRANT_INGRESS', 'reentrant ingress acquisition is not allowed from a tool handler', {conversationId: id});
+    }
+    const result = queueTail.then(() => runTurn(userMessage, options));
+    queueTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async function shutdown(): Promise<void> {
+    if (shutdownCompleted) return;
+    shutdownRequested = true;
+    await queueTail;
+    const history = deps.historyStore
+      ? Array.from((await deps.historyStore.readActive(id)).messages)
+      : await loadConversationHistory(id);
+    await invokeCheckpoint('shutdown', completedTurnCount, history);
+    shutdownCompleted = true;
+  }
+
   async function getConversationHistory(): Promise<Array<ConversationMessage>> {
+    if (deps.historyStore) return Array.from((await deps.historyStore.readActive(id)).messages);
     return loadConversationHistory(id);
   }
 
-  async function processEvent(event: ExternalEvent): Promise<string> {
+  async function processEvent(event: ExternalEvent, options?: import('@/contracts/execution.ts').ExecutionOptions): Promise<string> {
     const formattedMessage = formatExternalEvent(event, deps.sourceInstructions);
-    return processMessage(formattedMessage);
+    return processMessage(formattedMessage, options);
   }
 
   function getCheckpointState(): CheckpointState | null {
@@ -644,6 +987,25 @@ export function createAgent(
     processEvent,
     getConversationHistory,
     getCheckpointState,
+    shutdown,
+    getRecoveryState: () => deps.integrityLifecycle
+      ? deps.integrityLifecycle.getRecoveryState()
+      : Promise.resolve({required: recoveryRequired, reason: recoveryRequired ? 'conversation recovery is required' : null, batchId: null, unresolvedCallIds: []}),
+    recoverIntegrity: async (callIds: ReadonlyArray<string>, reason?: string): Promise<void> => {
+      if (deps.integrityLifecycle) {
+        try {
+          await deps.integrityLifecycle.recover(callIds, reason);
+        } catch (error) {
+          throw new AgentError(
+            'INTEGRITY_FAILED',
+            'failed to recover conversation integrity state',
+            {conversationId: id, callIds: Array.from(callIds)},
+            {cause: error instanceof Error ? error : undefined},
+          );
+        }
+      }
+      recoveryRequired = false;
+    },
     conversationId: id,
   };
 
@@ -671,12 +1033,28 @@ export function createAgent(
     content: string;
     tool_calls?: Array<ToolUseBlock>;
     tool_call_id?: string;
+    tool_outcome?: import('@/contracts/outcomes.ts').ToolOutcome;
     reasoning_content?: string | null;
   }): Promise<string> {
-    // Generate embedding for user/assistant messages, null for system/tool
+    // Generate embeddings before selecting the persistence boundary so both paths
+    // have identical message semantics. Tool/system messages intentionally remain null.
     let embedding: Array<number> | null = null;
     if (msg.role === 'user' || msg.role === 'assistant') {
       embedding = await generateMessageEmbedding(msg.content);
+    }
+    if (deps.historyStore) {
+      const historyMessage = await deps.historyStore.append({
+        conversation_id: msg.conversation_id,
+        role: msg.role,
+        content: msg.content,
+        tool_calls: msg.role === 'tool' && msg.tool_outcome !== undefined
+          ? {outcome: msg.tool_outcome}
+          : msg.tool_calls,
+        tool_call_id: msg.tool_call_id ?? null,
+        reasoning_content: msg.reasoning_content ?? null,
+        embedding,
+      });
+      return historyMessage.id;
     }
 
     // Format embedding for SQL: use toSql for non-null, null otherwise

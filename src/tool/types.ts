@@ -19,6 +19,8 @@ export type ToolDefinition = {
   name: string;
   description: string;
   parameters: ReadonlyArray<ToolParameter>;
+  /** Complete JSON Schema when structured/nested input validation is required. */
+  inputSchema?: Readonly<Record<string, unknown>>;
 };
 
 export type ToolResult = {
@@ -27,7 +29,12 @@ export type ToolResult = {
   error?: string;
 };
 
-export type ToolHandler = (params: Record<string, unknown>) => Promise<ToolResult>;
+import type {ExecutionOptions} from '@/contracts/execution.ts';
+
+export type ToolHandler = (
+  params: Record<string, unknown>,
+  options?: ExecutionOptions,
+) => Promise<ToolResult>;
 
 export type Tool = {
   definition: ToolDefinition;
@@ -36,9 +43,18 @@ export type Tool = {
 
 export interface ToolRegistry {
   register(tool: Tool): void;
+  reserve?(name: string, options?: Readonly<{trustedRecovery?: boolean}>): void;
+  release?(name: string): void;
+  replaceReserved?(name: string, tool: Tool): void;
+  quarantine?(name: string, reason: string): void;
+  getQuarantines?(): ReadonlyArray<{name: string; reason: string}>;
   unregister(name: string): boolean;
   getDefinitions(): Array<ToolDefinition>;
-  dispatch(name: string, params: Record<string, unknown>): Promise<ToolResult>;
+  dispatch(
+    name: string,
+    params: Record<string, unknown>,
+    options?: ExecutionOptions,
+  ): Promise<ToolResult>;
   generateStubs(): string;
   toModelTools(): Array<{
     name: string;

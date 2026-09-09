@@ -46,6 +46,12 @@ export type ModelRequest = {
   max_tokens: number;
   temperature?: number;
   timeout?: number;
+  /** Caller-owned cancellation; adapters must not retry deliberate cancellation. */
+  signal?: AbortSignal;
+  /** Absolute epoch deadline in milliseconds, shared across retries and stream consumption. */
+  deadline?: number;
+  /** Whether the adapter can request provider-side cumulative stream usage. */
+  stream_usage?: boolean;
 };
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";
@@ -55,6 +61,7 @@ export type UsageStats = {
   output_tokens: number;
   cache_creation_input_tokens?: number | null;
   cache_read_input_tokens?: number | null;
+  reasoning_output_tokens?: number | null;
 };
 
 export type ModelResponse = {
@@ -68,7 +75,7 @@ export type StreamEventMessageStart = {
   type: "message_start";
   message: {
     id: string;
-    usage: UsageStats;
+    usage?: UsageStats;
   };
 };
 
@@ -96,6 +103,7 @@ export type StreamEventMessageStop = {
   type: "message_stop";
   message: {
     stop_reason: StopReason;
+    usage?: UsageStats;
   };
 };
 

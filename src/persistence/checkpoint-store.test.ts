@@ -5,10 +5,9 @@ import {createCheckpointStore} from './checkpoint-store.ts';
 import {createPostgresProvider} from './postgres.ts';
 import {serializeCheckpoint} from '@/agent/checkpoint-serializer.ts';
 import type {SessionCheckpoint, AgentCheckpointState} from '@/agent/checkpoint-types.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let store: ReturnType<typeof createCheckpointStore>;
 let persistence: ReturnType<typeof createPostgresProvider>;
 
@@ -38,12 +37,8 @@ function createTestCheckpoint(overrides: Partial<SessionCheckpoint> = {}): Sessi
 
 describe('CheckpointStore Integration Tests', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     store = createCheckpointStore(persistence);
   });
 
@@ -52,7 +47,7 @@ describe('CheckpointStore Integration Tests', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    if (database) await teardownTestDatabase(database);
   });
 
   describe('session-checkpointing.AC5.2: save and load round-trip', () => {

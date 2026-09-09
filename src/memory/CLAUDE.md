@@ -1,42 +1,42 @@
 # Memory
 
-Last verified: 2026-05-17
+Last verified: 2026-09-09
 
 ## Purpose
-Implements a three-tier memory system (core/working/archival) with permission-based write access, semantic search via pgvector, event sourcing, and a mutation approval flow for human-controlled blocks.
+
+Implements owner-scoped core, working, and archival memory with permission-aware mutations, semantic search, event sourcing, and protected compaction archives.
 
 ## Contracts
-- **Exposes**: `MemoryManager` interface (context building, read/write/list/deleteBlock/moveBlock/getStats, mutation management), `MemoryStore` port interface (includes `getBlocksByLabelPrefix(owner, prefix, tier?)`), `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, all memory types
+
+- **Exposes**: `MemoryManager` and `MemoryStore`, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, deletion policy and trusted maintenance operations.
 - **Guarantees**:
-  - `readonly` blocks cannot be written to
-  - `familiar`-permissioned blocks queue a `PendingMutation` instead of writing directly (requires human approval)
-  - `append` blocks concatenate content; `readwrite` blocks overwrite
-  - `read()` performs semantic search via embedding similarity
-  - `moveBlock()` changes a block's tier atomically (rejects readonly blocks, logs archive event)
-  - `getStats()` returns block count and total content bytes for a tier (or all tiers)
-  - All mutations are event-sourced (`memory_events` table). `MemoryEvent.block_id` is nullable -- events survive block deletion (FK `ON DELETE SET NULL`).
-  - `buildSystemPrompt()` returns all core blocks formatted for the model system prompt
-- **Expects**: `PersistenceProvider` connected with migrations applied. `EmbeddingProvider` available (graceful fallback to null embedding on failure).
+  - Public deletion requires an owner-scoped manager and rechecks the row under `FOR UPDATE` before event/deletion publication.
+  - Missing or foreign IDs return not-found behavior without foreign metadata. Public deletion rejects `readonly`, `familiar`, `append`, pinned, and core blocks. Only owner-owned, unpinned, non-core `readwrite` blocks are eligible.
+  - Accepted deletion audit and row removal commit together; rejected or rolled-back deletion creates no event.
+  - `familiar` writes queue a `PendingMutation`; `readonly` writes reject; `append` concatenates and `readwrite` overwrites.
+  - History-owned archive blocks are persistence-protected, readonly, pinned, and cannot be changed by public memory or ingest/archivist maintenance paths. The dedicated history commit path creates them.
+  - `replaceWorkingMemory` is a trusted owner-scoped restore capability and rejects protected existing working blocks.
+  - `read()` uses embedding search when available; embedding failures degrade to null embeddings. `buildSystemPrompt()` includes all core blocks.
+- **Expects**: A migrated `PersistenceProvider` and an embedding provider or explicit graceful-failure handling.
 
 ## Dependencies
-- **Uses**: `src/persistence/` (via `MemoryStore`), `src/embedding/` (via `EmbeddingProvider`)
-- **Used by**: `src/tool/builtin/memory.ts`, `src/agent/`, `src/compaction/`, `src/diary/` (via `MemoryBlock` type), `src/index.ts`
-- **Boundary**: Direct SQL access goes through `MemoryStore` only, never through `MemoryManager`.
 
-## Key Decisions
-- Three tiers: Core (always in context), Working (active session context), Archival (searchable long-term)
-- Permission model: `readonly` (system), `familiar` (human-approved mutations), `append` (log-style), `readwrite` (agent-owned)
-- Mutation approval flow: Separates agent intent from human authorization for sensitive blocks
-- Owner-scoped: All queries are scoped to an owner string, enabling multi-agent memory isolation
+- **Uses**: `src/persistence/` through `MemoryStore`, and `src/embedding/`.
+- **Used by**: memory tools, agent, compaction, diary, ingest, archivist, checkpoint restore, and composition root.
+- **Boundary**: Memory managers do not issue SQL directly; stores enforce owner and transaction boundaries.
 
 ## Invariants
-- Memory blocks have a unique `(owner, label)` pair (enforced by DB unique constraint)
-- Core blocks are always `pinned: true`
-- Every create/update/delete produces a `memory_events` entry (delete events are logged before block removal, so the event persists with `block_id = NULL`)
-- `PendingMutation` must be explicitly approved or rejected; no auto-approval
+
+- `(owner, label)` is unique.
+- Core blocks are pinned.
+- Ordinary mutations are event-sourced. Delete events are written before deletion and survive through nullable block references.
+- Pending mutations require explicit approval or rejection.
+- History-owned archive bytes and their references remain stable for their lifetime.
 
 ## Key Files
-- `types.ts` -- `MemoryBlock`, `MemoryEvent`, `PendingMutation`, `MemoryWriteResult`, tier/permission enums
-- `store.ts` -- `MemoryStore` port interface
-- `postgres-store.ts` -- PostgreSQL + pgvector implementation of `MemoryStore`
-- `manager.ts` -- `MemoryManager` interface and implementation (orchestration layer)
+
+- `types.ts` -- memory tiers, permissions, blocks, events, and replacement inputs.
+- `deletion-policy.ts` -- pure public and maintenance authorization decisions.
+- `manager.ts` -- manager orchestration and owner injection.
+- `postgres-store.ts` -- locked authorization, atomic events/deletes, maintenance, and restore operations.
+- `store.ts` -- owner-scoped store port.

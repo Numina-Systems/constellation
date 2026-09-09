@@ -3,10 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { createPostgresProvider } from '../persistence/postgres.ts';
 import { createPostgresScheduler } from './postgres-scheduler.ts';
 import type { SchedulerRow } from './types.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 const TEST_OWNER = 'test-owner-' + randomUUID();
 let activeScheduler: ReturnType<typeof createPostgresScheduler> | null = null;
@@ -17,12 +16,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('PostgreSQL Scheduler', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
   });
 
@@ -33,7 +28,7 @@ describe('PostgreSQL Scheduler', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('agent-reflexion.AC4.1: Task persistence across restarts', () => {

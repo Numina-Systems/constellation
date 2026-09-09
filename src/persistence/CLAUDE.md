@@ -1,36 +1,40 @@
 # Persistence
 
-Last verified: 2026-05-16
+Last verified: 2026-09-09
 
 ## Purpose
-Provides a PostgreSQL adapter behind a port interface so all database access flows through a single abstraction. Owns schema migrations and the checkpoint store for session persistence.
+
+Provides PostgreSQL ports and adapters for migrations, owner-scoped data, revisioned active history, retained transcripts, checkpoints, and transaction truth/reconciliation.
 
 ## Contracts
-- **Exposes**: `PersistenceProvider` interface (`connect`, `disconnect`, `runMigrations`, `query`, `withTransaction`), `createPostgresProvider(config)`, `CheckpointStore` interface (`save`, `load`, `loadLatest`, `prune`), `createCheckpointStore(persistence)`, `MessageStore` type (`count`, `listIds`, `getLatest`), `createMessageStore(persistence)`
-- **Guarantees**: Migrations run in order, inside transactions, and are idempotent (tracked in `schema_migrations` table). `withTransaction` rolls back on error. Nested `withTransaction` calls use savepoints transparently via `AsyncLocalStorage` (same connection, depth-tracked). `MessageStore` provides typed read access to the `messages` table.
-- **Expects**: PostgreSQL with pgvector extension available at configured URL.
+
+- **Exposes**: `PersistenceProvider`, transaction scopes/outcomes, `createPostgresProvider`, `ConversationHistoryStore`, `CheckpointStore`, `MessageStore`, and their factories.
+- **Guarantees**:
+  - Migrations run in filename order, transactionally, and existing migration files are immutable. New history migrations follow the current sequence.
+  - Transaction state is scoped to its owning provider. Nested scopes use savepoints and are provisional; only the outermost owner can publish durable state.
+  - Transaction outcomes distinguish confirmed commit, confirmed rollback, and unknown acknowledgement. A commit error is preserved if rollback also fails; broken clients are invalidated and unknown outcomes reconcile outside the ambient transaction.
+  - `ConversationHistoryStore` appends messages and active membership with a monotonic conversation revision. `readActive` returns one consistent active projection and revision. Retained `readHistorical` rows are labeled `historical` or `superseded`; `readByIds` enforces conversation membership and requested order.
+  - Compaction commits archives, summary, membership, provenance, receipt, and revision in one operation. It performs no model/embedding network call inside that transaction and fails closed as `history_state_unknown` when truth cannot be established.
+  - `saveAndPruneCheckpoint` atomically saves and count-prunes checkpoints. Pruning never deletes retained transcript rows or referenced archive blocks.
+  - History-owned archive blocks are protected by database state/constraints and retain canonical bytes for their references.
+- **Expects**: PostgreSQL with pgvector and migrations applied. Integration tests require `TEST_DATABASE_ADMIN_URL` and use a dedicated disposable database; they never fall back to `DATABASE_URL`.
 
 ## Dependencies
-- **Uses**: `pg` (node-postgres), `src/config/`
-- **Used by**: `src/memory/postgres-store.ts`, `src/agent/agent.ts` (message persistence), `src/agent/checkpoint-create.ts` (checkpoint persistence via `CheckpointStore`), `src/skill/postgres-store.ts` (skill embeddings), `src/search/` (memory and conversation search domains), `src/reflexion/` (prediction store, trace recorder), `src/scheduler/` (scheduled tasks), `src/activity/` (activity state, event queue), `src/tool/builtin/scheduling.ts` (owner-scoped task queries), `src/index.ts`
-- **Boundary**: No module should import `pg` directly. All SQL goes through `PersistenceProvider.query`.
 
-## Key Decisions
-- Connection pooling via `pg.Pool`: Handles concurrent queries without manual management
-- SQL migration files: Plain `.sql` in `migrations/`, sorted by filename prefix
-- Transparent nested transactions via AsyncLocalStorage: Callers don't need to know if they're already in a transaction; inner `withTransaction` calls use savepoints automatically
-- MessageStore as separate factory: Read-only typed queries for messages, keeps `PersistenceProvider` interface minimal
+- **Uses**: `pg`, `pgvector`, config, agent/history types, and contract outcomes.
+- **Used by**: memory, agent, compaction, search, skills, reflexion, scheduling, activity, custom tools, and composition root.
+- **Boundary**: domain modules use `PersistenceProvider`; no direct `pg` imports outside adapters.
 
 ## Invariants
-- Existing migration files are immutable (append new files only)
-- All schema changes go through migration files
-- `QueryFunction` generic returns typed rows; callers cast via type parameter
 
-## Key Files
-- `types.ts` -- `PersistenceProvider` and `QueryFunction` port interfaces
-- `postgres.ts` -- PostgreSQL adapter implementation (includes AsyncLocalStorage transaction context for nested transactions)
-- `message-store.ts` -- `MessageStore` type and `createMessageStore` factory (typed read-only access to messages table)
-- `checkpoint-store.ts` -- `CheckpointStore` implementation (save, load, loadLatest, prune)
-- `migrate.ts` -- Standalone migration runner entry point
-- `index.ts` -- Barrel exports for persistence module
-- `migrations/*.sql` -- Schema migration files (append-only, includes `010_session_checkpoints.sql`)
+- Existing migrations are append-only.
+- Active membership cannot point to a message from another conversation.
+- Durable publication and in-memory publication occur only after confirmed/reconciled commit.
+- Ambiguous history state blocks affected execution rather than claiming rollback or unchanged state.
+
+## Key files
+
+- `types.ts`, `postgres.ts` -- provider and transaction boundary.
+- `conversation-history-store.ts` -- active/retained history and compaction/restore commits.
+- `checkpoint-store.ts`, `message-store.ts` -- checkpoint and active-message access.
+- `migrations/016_conversation_history.sql`, `migrations/017_scope_history_summary_fk.sql` -- history schema additions.

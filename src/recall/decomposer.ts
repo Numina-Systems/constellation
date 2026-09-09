@@ -7,6 +7,7 @@
  */
 
 import type { ModelProvider, ModelRequest, ModelResponse } from '@/model/types.js';
+import type { ExecutionOptions } from '@/contracts/execution.ts';
 import type { DecompositionResult } from './types.js';
 import { parseDecompositionResponse } from './decompose.js';
 
@@ -40,6 +41,7 @@ export async function decomposeMessage(
   message: string,
   model: ModelProvider,
   modelName: string,
+  executionOptions?: ExecutionOptions,
 ): Promise<DecompositionResult> {
   try {
     const request: ModelRequest = {
@@ -53,6 +55,8 @@ export async function decomposeMessage(
       model: modelName,
       max_tokens: 256,
       temperature: 0,
+      signal: executionOptions?.signal,
+      deadline: executionOptions?.deadline,
     };
 
     const response: ModelResponse = await model.complete(request);

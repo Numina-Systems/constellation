@@ -9,8 +9,11 @@ export {
   McpConfigSchema,
 } from './schema.ts';
 export { resolveEnvVars, resolveServerConfigEnv } from './env.ts';
-export { createMcpClient, buildTransportOptions } from './client.ts';
+export { createMcpClient, buildTransportOptions, mapMcpToolResult } from './client.ts';
+export { collectMcpPages } from './discovery-bounds.ts';
+export type { McpPage, McpPageFetcher } from './discovery-bounds.ts';
 export { mapInputSchemaToParameters } from './schema-mapper.ts';
 export { createMcpToolProvider, namespaceTool } from './provider.ts';
 export { mcpPromptToSkill, mcpPromptsToSkills } from './skill-adapter.ts';
-export { createMcpInstructionsProvider, formatMcpStartupSummary } from './startup.ts';
+export { createMcpInstructionsProvider, formatMcpStartupSummary, connectMcpServers, publishMcpRegistrations, createMcpToolDefinitions } from './startup.ts';
+export type { McpStartupFailure, McpStartupResult } from './startup.ts';

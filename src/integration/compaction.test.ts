@@ -15,10 +15,9 @@ import { createPostgresMemoryStore } from '../memory/postgres-store';
 import { createMemoryManager } from '../memory/manager';
 import { createCompactor } from '../compaction/compactor';
 import { createMockEmbeddingProvider } from './test-helpers';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 const TEST_CONVERSATION_ID = 'test-conversation-' + Math.random().toString(36).substring(7);
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
 
 function getOllamaEndpoint(): string {
   return process.env['OLLAMA_ENDPOINT'] ?? 'http://192.168.1.6:11434';
@@ -29,6 +28,7 @@ function getOllamaModel(): string {
 }
 
 let persistence: ReturnType<typeof createPostgresProvider>;
+let database: TestDatabase;
 let mockEmbedding = createMockEmbeddingProvider();
 
 async function cleanupTables(): Promise<void> {
@@ -103,7 +103,7 @@ async function createTestCompactor(): Promise<{
         error.message.includes('ECONNREFUSED') ||
         error.message.includes('network'))
     ) {
-      console.log('Skipping integration test: Ollama server not available');
+      console.warn('SKIP: compaction integration test requires a reachable Ollama server');
       return null;
     }
     throw error;
@@ -134,12 +134,8 @@ async function createTestCompactor(): Promise<{
 
 describe('Compaction Integration Tests', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
 
     mockEmbedding = createMockEmbeddingProvider();
@@ -150,7 +146,7 @@ describe('Compaction Integration Tests', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('Context compaction with Ollama summarization', () => {

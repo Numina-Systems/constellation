@@ -2,73 +2,85 @@
 
 import type { ToolProvider } from '@/extensions/tool-provider.ts';
 import type { ToolDefinition, ToolResult } from '@/tool/types.ts';
-import type { McpClient } from './types.ts';
-import { mapInputSchemaToParameters } from './schema-mapper.ts';
+import { validateExecutableTool, validationMessage } from '@/custom-tool/validation.ts';
+import { mapValidatedInputSchemaToParameters } from './schema-mapper.ts';
+import {
+  McpDiscoveryError,
+  type McpClient,
+  type McpDiscoveryOptions,
+  type McpToolDefinition,
+  type McpToolRegistration,
+} from './types.ts';
 
-/**
- * Converts a server name and tool name into a namespaced tool name.
- * Hyphens in both server and tool names are converted to underscores.
- * Format: mcp_{serverName}_{toolName}
- */
 export function namespaceTool(serverName: string, toolName: string): string {
-  const normalizedServer = serverName.replace(/-/g, '_');
-  const normalizedTool = toolName.replace(/-/g, '_');
-  return `mcp_${normalizedServer}_${normalizedTool}`;
+  return `mcp_${serverName.replace(/-/g, '_')}_${toolName.replace(/-/g, '_')}`;
 }
 
-/**
- * Creates a ToolProvider that bridges MCP tools into Constellation's tool registry.
- *
- * The provider maintains an internal name map to support lossy namespacing
- * (hyphens converted to underscores). During discover(), the map is populated.
- * During execute(), the map is used to look up the original MCP tool name.
- */
-export function createMcpToolProvider(client: McpClient): ToolProvider {
-  // Map from namespaced tool names to original MCP tool names
-  const nameMap = new Map<string, string>();
+/** Creates an immutable, generation-tagged provider snapshot. */
+export function createMcpToolProvider(client: McpClient): ToolProvider & Readonly<{
+  readonly discoverRegistrations: (options?: McpDiscoveryOptions) => Promise<ReadonlyArray<McpToolRegistration>>;
+  readonly generation: () => number;
+}> {
+  let currentGeneration = 0;
+  let currentSnapshot: ReadonlyMap<string, McpToolRegistration> = new Map();
+  let discoveryInFlight = 0;
+
+  async function discoverRegistrations(options?: McpDiscoveryOptions): Promise<ReadonlyArray<McpToolRegistration>> {
+    const attempt = ++discoveryInFlight;
+    const nextGeneration = currentGeneration + 1;
+    const mcpTools = await client.listTools(options);
+    const next = new Map<string, McpToolRegistration>();
+    const seen = new Map<string, string>();
+    for (const tool of mcpTools) {
+      const namespacedName = namespaceTool(client.serverName, tool.name);
+      const existing = seen.get(namespacedName);
+      if (existing !== undefined) {
+        if (existing === tool.name) {
+          throw new McpDiscoveryError('mcp_discovery_duplicate_tool', `MCP server returned duplicate tool name: ${tool.name}`, {server: client.serverName, tool: tool.name});
+        }
+        throw new McpDiscoveryError('mcp_discovery_name_collision', `normalized MCP tool names collide: ${existing} and ${tool.name}`, {server: client.serverName, name: namespacedName});
+      }
+      seen.set(namespacedName, tool.name);
+      const mapped = mapValidatedInputSchemaToParameters(tool.inputSchema, tool.name);
+      const definition: McpToolDefinition = Object.freeze({
+        name: namespacedName,
+        description: `[MCP: ${client.serverName}] ${tool.description ?? ''}`,
+        parameters: Object.freeze([...mapped.parameters]),
+        inputSchema: mapped.schema,
+        generation: nextGeneration,
+        originalName: tool.name,
+      });
+      const registration: McpToolRegistration = Object.freeze({
+        definition,
+        handler: async (params, executionOptions) => {
+          if (currentGeneration !== nextGeneration || currentSnapshot.get(namespacedName)?.definition.originalName !== tool.name) {
+            return {success: false, output: '', error: `stale MCP tool handle: ${namespacedName}`};
+          }
+          return client.callTool(tool.name, params, executionOptions);
+        },
+      });
+      const validation = validateExecutableTool({definition, handler: registration.handler});
+      if (!validation.valid) throw new McpDiscoveryError('mcp_discovery_invalid_schema', `invalid discovered MCP tool ${tool.name}: ${validationMessage(validation)}`, {server: client.serverName, tool: tool.name});
+      next.set(namespacedName, registration);
+    }
+    if (attempt !== discoveryInFlight) throw new McpDiscoveryError('mcp_discovery_stale_attempt', `stale MCP discovery attempt for ${client.serverName}`, {server: client.serverName});
+    currentGeneration = nextGeneration;
+    currentSnapshot = next;
+    return Object.freeze([...next.values()]);
+  }
 
   return {
     name: `mcp:${client.serverName}`,
-
-    async discover(): Promise<Array<ToolDefinition>> {
-      const mcpTools = await client.listTools();
-
-      // Clear and repopulate the name map
-      nameMap.clear();
-
-      const definitions: Array<ToolDefinition> = [];
-
-      for (const tool of mcpTools) {
-        const namespacedName = namespaceTool(client.serverName, tool.name);
-        nameMap.set(namespacedName, tool.name);
-
-        const definition: ToolDefinition = {
-          name: namespacedName,
-          description: `[MCP: ${client.serverName}] ${tool.description ?? ''}`,
-          parameters: mapInputSchemaToParameters(tool.inputSchema),
-        };
-
-        definitions.push(definition);
-      }
-
-      return definitions;
+    discover: async (options?: McpDiscoveryOptions): Promise<Array<ToolDefinition>> => {
+      const registrations = await discoverRegistrations(options);
+      return registrations.map((registration) => registration.definition);
     },
-
-    async execute(
-      tool: string,
-      params: Record<string, unknown>,
-    ): Promise<ToolResult> {
-      const originalName = nameMap.get(tool);
-
-      if (!originalName) {
-        return {
-          success: false,
-          output: '',
-          error: `unknown MCP tool: ${tool}`,
-        };
-      }
-
-      return client.callTool(originalName, params);
+    discoverRegistrations,
+    generation: () => currentGeneration,
+    execute: async (tool: string, params: Record<string, unknown>): Promise<ToolResult> => {
+      const registration = currentSnapshot.get(tool);
+      if (!registration) return {success: false, output: '', error: `unknown MCP tool: ${tool}`};
+      return registration.handler(params);
     },
   };
 }

@@ -23,7 +23,8 @@ import type { CheckpointStore } from '../persistence/checkpoint-store.ts';
 import type { SessionCheckpoint } from './checkpoint-types.ts';
 import { createCheckpointTool } from '../tool/builtin/checkpoint.ts';
 import { performCheckpoint, type CheckpointDependencies } from './checkpoint-create.ts';
-import type { CheckpointAgentState } from './checkpoint-types.ts';
+import { restoreFromCheckpoint, type RestorationDependencies } from './checkpoint-restore.ts';
+import type { CheckpointAgentState, SessionCheckpointV2 } from './checkpoint-types.ts';
 
 /**
  * Mock implementations for checkpoint integration testing
@@ -603,6 +604,57 @@ describe('Checkpoint Triggers', () => {
       expect(checkpoint?.messageIds).toEqual(['msg-1', 'msg-2', 'msg-3']);
       expect(checkpoint?.workingMemory.length).toBe(1);
       expect(checkpoint?.workingMemory[0]?.label).toBe('recent_findings');
+    });
+  });
+
+  describe('Phase 4 M-a: post-compaction checkpoint provenance', () => {
+    it('captures durable archive/provenance refs and restores the archived v2 summary', async () => {
+      const store = createMockCheckpointStore();
+      const checkpointStateRef: {current: CheckpointAgentState} = {current: {turnNumber: 0, toolRound: 0, messageIds: ['seed'], compactionMeta: {lastCompactedIndex: -1, summaryCount: 0}}};
+      const durableCompactor: Compactor = {
+        async compress(history) {
+          return {history: history.slice(-1), batchesCreated: 1, messagesCompressed: 2, tokensEstimateBefore: 100, tokensEstimateAfter: 20, operationId: 'compaction-m-a', archiveIds: ['archive-m-a'], provenanceRefs: ['provenance-m-a'], revision: 7};
+        },
+        consecutiveFailures: 0,
+      };
+      const checkpointDeps: CheckpointDependencies = {checkpointStore: store, memory: createMockMemoryManager(), owner: 'test-owner', conversationId: 'conv-m-a', retentionCount: 5};
+      const checkpointFn = async (trigger: string) => trigger === 'interval'
+        ? performCheckpoint('interval', checkpointStateRef.current, checkpointDeps)
+        : null;
+      const deps = createAgentDependencies({
+        compactor: durableCompactor,
+        checkpointFn,
+        checkpointStateRef,
+        config: {max_tool_rounds: 5, context_budget: 0.1, checkpoint_interval: 1},
+      });
+      const agent = createAgent(deps, 'conv-m-a');
+      await agent.processMessage('force durable compaction');
+      const checkpoint = store.savedCheckpoints.find((item) => item.trigger === 'interval');
+      expect(checkpoint?.version).toBe(2);
+      expect((checkpoint as SessionCheckpointV2 | undefined)?.activeArchiveIds).toEqual(['archive-m-a']);
+      expect((checkpoint as SessionCheckpointV2 | undefined)?.provenanceRefs).toEqual(['provenance-m-a']);
+
+      const restorePlan: {sourceArchiveIds: ReadonlyArray<string>; provenanceRefs: ReadonlyArray<string>} = {sourceArchiveIds: [], provenanceRefs: []};
+      const archivedSummary: ConversationMessage = {id: 'archived-summary', conversation_id: 'conv-m-a', role: 'system', content: '[Context Summary] archived summary', created_at: new Date()};
+      const fakeHistoryStore = {
+        readActive: async () => ({conversationId: 'conv-m-a', revision: 7, messages: [archivedSummary]}),
+        restoreExactHistory: async (plan: {sourceArchiveIds: ReadonlyArray<string>; provenanceRefs: ReadonlyArray<string>}) => {
+          restorePlan.sourceArchiveIds = plan.sourceArchiveIds;
+          restorePlan.provenanceRefs = plan.provenanceRefs;
+          return {receipt: {operationId: 'restore-m-a', conversationId: 'conv-m-a', status: 'committed' as const, previousRevision: 7, newRevision: 8, messageIds: ['archived-summary'], checkpointId: checkpoint?.id ?? '', sourceArchiveIds: [...plan.sourceArchiveIds], provenanceRefs: [...plan.provenanceRefs]}, history: {conversationId: 'conv-m-a', revision: 8, messages: [archivedSummary]}};
+        },
+      };
+      const restoreMemory = {...createMockMemoryManager(), replaceWorkingMemory: async () => []};
+      await restoreFromCheckpoint(checkpoint!, {
+        persistence: {} as PersistenceProvider,
+        memory: restoreMemory,
+        messageStore: {} as RestorationDependencies['messageStore'],
+        historyStore: fakeHistoryStore as unknown as RestorationDependencies['historyStore'],
+        traceRecorder: {record: async () => {}} as RestorationDependencies['traceRecorder'],
+        owner: 'test-owner',
+      });
+      expect(restorePlan?.sourceArchiveIds).toEqual(['archive-m-a']);
+      expect(restorePlan?.provenanceRefs).toEqual(['provenance-m-a']);
     });
   });
 

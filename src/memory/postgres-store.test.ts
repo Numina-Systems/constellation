@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
-import { createPostgresProvider } from '../persistence/postgres.ts';
+import type {PersistenceProvider} from '../persistence/types.ts';
 import { createPostgresMemoryStore } from './postgres-store.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
-let persistence: ReturnType<typeof createPostgresProvider>;
+let database: TestDatabase;
+let persistence: PersistenceProvider;
 let store: ReturnType<typeof createPostgresMemoryStore>;
 
 async function cleanupMemoryBlocks(): Promise<void> {
@@ -14,12 +13,8 @@ async function cleanupMemoryBlocks(): Promise<void> {
 
 describe('diary-injection.AC5: MemoryStore.getBlocksByLabelPrefix', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence;
     await cleanupMemoryBlocks();
 
     store = createPostgresMemoryStore(persistence);
@@ -30,7 +25,7 @@ describe('diary-injection.AC5: MemoryStore.getBlocksByLabelPrefix', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('diary-injection.AC5.1: Success - returns matching diary blocks', () => {

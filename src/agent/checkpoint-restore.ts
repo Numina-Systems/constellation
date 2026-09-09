@@ -91,7 +91,7 @@ export async function restoreFromCheckpoint(
     // state instead of silently resuming with history and memory out of step.
     let recoveryMarkerId: string | null = null;
     if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
-      recoveryMarkerId = await deps.integrityLifecycle.markConversationRecoveryRequired(`checkpoint restore ${checkpoint.id} is in progress for conversation ${checkpoint.conversationId}`);
+      recoveryMarkerId = await deps.integrityLifecycle.markConversationRecoveryRequired(`checkpoint restore ${checkpoint.id} is in progress for conversation ${checkpoint.conversationId}`, 'restore');
     }
     const restored = await deps.historyStore.restoreExactHistory({
       // Each restore request owns a distinct operation identity so a repeat restore

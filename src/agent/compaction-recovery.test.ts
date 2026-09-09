@@ -4,7 +4,7 @@ import {createAgent} from './agent.ts';
 import {createIntegrityLifecycle} from './integrity-lifecycle.ts';
 import {createConversationHistoryStore} from '@/persistence/conversation-history-store.ts';
 import {createInMemoryPersistence} from '@/testing/ports.ts';
-import type {AgentDependencies} from './types.ts';
+import type {AgentDependencies, ConversationMessage} from './types.ts';
 import type {ModelProvider, ModelRequest, ModelResponse} from '@/model/types.ts';
 import type {CompactionPreparationOptions, CompactionResult, Compactor} from '@/compaction/types.ts';
 import type {MemoryManager} from '@/memory/manager.ts';
@@ -63,6 +63,12 @@ function recordingCompactor(result: CompactionResult, calls: Array<CompactionPre
     },
   };
 }
+
+function toolUse(...calls: ReadonlyArray<{id: string; name: string; input?: Record<string, unknown>}>): ModelResponse {
+  return {content: calls.map((call) => ({type: 'tool_use' as const, id: call.id, name: call.name, input: call.input ?? {}})), stop_reason: 'tool_use' as const, usage: {input_tokens: 1, output_tokens: 1}};
+}
+
+const normalConfig = {max_tool_rounds: 5, context_budget: 0.8, model_max_tokens: 10000, max_tokens: 100};
 
 describe('Agent compaction ambiguity and cancellation propagation', () => {
   it('ambiguous_compaction_halts_turn_latches_durable_recovery_and_blocks_future_turns', async () => {
@@ -123,5 +129,89 @@ describe('Agent compaction ambiguity and cancellation propagation', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.request?.signal).toBe(controller.signal);
     expect(calls[0]?.request?.deadline).toBe(deadline);
+  });
+});
+
+describe('Unresolved execution effects and interrupted batches', () => {
+  it('execute_code_outcome_unknown_halts_turn_and_latches_recovery', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-unresolved');
+    let modelCalls = 0;
+    const model = fakeModel([toolUse({id: 'exec-1', name: 'execute_code', input: {code: 'await tools.memory_write()'}}), text('unreachable')], () => { modelCalls += 1; });
+    const runtime: CodeRuntime = {execute: async () => ({success: false, output: '', error: 'unresolved host tool calls', tool_calls_made: 1, duration_ms: 5, outcome: 'outcome_unknown', unresolved_call_ids: ['host-call-1'], unresolved_call_count: 1})};
+    const registry = createToolRegistry();
+    registry.register({definition: {name: 'execute_code', description: 'run code', parameters: []}, handler: async () => ({success: true, output: ''})});
+    const agent = createAgent(deps({conversationId: 'conv-unresolved', model, runtime, registry, integrityLifecycle: lifecycle, config: normalConfig}), 'conv-unresolved');
+
+    // The uncertain effect fails the turn closed: no further provider call may run.
+    await expect(agent.processMessage('run code')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    expect(modelCalls).toBe(1);
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    // The transcript carries the typed uncertain outcome for the correlated call.
+    const history = await agent.getConversationHistory();
+    const resultMessage = history.find((item) => item.role === 'tool' && item.tool_call_id === 'exec-1');
+    expect(resultMessage?.tool_outcome?.kind).toBe('outcome_unknown');
+  });
+
+  it('mid_batch_cancellation_backfills_transcript_results_and_next_turn_succeeds', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-cancel-batch');
+    const controller = new AbortController();
+    const registry = createToolRegistry();
+    for (const name of ['first_tool', 'second_tool']) {
+      registry.register({
+        definition: {name, description: name, parameters: []},
+        handler: async () => {
+          if (name === 'first_tool') controller.abort();
+          return {success: true, output: `${name} ok`};
+        },
+      });
+    }
+    const model = fakeModel([toolUse({id: 'call-1', name: 'first_tool'}, {id: 'call-2', name: 'second_tool'}), text('recovered')]);
+    const agent = createAgent(deps({conversationId: 'conv-cancel-batch', model, registry, integrityLifecycle: lifecycle, config: normalConfig}), 'conv-cancel-batch');
+
+    await expect(agent.processMessage('go', {signal: controller.signal})).rejects.toMatchObject({code: 'TURN_CANCELLED'});
+    // The interrupted batch backfilled a correlated transcript row for the unstarted
+    // call, so the next turn sees typed outcomes instead of EXCHANGE_CORRUPT.
+    const history = await agent.getConversationHistory();
+    expect(history.filter((item) => item.role === 'tool').map((item) => item.tool_call_id)).toEqual(['call-1', 'call-2']);
+    await expect(agent.processMessage('continue')).resolves.toBe('recovered');
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: false});
+  });
+
+  it('transcript_backfill_failure_keeps_the_batch_recovery_required', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-backfill-fail');
+    const historyStore = createConversationHistoryStore(persistence);
+    let toolResultAppends = 0;
+    const flakyHistoryStore = {
+      ...historyStore,
+      append: async (input: Parameters<typeof historyStore.append>[0]): Promise<ConversationMessage> => {
+        if (input.role === 'tool') {
+          toolResultAppends += 1;
+          if (toolResultAppends >= 2) throw new Error('injected tool result write failure');
+        }
+        return historyStore.append(input);
+      },
+    };
+    const controller = new AbortController();
+    const registry = createToolRegistry();
+    for (const name of ['first_tool', 'second_tool']) {
+      registry.register({
+        definition: {name, description: name, parameters: []},
+        handler: async () => {
+          if (name === 'first_tool') controller.abort();
+          return {success: true, output: `${name} ok`};
+        },
+      });
+    }
+    const model = fakeModel([toolUse({id: 'call-1', name: 'first_tool'}, {id: 'call-2', name: 'second_tool'}), text('unreachable')]);
+    const agent = createAgent(deps({conversationId: 'conv-backfill-fail', persistence, historyStore: flakyHistoryStore, model, registry, integrityLifecycle: lifecycle, config: normalConfig}), 'conv-backfill-fail');
+
+    // The transcript backfill itself failed, so the batch stays recovery-required
+    // instead of reporting complete with a transcript hole.
+    await expect(agent.processMessage('go', {signal: controller.signal})).rejects.toMatchObject({code: 'TURN_CANCELLED'});
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    await expect(agent.processMessage('continue')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
   });
 });

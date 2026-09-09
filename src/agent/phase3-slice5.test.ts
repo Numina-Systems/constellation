@@ -133,8 +133,9 @@ describe('Phase 3 exact restore wiring', () => {
     const lifecycle = createIntegrityLifecycle(persistence, 'restore-latch');
     const historyStore = createConversationHistoryStore(persistence);
     const first = await historyStore.append({conversation_id: 'restore-latch', role: 'user', content: 'first'});
+    const replacements: Array<ReadonlyArray<{label: string; content: string}>> = [];
     const failingMemory = {
-      ...memory([]),
+      ...memory(replacements),
       replaceWorkingMemory: async (): Promise<ReadonlyArray<{label: string; content: string}>> => {
         throw new Error('protected working block');
       },
@@ -151,8 +152,17 @@ describe('Phase 3 exact restore wiring', () => {
 
     // History may commit, but the working-memory failure must leave the conversation
     // latched for trusted recovery instead of silently half-restored.
-    await expect(restoreFromCheckpoint(checkpoint('restore-latch', [first.id]), deps)).rejects.toMatchObject({code: 'CHECKPOINT_FAILED'});
+    const checkpointToRestore = checkpoint('restore-latch', [first.id]);
+    await expect(restoreFromCheckpoint(checkpointToRestore, deps)).rejects.toMatchObject({code: 'CHECKPOINT_FAILED'});
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    // Generic tool recovery must not clear a typed restore marker it cannot reconcile.
+    await lifecycle.recover([], 'generic tool backfill');
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    // Re-running the restore to a fully applied completion supersedes the stale
+    // marker and clears the latch only after working memory actually followed.
+    const appliedDeps: RestorationDependencies = {...deps, memory: memory(replacements)};
+    await restoreFromCheckpoint(checkpointToRestore, appliedDeps);
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: false});
   });
 
   it('successful_restore_clears_its_recovery_marker', async () => {

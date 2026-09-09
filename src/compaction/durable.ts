@@ -9,7 +9,7 @@ import type {ConversationHistoryStore, PreparedCompactionPlan} from '@/persisten
 import {deriveContinuation} from './continuation.ts';
 import {groupConversationExchanges, projectExchangeGroup, selectCompactionGroups, type ExchangeGroup} from './grouping.ts';
 import {buildResummarizationRequest, buildSummarizationRequest} from './prompt.ts';
-import type {Breaker, BreakerClock} from './breaker.ts';
+import type {Breaker, BreakerClock, BreakerFault} from './breaker.ts';
 import type {CompactionConfig, CompactionPreparationOptions, CompactionResult, SummaryBatch} from './types.ts';
 import {CompactionSummaryEmptyError, CompactionUnfittableError} from './types.ts';
 
@@ -197,6 +197,20 @@ export async function runDurableCompaction(
   preparation: CompactionPreparationOptions | undefined,
 ): Promise<CompactionResult> {
   if (!options.breaker.allow()) return failure(history, 'breaker_open');
+  // Every admitted operation settles the breaker exactly once. Early exits that skip
+  // model work would otherwise strand the half-open probe and disable compaction
+  // permanently, so success and failure paths run through idempotent settle helpers.
+  let breakerSettled = false;
+  const settleFailure = (fault: BreakerFault): void => {
+    if (breakerSettled) return;
+    breakerSettled = true;
+    options.breaker.recordFailure(fault);
+  };
+  const settleSuccess = (): void => {
+    if (breakerSettled) return;
+    breakerSettled = true;
+    options.breaker.recordSuccess();
+  };
   const operationId = `compaction-${randomUUID()}`;
   // The whole operation is bounded by the earlier of the configured timeout and any
   // caller deadline; a distant caller deadline never extends the operation.
@@ -209,10 +223,13 @@ export async function runDurableCompaction(
     if (active.revision < 0) throw new Error('invalid active history revision');
     const sourceMessages = await options.historyStore.enumerateCompactionSources(conversationId, Math.max(history.length, options.config.keepRecent + 1));
     const grouped = groupConversationExchanges(sourceMessages);
-    if (grouped.error) return failure(history, 'history_stale_membership', operationId);
+    if (grouped.error) {
+      settleFailure('intervention');
+      return failure(history, 'history_stale_membership', operationId);
+    }
     const selected = selectCompactionGroups(grouped.groups, options.config.keepRecent);
     if (selected.source.length === 0) {
-      options.breaker.recordSuccess();
+      settleSuccess();
       return {history, batchesCreated: 0, messagesCompressed: 0, tokensEstimateBefore: tokenEstimate(history), tokensEstimateAfter: tokenEstimate(history), operationId, revision: active.revision};
     }
     const continuation = deriveContinuation(history, options.config.continuationMaxChars ?? 2000);
@@ -229,7 +246,10 @@ export async function runDurableCompaction(
       const content = await summarizeUnit(unit, options, deadline, signal, continuation.text);
       summarized.push({batch: batchFrom(unit.group, content), projected: unit.projected});
     }
-    if (isDeadline(deadline, options.clock) || signal?.aborted) return failure(history, signal?.aborted ? 'cancelled' : 'deadline_exceeded', operationId);
+    if (isDeadline(deadline, options.clock) || signal?.aborted) {
+      settleFailure('transient');
+      return failure(history, signal?.aborted ? 'cancelled' : 'deadline_exceeded', operationId);
+    }
     const batches = summarized.map((unit) => unit.batch);
     let displayBatches: ReadonlyArray<SummaryBatch> = batches;
     const archiveUnits: Array<SummaryUnit> = [...summarized];
@@ -252,7 +272,10 @@ export async function runDurableCompaction(
     }
     // A late-resolving provider response can arrive after the last boundary check;
     // the operation must still stop before any durable history replacement.
-    if (isDeadline(deadline, options.clock) || signal?.aborted) return failure(history, signal?.aborted ? 'cancelled' : 'deadline_exceeded', operationId);
+    if (isDeadline(deadline, options.clock) || signal?.aborted) {
+      settleFailure('transient');
+      return failure(history, signal?.aborted ? 'cancelled' : 'deadline_exceeded', operationId);
+    }
     const clipContent = `[Context Summary — operationId:${operationId} — ${selected.source.reduce((sum, group) => sum + group.messages.length, 0)} messages compressed across 1 compaction cycle]\n${displayBatches.map((batch) => `[Batch depth ${batch.depth} — ${batch.startTime.toISOString()} to ${batch.endTime.toISOString()}]\n${batch.content}`).join('\n\n')}${continuation.text ? `\n\n${continuation.text}` : ''}`;
     const archiveBlocks = archiveUnits.map((unit, index) => ({owner: conversationId, label: `compaction-batch-${conversationId}-${operationId}-${index}`, content: archiveContent(unit, operationId), tier: 'archival' as const}));
     const sourceIds = selected.source.flatMap((group) => group.messages.map((message) => message.id));
@@ -267,25 +290,25 @@ export async function runDurableCompaction(
       supersedesOperationId: previousOperationId,
     };
     const committed = await options.historyStore.commitCompaction(plan);
-    options.breaker.recordSuccess();
+    settleSuccess();
     return {history: committed.history.messages, batchesCreated: batches.length, messagesCompressed: sourceIds.length, tokensEstimateBefore: tokenEstimate(history), tokensEstimateAfter: tokenEstimate(committed.history.messages), operationId, archiveIds: committed.receipt.sourceArchiveIds, provenanceRefs: [committed.receipt.operationId], revision: committed.receipt.newRevision};
   } catch (error) {
-    if (error instanceof CompactionUnfittableError) { options.breaker.recordFailure('unfittable'); return failure(history, 'unfittable', operationId); }
-    if (error instanceof CompactionSummaryEmptyError) { options.breaker.recordFailure('transient'); return failure(history, 'summary_empty', operationId); }
-    if (isCancelled(error)) { options.breaker.recordFailure('transient'); return failure(history, 'cancelled', operationId); }
-    if (error instanceof ModelError && error.code === 'TIMEOUT') { options.breaker.recordFailure('transient'); return failure(history, 'deadline_exceeded', operationId); }
+    if (error instanceof CompactionUnfittableError) { settleFailure('unfittable'); return failure(history, 'unfittable', operationId); }
+    if (error instanceof CompactionSummaryEmptyError) { settleFailure('transient'); return failure(history, 'summary_empty', operationId); }
+    if (isCancelled(error)) { settleFailure('transient'); return failure(history, 'cancelled', operationId); }
+    if (error instanceof ModelError && error.code === 'TIMEOUT') { settleFailure('transient'); return failure(history, 'deadline_exceeded', operationId); }
     const code = errorCode(error);
-    if (code === 'history_stale_revision') { options.breaker.recordFailure('transient'); return failure(history, 'history_stale_revision', operationId); }
-    if (code === 'history_stale_membership' || code === 'history_membership_mismatch') { options.breaker.recordFailure('intervention'); return failure(history, 'history_stale_membership', operationId); }
+    if (code === 'history_stale_revision') { settleFailure('transient'); return failure(history, 'history_stale_revision', operationId); }
+    if (code === 'history_stale_membership' || code === 'history_membership_mismatch') { settleFailure('intervention'); return failure(history, 'history_stale_membership', operationId); }
     if (code === 'history_state_unknown') {
-      options.breaker.recordFailure('intervention');
+      settleFailure('intervention');
       return failure(history, 'history_state_unknown', operationId, 'committed truth is unknown; reload trusted history before retrying');
     }
     if (code === 'committed_publication_failed') {
-      options.breaker.recordSuccess();
+      settleSuccess();
       return failure(history, 'history_state_unknown', operationId, 'commit receipt established; reload trusted history before retrying publication');
     }
-    options.breaker.recordFailure(isIntervention(error) ? 'intervention' : 'transient');
+    settleFailure(isIntervention(error) ? 'intervention' : 'transient');
     return failure(history, 'intervention_required', operationId);
   }
 }

@@ -367,6 +367,11 @@ export function createDenoExecutor(
         if (reason === 'cancelled') return makeResult(startTime, false, output, terminalError ?? 'execution cancelled', toolCallCount, unresolved.size > 0 ? 'outcome_unknown' : 'cancelled', unresolved);
         if (reason !== 'completed') return makeResult(startTime, false, output, terminalError ?? (stderrOutput.trim() || diagnostics.trim() || `sandbox execution failed (${reason})`), toolCallCount, unresolved.size > 0 ? 'outcome_unknown' : 'error', unresolved);
         if (!output.trim() && stderrOutput.trim()) return makeResult(startTime, false, '', stderrOutput.trim(), toolCallCount, 'error', unresolved);
+        if (unresolved.size > 0) {
+          // A clean subprocess exit with unresolved host calls is still an uncertain
+          // effect: the sandbox finished, but admitted tool work never reported back.
+          return makeResult(startTime, false, output, terminalError ?? 'execution completed with unresolved host tool calls', toolCallCount, 'outcome_unknown', unresolved);
+        }
         return makeResult(startTime, processExitCode === 0 || processExitCode === null, output, processExitCode === 0 || processExitCode === null ? null : `sandbox process exited with code ${processExitCode}`, toolCallCount, 'success', unresolved);
       } catch (error) {
         close('protocol_error', error instanceof Error ? error.message : 'unknown runtime error');

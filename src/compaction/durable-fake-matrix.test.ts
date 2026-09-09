@@ -260,4 +260,40 @@ describe('Phase 4 durable compactor fake-level matrices', () => {
     // Zero durable commits after cancellation, even with a resolved recursive summary.
     expect(await activeSourceIds(historyStore, conversationId)).toEqual(before);
   });
+
+  it('half_open_probe_settles_on_late_cancellation_instead_of_stranding', async () => {
+    const controller = new AbortController();
+    let modelCalls = 0;
+    const persistence = createInMemoryPersistence();
+    const historyStore = createConversationHistoryStore(persistence);
+    const conversationId = `breaker-probe-${crypto.randomUUID()}`;
+    await historyStore.append(message('source-user', conversationId, 'user', 'Build source', 1));
+    await historyStore.append(message('source-assistant', conversationId, 'assistant', 'working source', 2));
+    const model: ModelProvider = {
+      complete: async () => {
+        modelCalls += 1;
+        if (modelCalls === 1) throw new ModelError('TIMEOUT', 'transient', true);
+        if (modelCalls === 2) controller.abort();
+        return response('summary');
+      },
+      stream: async function* () { yield {type: 'message_stop', message: {stop_reason: 'end_turn'}}; },
+    };
+    const compactor = createCompactor({model, memory: memory(), persistence, historyStore, config: {chunkSize: 2, keepRecent: 0, maxSummaryTokens: 32, clipFirst: 0, clipLast: 0, prompt: null, maxRetries: 0, maxConsecutiveFailures: 1, cooldownMs: 20}, modelName: 'fake'});
+
+    // Failure 1 opens the breaker.
+    const first = await compactor.compress([], conversationId);
+    expect(first.failureCode).toBe('deadline_exceeded');
+    expect(compactor.status?.().breaker.state).toBe('OPEN');
+    // After cooldown the half-open probe takes the late-cancellation early return;
+    // it must still settle the breaker instead of stranding probeInFlight forever.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const second = await compactor.compress([], conversationId, {request: {signal: controller.signal}});
+    expect(second.failureCode).toBe('cancelled');
+    expect(compactor.status?.().breaker.state).toBe('OPEN');
+    // After another cooldown the breaker admits a fresh probe that succeeds.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const third = await compactor.compress([], conversationId);
+    expect(third.failed).not.toBe(true);
+    expect(compactor.status?.().breaker.state).toBe('CLOSED');
+  });
 });

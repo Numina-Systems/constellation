@@ -96,6 +96,13 @@ function toToolOutcome(output: string, isError: boolean, errorCode = 'tool_faile
   return {kind: 'error', code: errorCode, message: output.slice(0, 4096)};
 }
 
+/** Bounded outcome details describing unresolved host tool calls from a runtime run. */
+function unresolvedOutcomeDetails(result: {readonly unresolved_call_ids?: ReadonlyArray<string>; readonly unresolved_call_count?: number}): import('@/contracts/outcomes.ts').OutcomeDetails | undefined {
+  const ids = result.unresolved_call_ids ?? [];
+  if (ids.length === 0) return undefined;
+  return {unresolved_call_ids: ids.slice(0, 16).join(','), unresolved_call_count: ids.length};
+}
+
 function buildDynamicProviderMap(
   classified: ReadonlyArray<ClassifiedProvider> | undefined,
 ): ReadonlyMap<string, () => string | undefined> {
@@ -775,6 +782,8 @@ export function createAgent(
         let batchId: string | null = null;
         const recordedCallIds = new Set<string>();
         const startedCallIds = new Set<string>();
+        const transcriptPersistedCallIds = new Set<string>();
+        let unresolvedEffectReason: string | null = null;
         try {
           if (deps.integrityLifecycle) {
             try {
@@ -794,20 +803,45 @@ export function createAgent(
             }
             let toolResult: string;
             let toolOutcomeError: string | null = null;
+            // Typed runtime outcomes (cancelled / unresolved effects) override the
+            // boolean-derived mapping so uncertainty survives persistence and reload.
+            let runtimeOutcome: import('@/contracts/outcomes.ts').ToolOutcome | null = null;
             startedCallIds.add(toolUse.id);
 
           const startTime = Date.now();
           try {
             if (toolUse.name === 'execute_code') {
-              // Special case: code execution
+              // Special case: code execution. The turn signal/deadline bound the sandbox
+              // lifetime through the execution context, and the executor reports typed
+              // outcomes for cancellation and unresolved host calls.
               const code = String(toolUse.input['code']);
               const stubs = deps.registry.generateStubs();
-              const context = await deps.getExecutionContext?.();
+              const baseContext = await deps.getExecutionContext?.();
+              const context = {
+                ...(baseContext ?? {}),
+                signal: options?.signal ?? baseContext?.signal,
+                deadline: options?.deadline ?? baseContext?.deadline,
+              };
               const result = await ingressContext.run(true, () => deps.runtime.execute(code, stubs, context));
 
-              toolResult = result.success ? result.output : `Error: ${result.error ?? 'code execution failed'}`;
-              toolOutcomeError = result.success ? null : 'execute_code_failed';
-              recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? 'code execution failed'));
+              if (result.outcome === 'cancelled' || result.outcome === 'outcome_unknown') {
+                const message = result.outcome === 'cancelled'
+                  ? `execution cancelled: ${result.error ?? 'turn cancelled during code execution'}`
+                  : `execution outcome unknown: ${result.error ?? 'unresolved host tool calls'}`;
+                toolResult = `Error: ${message}`;
+                toolOutcomeError = null;
+                runtimeOutcome = result.outcome === 'cancelled'
+                  ? {kind: 'cancelled', code: 'cancelled', message, details: unresolvedOutcomeDetails(result)}
+                  : {kind: 'outcome_unknown', code: 'runtime_outcome_unknown', message, details: unresolvedOutcomeDetails(result)};
+                if (result.outcome === 'outcome_unknown') {
+                  unresolvedEffectReason = `${message} (unresolved calls: ${(result.unresolved_call_ids ?? []).join(', ') || 'unreported'})`;
+                }
+                recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, message);
+              } else {
+                toolResult = result.success ? result.output : `Error: ${result.error ?? 'code execution failed'}`;
+                toolOutcomeError = result.success ? null : 'execute_code_failed';
+                recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, result.success, result.success ? null : (result.error ?? 'code execution failed'));
+              }
             } else if (toolUse.name === 'checkpoint') {
               // Explicit checkpoints are deferred until this complete tool batch is durable.
               explicitCheckpointPending = true;
@@ -822,8 +856,9 @@ export function createAgent(
               toolResult = JSON.stringify({accepted: true, deferred: true});
               recordTrace('compact_context', toolUse.input, toolResult, Date.now() - startTime, true, null);
             } else {
-              // Regular tool dispatch
-              const result = await ingressContext.run(true, () => deps.registry.dispatch(toolUse.name, toolUse.input));
+              // Regular tool dispatch carries the turn signal/deadline so cooperative
+              // handlers can stop promptly instead of running past a cancelled turn.
+              const result = await ingressContext.run(true, () => deps.registry.dispatch(toolUse.name, toolUse.input, {signal: options?.signal, deadline: options?.deadline}));
               toolResult = result.output;
               toolOutcomeError = result.success ? null : (result.error ?? 'tool dispatch failed');
               recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
@@ -844,7 +879,7 @@ export function createAgent(
           }
 
           // Persist the typed tool outcome together with its correlated call.
-          const persistedOutcome = toToolOutcome(toolResult, toolOutcomeError !== null, toolOutcomeError ?? 'tool_failed');
+          const persistedOutcome = runtimeOutcome ?? toToolOutcome(toolResult, toolOutcomeError !== null, toolOutcomeError ?? 'tool_failed');
           await persistMessage({
             conversation_id: id,
             role: 'tool',
@@ -852,6 +887,7 @@ export function createAgent(
             tool_call_id: toolUse.id,
             tool_outcome: persistedOutcome,
           });
+          transcriptPersistedCallIds.add(toolUse.id);
 
           // Collect tool result for history (added after assistant message below)
           toolResults.push({
@@ -892,7 +928,28 @@ export function createAgent(
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
           if (batchId && deps.integrityLifecycle) {
+            // Backfill the durable transcript before anything else: a batch whose
+            // receipt reports complete must never leave assistant tool calls without
+            // correlated result rows, or the next turn hits EXCHANGE_CORRUPT instead
+            // of typed outcomes.
             let backfillFailed = false;
+            for (const toolUse of toolUseBlocks) {
+              if (transcriptPersistedCallIds.has(toolUse.id)) continue;
+              try {
+                await persistMessage({
+                  conversation_id: id,
+                  role: 'tool',
+                  content: reason,
+                  tool_call_id: toolUse.id,
+                  tool_outcome: startedCallIds.has(toolUse.id)
+                    ? {kind: 'outcome_unknown', code: 'outcome_persistence_failed', message: reason}
+                    : {kind: 'cancelled', code: 'cancelled', message: reason},
+                });
+                transcriptPersistedCallIds.add(toolUse.id);
+              } catch {
+                backfillFailed = true;
+              }
+            }
             for (const toolUse of toolUseBlocks) {
               if (recordedCallIds.has(toolUse.id)) continue;
               try {
@@ -944,6 +1001,27 @@ export function createAgent(
         for (const result of toolResults) {
           history.push(result);
         }
+
+        if (unresolvedEffectReason !== null) {
+          // Fail closed: an unresolved host effect may or may not have happened, so no
+          // further execution may run until trusted recovery reconciles it. The batch
+          // itself is complete and its outcome is durably typed as outcome_unknown.
+          recoveryRequired = true;
+          recoveryReason = unresolvedEffectReason;
+          recordTrace('execute_code', {}, 'unresolved host tool effect; halting turn for trusted recovery', 0, false, recoveryReason);
+          if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
+            try {
+              await deps.integrityLifecycle.markConversationRecoveryRequired(recoveryReason, 'unresolved-effect');
+            } catch {
+              // The in-memory latch remains fail-closed if the durable marker also fails.
+            }
+          }
+          throw new AgentError('RECOVERY_REQUIRED', `conversation ${id} requires trusted recovery after unresolved tool effect`, {
+            conversationId: id,
+            reason: recoveryReason,
+          }, {suggestion: 'reconcile unresolved tool effects through the trusted recovery accessor'});
+        }
+
         // A completed tool batch closes this admission boundary; the next provider request may admit once.
         compactionAdmittedAtBoundary = false;
         if (explicitCheckpointPending) {
@@ -1052,6 +1130,13 @@ export function createAgent(
             {cause: error instanceof Error ? error : undefined},
           );
         }
+        // Typed recovery markers survive generic backfill by design: the in-memory
+        // latch follows the durable state so a half-applied restore or unresolved
+        // effect keeps the conversation blocked until its own procedure reconciles it.
+        const state = await deps.integrityLifecycle.getRecoveryState();
+        recoveryRequired = state.required;
+        recoveryReason = state.reason;
+        return;
       }
       recoveryRequired = false;
     },

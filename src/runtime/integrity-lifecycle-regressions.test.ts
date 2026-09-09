@@ -369,7 +369,9 @@ describe('Phase 1 Package B named runtime regressions', () => {
 
     const result = await execution;
 
-    expect(result.success).toBe(true);
+    // A clean exit with an unresolved host call is an uncertain effect, not success.
+    expect(result.success).toBe(false);
+    expect(result.outcome).toBe('outcome_unknown');
     expect(result.output).toContain('drained before exit');
     expect(started).toEqual(['started']);
     expect(result.unresolved_call_ids).toEqual(['started']);

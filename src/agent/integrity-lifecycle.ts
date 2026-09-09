@@ -17,6 +17,8 @@ export type RecoveryState = Readonly<{
   readonly unresolvedCallIds: ReadonlyArray<string>;
 }>;
 
+export type RecoveryMarkerKind = 'restore' | 'compaction' | 'unresolved-effect';
+
 export type IntegrityLifecycle = Readonly<{
   beginBatch(callIds: ReadonlyArray<string>): Promise<string>;
   recordOutcome(batchId: string, callId: string, outcome: ToolOutcome): Promise<void>;
@@ -25,9 +27,10 @@ export type IntegrityLifecycle = Readonly<{
   markRecoveryRequired?: (batchId: string, reason: string) => Promise<void>;
   /**
    * Latch durable recovery-required state for a non-batch fault such as ambiguous
-   * compaction or an in-progress restore; returns the marker id for later completion.
+   * compaction, an in-progress restore, or an unresolved tool effect; returns the
+   * marker id for later completion. Markers are never cleared by generic backfill.
    */
-  markConversationRecoveryRequired?: (reason: string) => Promise<string>;
+  markConversationRecoveryRequired?: (reason: string, markerKind?: RecoveryMarkerKind) => Promise<string>;
   /** Complete exactly one recovery marker once the faulting operation fully finished. */
   completeRecoveryMarker?: (batchId: string) => Promise<void>;
   /** Request and consume coalesced deferred compaction at a completed-batch boundary. */
@@ -47,6 +50,8 @@ type BatchDetails = {
   readonly completed: boolean;
   readonly recoveryRequired?: boolean;
   readonly reason?: string;
+  /** Typed recovery marker; set batches are invisible to generic tool recovery. */
+  readonly markerKind?: RecoveryMarkerKind;
 };
 
 function parseDetails(value: unknown): BatchDetails | null {
@@ -69,6 +74,9 @@ function parseDetails(value: unknown): BatchDetails | null {
     completed: row['completed'] === true,
     recoveryRequired: row['recoveryRequired'] === true,
     reason: typeof row['reason'] === 'string' ? row['reason'] : undefined,
+    markerKind: row['markerKind'] === 'restore' || row['markerKind'] === 'compaction' || row['markerKind'] === 'unresolved-effect'
+      ? row['markerKind']
+      : undefined,
   };
 }
 
@@ -162,10 +170,12 @@ export function createIntegrityLifecycle(
     await writeBatch({...batch, recoveryRequired: true, reason});
   }
 
-  async function markConversationRecoveryRequired(reason: string): Promise<string> {
+  async function markConversationRecoveryRequired(reason: string, markerKind: RecoveryMarkerKind = 'compaction'): Promise<string> {
     // A synthetic empty batch keeps the recovery latch inside the existing receipt
-    // schema: getRecoveryState treats any unfinished batch as recovery-required, and
-    // recover() clears it once trusted backfill has acknowledged the conversation.
+    // schema: getRecoveryState treats any unfinished batch as recovery-required.
+    // Typed markers are invisible to recover(), so generic tool backfill can never
+    // clear a fault it does not actually reconcile.
+    const priorMarkers = (await readBatches()).filter((batch) => batch.markerKind === markerKind && (!batch.completed || batch.recoveryRequired));
     const batch: BatchDetails = {
       batchId: `recovery-marker-${randomUUID()}`,
       callIds: [],
@@ -173,8 +183,14 @@ export function createIntegrityLifecycle(
       completed: false,
       recoveryRequired: true,
       reason,
+      markerKind,
     };
     await writeBatch(batch);
+    // Latch the new marker before retiring same-kind predecessors so recovery-required
+    // never has an uncovered gap.
+    for (const previous of priorMarkers) {
+      await writeBatch({...previous, completed: true, recoveryRequired: false, reason: `superseded by marker ${batch.batchId}`});
+    }
     return batch.batchId;
   }
 
@@ -276,7 +292,10 @@ export function createIntegrityLifecycle(
 
   async function recover(callIds: ReadonlyArray<string>, reason = 'trusted maintenance backfill'): Promise<void> {
     const batches = await readBatches();
-    const unfinished = batches.filter((batch) => !batch.completed || batch.recoveryRequired);
+    // Typed recovery markers record faults generic tool backfill cannot reconcile
+    // (half-applied restores, ambiguous history, unresolved effects); only their own
+    // completion paths or a deliberately typed procedure may clear them.
+    const unfinished = batches.filter((batch) => (!batch.completed || batch.recoveryRequired) && batch.markerKind === undefined);
     const repairedCallIds = await repairOrphanedToolResults(reason);
     if (unfinished.length === 0) return;
     const requested = new Set([...callIds, ...repairedCallIds]);

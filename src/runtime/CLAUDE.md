@@ -13,7 +13,7 @@ Executes agent-generated TypeScript in a Deno subprocess with bounded lifetime, 
   - Defaults are `max_code_size=51200` bytes, `max_output_size=1048576` decoded output bytes, `code_timeout=60000` ms, and `max_tool_calls_per_exec=25`.
   - Raw stream defaults are `max_stdout_bytes=4194304`, `max_stderr_bytes=65536`, and `max_ipc_frame_bytes=1048576`. Raw stdout includes protocol traffic; limits are counted before UTF-8 decoding or concatenation.
   - Unterminated/oversized frames, malformed nonempty IPC, protocol overflow, timeout, and cancellation close one execution-local `OPEN -> CLOSING -> CLOSED` lifecycle. No queued host call starts after closure.
-  - Already-started uncancellable calls are reported as `outcome_unknown` with unresolved call IDs. The runtime does not roll them back or retry them automatically.
+  - Already-started uncancellable calls are reported as `outcome_unknown` with unresolved call IDs. The runtime does not roll them back or retry them automatically. A clean subprocess exit with unresolved host calls also reports `outcome_unknown` (and not success), because admitted tool work never reported back.
   - Diagnostics are bounded to 2,000 bytes and cleanup waits at most 100 ms after closure.
   - Granular Deno permissions use configured host/path/subprocess allowlists. `unrestricted=true` removes those allowlists but does not remove host-side resource limits.
   - Temporary scripts are cleaned up after execution.

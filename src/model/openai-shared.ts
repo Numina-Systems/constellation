@@ -12,6 +12,10 @@ import type {
 } from "./types.js";
 import { ModelError } from "./types.js";
 
+export function isOpenAIUserAbort(error: unknown): boolean {
+  return error instanceof OpenAI.APIUserAbortError;
+}
+
 export function normalizeToolDefinitions(
   tools: ReadonlyArray<ToolDefinition>
 ): Array<OpenAI.Chat.ChatCompletionTool> {
@@ -78,10 +82,15 @@ export function normalizeStopReason(
   return "stop_sequence";
 }
 
-export function normalizeUsage(usage: OpenAI.Completions.CompletionUsage): UsageStats {
+export function normalizeUsage(usage: OpenAI.Completions.CompletionUsage | null | undefined): UsageStats | null {
+  if (!usage) return null;
+  const details = usage.prompt_tokens_details as { cached_tokens?: number | null } | undefined;
+  const completionDetails = usage.completion_tokens_details as { reasoning_tokens?: number | null } | undefined;
   return {
     input_tokens: usage.prompt_tokens,
     output_tokens: usage.completion_tokens,
+    ...(details?.cached_tokens != null ? { cache_read_input_tokens: details.cached_tokens } : {}),
+    ...(completionDetails?.reasoning_tokens != null ? { reasoning_output_tokens: completionDetails.reasoning_tokens } : {}),
   };
 }
 

@@ -153,7 +153,7 @@ describe('MemoryManager', () => {
         expect(blocks[0]?.id).toBe(blockId);
 
         // Delete the block
-        await store.deleteBlock(blockId);
+        await store.deleteBlock(blockId, TEST_OWNER);
 
         // Verify it's removed from the list
         blocks = await manager.getWorkingBlocks();

@@ -15,6 +15,8 @@ import type {
 } from "./types.js";
 import { ModelError, type StreamEvent } from "./types.js";
 import { callWithRetry } from "./retry.js";
+import { composeCancellation, isTimeoutCancellation } from "./cancellation.js";
+import { normalizeOllamaUsage } from "./usage.js";
 
 // Internal types for Ollama API contract
 type OllamaMessage = {
@@ -230,10 +232,7 @@ export function normalizeResponse(response: OllamaChatResponse): ModelResponse {
   return {
     content,
     stop_reason: normalizeStopReason(response),
-    usage: {
-      input_tokens: response.prompt_eval_count ?? 0,
-      output_tokens: response.eval_count ?? 0,
-    },
+    usage: normalizeOllamaUsage(response.prompt_eval_count, response.eval_count) ?? { input_tokens: 0, output_tokens: 0 },
     reasoning_content: response.message.thinking ?? null,
   };
 }
@@ -368,18 +367,19 @@ export async function* mapChunksToStreamEvents(
   let contentStarted = false;
   let blockIndex = 0;
   let lastChunk: OllamaStreamChunk | null = null;
+  let finalUsage = null as ReturnType<typeof normalizeOllamaUsage>;
 
   // Emit MessageStart
   yield {
     type: "message_start",
     message: {
       id: crypto.randomUUID(),
-      usage: { input_tokens: 0, output_tokens: 0 },
     },
   };
 
   for await (const chunk of chunks) {
     lastChunk = chunk;
+    finalUsage = normalizeOllamaUsage(chunk.prompt_eval_count, chunk.eval_count) ?? finalUsage;
 
     // Handle thinking content
     if (chunk.message.thinking) {
@@ -463,7 +463,7 @@ export async function* mapChunksToStreamEvents(
 
   yield {
     type: "message_stop",
-    message: { stop_reason: stopReason },
+    message: { stop_reason: stopReason, ...(finalUsage ? { usage: finalUsage } : {}) },
   };
 }
 
@@ -474,6 +474,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
 
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
+      const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
       return callWithRetry(
         async () => {
           const ollamaRequest = buildOllamaRequest(request, false);
@@ -483,7 +484,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(ollamaRequest),
-              ...(request.timeout != null ? { signal: AbortSignal.timeout(request.timeout) } : {}),
+              signal: cancellation.signal,
             });
 
             if (!response.ok) {
@@ -505,12 +506,15 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             throw error;
           }
         },
-        isRetryableOllamaError
-      );
+        isRetryableOllamaError,
+        undefined,
+        { signal: cancellation.signal, deadline: request.deadline }
+      ).finally(() => cancellation.dispose());
     },
 
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
       const ollamaRequest = buildOllamaRequest(request, true);
+      const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
 
       const response = await callWithRetry(
         async () => {
@@ -519,7 +523,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(ollamaRequest),
-              ...(request.timeout != null ? { signal: AbortSignal.timeout(request.timeout) } : {}),
+              signal: cancellation.signal,
             });
 
             if (!res.ok) {
@@ -529,7 +533,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
 
             return res;
           } catch (error) {
-            if (error instanceof DOMException && error.name === "TimeoutError") {
+            if (isTimeoutCancellation(cancellation.signal, cancellation.deadline)) {
               throw new ModelError(
                 "TIMEOUT",
                 "request timed out",
@@ -537,22 +541,46 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
                 { provider: "ollama" }
               );
             }
+            if (cancellation.signal.aborted) {
+              throw new ModelError(
+                "CANCELLED",
+                "request cancelled",
+                false,
+                { provider: "ollama" }
+              );
+            }
             throw error;
           }
         },
-        isRetryableOllamaError
+        isRetryableOllamaError,
+        undefined,
+        { signal: cancellation.signal, deadline: cancellation.deadline }
       );
 
-      if (!response.body) {
-        throw new ModelError(
-          "INVALID_RESPONSE",
-          "no response body for streaming",
-          false,
-          { provider: "ollama" }
-        );
+      try {
+        if (!response.body) {
+          throw new ModelError(
+            "INVALID_RESPONSE",
+            "no response body for streaming",
+            false,
+            { provider: "ollama" }
+          );
+        }
+
+        yield* mapChunksToStreamEvents(parseNDJSON(response.body));
+      } catch (error) {
+        if (isTimeoutCancellation(cancellation.signal, cancellation.deadline)) {
+          throw new ModelError("TIMEOUT", "request timed out", true, { provider: "ollama" });
+        }
+        if (cancellation.signal.aborted) {
+          throw new ModelError("CANCELLED", "request cancelled", false, { provider: "ollama" });
+        }
+        throw error;
+      } finally {
+        await response.body?.cancel().catch(() => undefined);
+        cancellation.dispose();
       }
 
-      yield* mapChunksToStreamEvents(parseNDJSON(response.body));
     },
   };
 }

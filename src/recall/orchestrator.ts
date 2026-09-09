@@ -10,6 +10,7 @@ import type { ModelProvider } from '@/model/types.js';
 import type { SearchStore } from '@/search/store.js';
 import type { EmbeddingProvider } from '@/embedding/types.js';
 import type { TraceRecorder } from '@/reflexion/types.js';
+import type { ExecutionOptions } from '@/contracts/execution.ts';
 import type { RecallResult } from './types.js';
 import { decomposeMessage } from './decomposer.js';
 import { retrieveContext } from './retrieve.js';
@@ -25,6 +26,8 @@ export type RecallDeps = {
   readonly owner?: string;
   readonly conversationId?: string;
   readonly coreLabels?: ReadonlyArray<string>;
+  /** Caller-owned cancellation/deadline forwarded to decomposition. */
+  readonly executionOptions?: ExecutionOptions;
 };
 
 /**
@@ -53,7 +56,7 @@ export async function performRecall(
 
   if (deps.model && deps.modelName) {
     // Try to decompose message using model
-    const modelDecomposition = await decomposeMessage(message, deps.model, deps.modelName);
+    const modelDecomposition = await decomposeMessage(message, deps.model, deps.modelName, deps.executionOptions);
 
     // Check if decomposition signals failure (empty queries AND entities)
     if (modelDecomposition.queries.length === 0 && modelDecomposition.entities.length === 0) {

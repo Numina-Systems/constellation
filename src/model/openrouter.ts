@@ -10,8 +10,10 @@ import type {
 } from "./types.js";
 import { ModelError } from "./types.js";
 import { callWithRetry } from "./retry.js";
+import { buildCancellationRequestOptions, composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import type { ServerRateLimitSync } from "../rate-limit/types.js";
 import {
+  isOpenAIUserAbort,
   normalizeMessages,
   normalizeToolDefinitions,
   normalizeContentBlocks,
@@ -99,6 +101,7 @@ function buildRequestBody(
 
   if (isStreaming) {
     body["stream"] = true;
+    if (config.stream_usage !== false) body["stream_options"] = { include_usage: true };
   }
 
   // Add OpenRouter provider routing
@@ -198,6 +201,7 @@ export function createOpenRouterAdapter(
 
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
+      const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
       const callId = Symbol("complete");
       currentCallId = callId;
 
@@ -208,12 +212,18 @@ export function createOpenRouterAdapter(
 
             return await client.chat.completions.create(
               body as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-              ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+              ...(request.timeout != null || request.signal != null || request.deadline != null
+                ? [buildCancellationRequestOptions(cancellation)]
+                : []),
             );
           } catch (error) {
+            if (isOpenAIUserAbort(error)) {
+              const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
+              throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "openrouter" });
+            }
             classifyError(error);
           }
-        }, isRetryableError);
+        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: request.deadline });
 
         const choice = response.choices?.[0];
         if (!choice) {
@@ -226,12 +236,7 @@ export function createOpenRouterAdapter(
           );
         }
 
-        const usage = response.usage ?? {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-        };
-
+        const usage = normalizeUsage(response.usage) ?? { input_tokens: 0, output_tokens: 0 };
         // OpenRouter extends the OpenAI message type with reasoning_content field.
         // The OpenAI SDK types don't include this field, so we cast through unknown
         // to safely extract it without TypeScript errors.
@@ -240,8 +245,8 @@ export function createOpenRouterAdapter(
         )["reasoning_content"] as string | null | undefined;
 
         extractAndLogHeaders(request.model, {
-          input_tokens: usage.prompt_tokens,
-          output_tokens: usage.completion_tokens,
+          input_tokens: usage.input_tokens,
+          output_tokens: usage.output_tokens,
         }, callId);
 
         return {
@@ -250,7 +255,7 @@ export function createOpenRouterAdapter(
             choice.message.tool_calls
           ),
           stop_reason: normalizeStopReason(choice.finish_reason),
-          usage: normalizeUsage(usage as OpenAI.Completions.CompletionUsage),
+          usage,
           reasoning_content: reasoningContent ?? null,
         };
       } finally {
@@ -259,9 +264,11 @@ export function createOpenRouterAdapter(
     },
 
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+      const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
       const callId = Symbol("stream");
       currentCallId = callId;
 
+      let activeStream: { readonly controller: AbortController } | null = null;
       try {
         const stream = await callWithRetry(async () => {
           try {
@@ -269,17 +276,26 @@ export function createOpenRouterAdapter(
 
             return await client.chat.completions.create(
               body as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
-              ...(request.timeout != null ? [{ timeout: request.timeout }] : []),
+              ...(request.timeout != null || request.signal != null || request.deadline != null
+                ? [buildCancellationRequestOptions(cancellation)]
+                : []),
             );
           } catch (error) {
+            if (isOpenAIUserAbort(error)) {
+              const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
+              throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "openrouter" });
+            }
             classifyError(error);
           }
-        }, isRetryableError);
+        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
+        activeStream = stream;
 
         // Log cost from initial response headers (captured by custom fetch)
         extractAndLogHeaders(request.model, { input_tokens: 0, output_tokens: 0 }, callId);
 
         let messageId = "";
+        let finalUsage = null as ReturnType<typeof normalizeUsage>;
+        let finalStopReason: ReturnType<typeof normalizeStopReason> = "end_turn";
         // TODO: toolCallMap is overloaded for text block tracking — introduce separate textBlockStarted flag (fix in both openrouter.ts and openai-compat.ts)
         const toolCallMap = new Map<number, { name: string; arguments: string }>();
 
@@ -291,14 +307,12 @@ export function createOpenRouterAdapter(
               type: "message_start",
               message: {
                 id: messageId,
-                usage: {
-                  input_tokens: 0,
-                  output_tokens: 0,
-                },
+                // Provider usage is absent until an explicit usage chunk arrives.
               },
             };
           }
 
+          finalUsage = normalizeUsage(event.usage) ?? finalUsage;
           const choice = event.choices[0];
           if (!choice) continue;
 
@@ -379,16 +393,22 @@ export function createOpenRouterAdapter(
           }
 
           // Handle finish reason
-          if (choice.finish_reason) {
-            yield {
-              type: "message_stop",
-              message: {
-                stop_reason: normalizeStopReason(choice.finish_reason),
-              },
-            };
-          }
+          if (choice.finish_reason) finalStopReason = normalizeStopReason(choice.finish_reason);
         }
+        if (cancellation.signal.aborted) {
+          const timedOut = isTimeoutCancellation(cancellation.signal, cancellation.deadline);
+          throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "openrouter" });
+        }
+        yield { type: "message_stop", message: { stop_reason: finalStopReason, ...(finalUsage ? { usage: finalUsage } : {}) } };
+      } catch (error) {
+        if (cancellation.signal.aborted || isOpenAIUserAbort(error)) {
+          const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
+          throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "openrouter" });
+        }
+        throw error;
       } finally {
+        activeStream?.controller.abort();
+        cancellation.dispose();
         currentCallId = null;
       }
     },

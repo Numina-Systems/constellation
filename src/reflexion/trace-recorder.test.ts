@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { createPostgresProvider } from '../persistence/postgres.ts';
 import { createTraceRecorder } from './trace-recorder.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 let recorder: ReturnType<typeof createTraceRecorder>;
 
@@ -15,12 +14,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('TraceRecorder', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence;
     await cleanupTables();
 
     recorder = createTraceRecorder(persistence);
@@ -31,7 +26,7 @@ describe('TraceRecorder', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('AC2.1: Record trace with all fields', () => {

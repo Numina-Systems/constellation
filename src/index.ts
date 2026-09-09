@@ -11,7 +11,8 @@ import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { BskyAgent } from '@atproto/api';
 import { loadConfig } from '@/config/config';
-import { createPostgresProvider, createMessageStore } from '@/persistence';
+import type { AppConfig } from '@/config/schema';
+import { createPostgresProvider, createMessageStore, createConversationHistoryStore } from '@/persistence';
 import { createModelProvider } from '@/model/factory';
 import { createEmbeddingProvider } from '@/embedding/factory';
 import { createPostgresMemoryStore } from '@/memory/postgres-store';
@@ -23,7 +24,6 @@ import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createPostgresSecretStore, createSecretResolver } from '@/secrets';
 import { createSecretTools } from '@/tool/builtin/secrets';
 import { createDenoExecutor } from '@/runtime/executor';
-import { createAgent } from '@/agent/agent';
 import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
@@ -89,8 +89,9 @@ import type { TraceStore } from '@/reflexion';
 import type { ContextProvider, ClassifiedProvider, CheckpointAgentState, CheckpointTrigger, SessionCheckpoint } from '@/agent';
 import { createDataSourceRegistry } from '@/extensions/data-source-registry';
 import type { DataSourceRegistration, DataSourceRegistry } from '@/extensions/data-source';
-import { createMcpClient, createMcpToolProvider, mcpPromptsToSkills, resolveServerConfigEnv, createMcpInstructionsProvider, formatMcpStartupSummary } from '@/mcp';
+import { connectMcpServers, createMcpClient, createMcpInstructionsProvider, createMcpToolProvider, formatMcpStartupSummary, mcpPromptsToSkills, publishMcpRegistrations, resolveServerConfigEnv } from '@/mcp';
 import type { McpClient } from '@/mcp';
+import type { McpToolRegistration } from '@/mcp/types.ts';
 import { createRecallContextProvider } from '@/recall/index.js';
 import { buildDiarySection } from '@/diary';
 import { createShellSession } from '@/shell/index';
@@ -98,7 +99,7 @@ import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
 import type { ShellSession } from '@/shell/types';
 import { createCheckpointStore } from '@/persistence/checkpoint-store.ts';
 import { performCheckpoint, type CheckpointDependencies } from '@/agent/checkpoint-create.ts';
-import { restoreFromCheckpoint, type RestorationDependencies, type RestorationResult } from '@/agent/checkpoint-restore.ts';
+import { type RestorationDependencies, type RestorationResult } from '@/agent/checkpoint-restore.ts';
 import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
 import { createLoopDetector } from '@/loop-detection/index.js';
 import type { LoopDetectionConfig } from '@/loop-detection/types.js';
@@ -108,17 +109,85 @@ import { createIngestor } from '@/ingest';
 import { createIngestTool } from '@/tool/builtin/ingest';
 import { createArchivistPipeline } from '@/archivist';
 import type { ArchivistPipeline } from '@/archivist';
+import { createCompositionSeam } from '@/composition-seam.ts';
+import { createIntegrityLifecycle } from '@/agent/integrity-lifecycle.ts';
 
 const AGENT_OWNER = 'spirit';
 
+/** Build the durable compaction settings from validated application configuration. */
+export function buildCompactionConfig(config: AppConfig): CompactionConfig {
+  const summarization = config.summarization;
+  return {
+    chunkSize: summarization?.chunk_size ?? 20,
+    keepRecent: summarization?.keep_recent ?? 5,
+    maxSummaryTokens: summarization?.max_summary_tokens ?? 1024,
+    clipFirst: summarization?.clip_first ?? 2,
+    clipLast: summarization?.clip_last ?? 2,
+    prompt: summarization?.prompt ?? null,
+    scoring: summarization ? {
+      roleWeightSystem: summarization.role_weight_system,
+      roleWeightUser: summarization.role_weight_user,
+      roleWeightAssistant: summarization.role_weight_assistant,
+      recencyDecay: summarization.recency_decay,
+      questionBonus: summarization.question_bonus,
+      toolCallBonus: summarization.tool_call_bonus,
+      keywordBonus: summarization.keyword_bonus,
+      importantKeywords: summarization.important_keywords,
+      contentLengthWeight: summarization.content_length_weight,
+    } : undefined,
+    timeout: summarization?.compaction_timeout ?? 120000,
+    maxRetries: summarization?.compaction_max_retries ?? 2,
+    maxChunkTokens: summarization?.max_chunk_tokens,
+    maxConsecutiveFailures: summarization?.max_consecutive_failures ?? 3,
+    cooldownMs: summarization?.cooldown_ms ?? 60000,
+    contextWindow: summarization?.context_window,
+    safetyMargin: summarization?.safety_margin,
+  };
+}
+
+/** Side-effect-free composition helpers for factory-level tests and later startup wiring. */
+export const COMPOSITION_SEAM = createCompositionSeam();
+
+/** Production agent construction is routed through the injected composition seam. */
+export const createProductionAgent = COMPOSITION_SEAM.createAgent;
+
 export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse', 'subconscious-introspection'] as const;
+
+export type CompactionRecoveryAction = (command: string) => Promise<string | null>;
 
 type InteractionLoopDeps = {
   agent: Agent;
   memory: MemoryManager;
   persistence: PersistenceProvider;
   readline: readline.Interface;
+  compactionRecovery?: CompactionRecoveryAction;
 };
+
+/**
+ * Trusted, serialized operator recovery action for the compaction breaker.
+ * It only inspects/resets the injected compactor through the composition seam;
+ * it has no model or tool access and cannot be invoked by the agent.
+ */
+export function createCompactionRecoveryAction(compactor: import('@/compaction/types').Compactor): CompactionRecoveryAction {
+  let tail: Promise<void> = Promise.resolve();
+  return (command: string) => {
+    let result: string | null = null;
+    const run = tail.then(() => {
+      const normalized = command.trim().toLowerCase();
+      if (normalized === '/compaction status') {
+        const status = COMPOSITION_SEAM.getCompactionStatus(compactor);
+        result = status ? `compaction breaker: ${status.breaker.state} (failures=${status.consecutiveFailures}, intervention=${status.breaker.interventionRequired})` : 'compaction status unavailable';
+      } else if (normalized === '/compaction reset') {
+        COMPOSITION_SEAM.resetCompactionBreaker(compactor);
+        result = 'compaction breaker reset';
+      } else {
+        result = null;
+      }
+    });
+    tail = run.catch(() => undefined);
+    return run.then(() => result);
+  };
+}
 
 /**
  * Process pending mutations with provided user responses.
@@ -267,13 +336,23 @@ export function createShutdownHandler(
   mcpClients?: ReadonlyArray<McpClient>,
   shellSession?: ShellSession | null,
   checkpointFn?: () => Promise<string | null>,
+  agentShutdown?: () => Promise<void>,
 ): () => Promise<void> {
   let shuttingDown = false;
   return async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\nShutting down...');
-    if (checkpointFn) {
+    if (agentShutdown) {
+      try {
+        await agentShutdown();
+      } catch (error) {
+        console.warn('[agent] shutdown drain failed:', error instanceof Error ? error.message : String(error));
+      }
+    }
+    // The agent drain owns the shutdown checkpoint when available. Keep the
+    // callback fallback for legacy callers that do not provide an agent.
+    if (!agentShutdown && checkpointFn) {
       try {
         await checkpointFn();
       } catch (err) {
@@ -367,6 +446,13 @@ export async function processEventQueue(
  */
 export function createInteractionLoop(deps: InteractionLoopDeps): (input: string) => Promise<void> {
   return async (userInput: string) => {
+    if (deps.compactionRecovery) {
+      const recoveryResponse = await deps.compactionRecovery(userInput);
+      if (recoveryResponse !== null) {
+        process.stdout.write(`\n${recoveryResponse}\n\n`);
+        return;
+      }
+    }
     const response = await deps.agent.processMessage(userInput);
     process.stdout.write(`\n${response}\n\n`);
 
@@ -649,6 +735,7 @@ async function main(): Promise<void> {
 
   // Create message store (used for checkpoint restoration)
   const messageStore = createMessageStore(persistence);
+  const historyStore = createConversationHistoryStore(persistence);
 
   const registry = createToolRegistry();
 
@@ -657,7 +744,7 @@ async function main(): Promise<void> {
 
   const resumeId = resumeCheckpointId ?? config.agent.resume_checkpoint;
 
-  let loadedCheckpoint: {checkpoint: SessionCheckpoint; conversationId: string} | null = null;
+  let loadedCheckpoint: {checkpoint: SessionCheckpoint; conversationId: string; mode: 'explicit' | 'auto'} | null = null;
 
   if (resumeId) {
     const checkpoint = await checkpointStore.load(resumeId);
@@ -666,12 +753,12 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     console.log(`resuming from checkpoint ${resumeId} (conversation: ${checkpoint.conversationId})`);
-    loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId };
+    loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId, mode: 'explicit' };
   } else if (config.agent.auto_resume) {
     const checkpoint = await checkpointStore.loadLatest(AGENT_OWNER);
     if (checkpoint) {
-      console.log(`auto-resuming from checkpoint ${checkpoint.id} (conversation: ${checkpoint.conversationId})`);
-      loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId };
+      console.log(`auto-resuming durable active history for conversation ${checkpoint.conversationId} (checkpoint metadata: ${checkpoint.id})`);
+      loadedCheckpoint = { checkpoint, conversationId: checkpoint.conversationId, mode: 'auto' };
     } else {
       console.log('auto-resume enabled but no checkpoint found — starting fresh');
     }
@@ -680,6 +767,31 @@ async function main(): Promise<void> {
   // Generate conversation ID for main agent upfront so it can be shared with prediction tools
   // Use resumed conversation ID if available, otherwise generate a new one
   const mainConversationId = loadedCheckpoint?.conversationId ?? crypto.randomUUID();
+
+  // Startup selection is a read-only boundary: auto-resume reads the durable active
+  // projection, while explicit resume remains eligible for exact checkpoint restore.
+  const integrityLifecycle = createIntegrityLifecycle(persistence, mainConversationId, historyStore);
+  let startupSelection;
+  try {
+    startupSelection = await COMPOSITION_SEAM.selectStartup({
+      conversationId: mainConversationId,
+      historyStore,
+      autoResume: loadedCheckpoint?.mode === 'auto',
+      // Auto-resume uses the checkpoint only as conversation identity metadata;
+      // passing it here would incorrectly select explicit_restore and rewind durable state.
+      checkpoint: loadedCheckpoint?.mode === 'auto' ? null : (loadedCheckpoint?.checkpoint ?? null),
+      recovery: () => integrityLifecycle.getRecoveryState(),
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`failed to select startup state: ${errorMsg}`);
+    process.exit(1);
+    startupSelection = {mode: 'recovery_required' as const, conversationId: mainConversationId, history: null, checkpoint: null, recoveryReason: errorMsg};
+  }
+  if (startupSelection.mode === 'recovery_required') {
+    console.error(`startup refused: ${startupSelection.recoveryReason ?? 'conversation integrity recovery is required'}`);
+    process.exit(1);
+  }
 
   const memoryTools = createMemoryTools(memory);
   for (const tool of memoryTools) {
@@ -882,59 +994,72 @@ async function main(): Promise<void> {
   const mcpInstructionsProviders = new Map<string, ContextProvider>();
 
   if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
-    console.log(`[mcp] connecting to ${Object.keys(config.mcp.servers).length} server(s)...`);
+    const configuredClients: Array<McpClient> = Object.entries(config.mcp.servers).map(([serverName, rawServerConfig]) => {
+      const serverConfig = resolveServerConfigEnv(rawServerConfig, process.env);
+      return createMcpClient(serverName, serverConfig);
+    });
+    console.log(`[mcp] connecting to ${configuredClients.length} server(s)...`);
 
-    for (const [serverName, rawServerConfig] of Object.entries(config.mcp.servers)) {
+    const startup = await connectMcpServers(configuredClients);
+    mcpFailedServers.push(...startup.failed);
+
+    const stagedProviders = new Map<string, ReturnType<typeof createMcpToolProvider>>();
+    const stagedToolCounts = new Map<string, number>();
+    const stagedRegistrations: Array<McpToolRegistration> = [];
+    for (const client of startup.connected) {
+      const provider = createMcpToolProvider(client);
       try {
-        // Resolve env vars in config values
-        const serverConfig = resolveServerConfigEnv(rawServerConfig, process.env);
-
-        // Create and connect client
-        const client = createMcpClient(serverName, serverConfig);
-        await client.connect();
-        mcpClients.push(client);
-
-        // Discover and register tools
-        const provider = createMcpToolProvider(client);
-        const toolDefs = await provider.discover();
-        for (const def of toolDefs) {
-          registry.register({
-            definition: def,
-            handler: async (params) => provider.execute(def.name, params),
-          });
-        }
-        console.log(`[mcp:${serverName}] registered ${toolDefs.length} tool(s)`);
-
-        // Convert prompts to skills and inject
-        if (skillRegistry) {
-          const skills = await mcpPromptsToSkills(client);
-          if (skills.length > 0) {
-            await skillRegistry.injectSkills(skills);
-            console.log(`[mcp:${serverName}] injected ${skills.length} skill(s)`);
-          }
-        }
-
-        // Collect server instructions for context provider
-        const instructions = await client.getInstructions();
-        if (instructions) {
-          const mcpProvider = createMcpInstructionsProvider(serverName, instructions);
-          contextProviders.push(mcpProvider);
-          mcpInstructionsProviders.set(serverName, mcpProvider);
-        }
-
+        const registrations = await provider.discoverRegistrations();
+        stagedRegistrations.push(...registrations);
+        stagedProviders.set(client.serverName, provider);
+        stagedToolCounts.set(client.serverName, registrations.length);
       } catch (error) {
-        // AC6.3, AC6.4: Failed connection doesn't block startup
         const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`[mcp:${serverName}] failed to connect: ${errorMsg}`);
-        console.error(`[mcp] continuing without ${serverName}`);
-        mcpFailedServers.push({name: serverName, error: errorMsg});
+        await client.disconnect().catch(() => undefined);
+        mcpFailedServers.push({name: client.serverName, error: errorMsg});
+        console.error(`[mcp:${client.serverName}] failed during discovery: ${errorMsg}`);
+        console.error(`[mcp] continuing without ${client.serverName}`);
       }
     }
 
-    // Format and log summary using testable helper
-    const connectedNames = mcpClients.map(c => c.serverName);
-    const summary = formatMcpStartupSummary(connectedNames, mcpFailedServers);
-    console.log(`[mcp] ${summary}`);
+    try {
+      publishMcpRegistrations(registry, stagedRegistrations);
+    } catch (error) {
+      await Promise.allSettled(startup.connected.map((client) => client.disconnect()));
+      throw error;
+    }
+    for (const client of startup.connected) {
+      const provider = stagedProviders.get(client.serverName);
+      const toolCount = stagedToolCounts.get(client.serverName);
+      if (!provider || toolCount === undefined) continue;
+      mcpClients.push(client);
+      console.log(`[mcp:${client.serverName}] registered ${toolCount} tool(s)`);
+
+      if (skillRegistry) {
+        try {
+          const skills = await mcpPromptsToSkills(client);
+          if (skills.length > 0) {
+            await skillRegistry.injectSkills(skills);
+            console.log(`[mcp:${client.serverName}] injected ${skills.length} skill(s)`);
+          }
+        } catch (error) {
+          console.error(`[mcp:${client.serverName}] prompt discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      try {
+        const instructions = await client.getInstructions();
+        if (instructions) {
+          const mcpProvider = createMcpInstructionsProvider(client.serverName, instructions);
+          contextProviders.push(mcpProvider);
+          mcpInstructionsProviders.set(client.serverName, mcpProvider);
+        }
+      } catch (error) {
+        console.error(`[mcp:${client.serverName}] instruction discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    console.log(`[mcp] ${formatMcpStartupSummary(mcpClients.map((client) => client.serverName), mcpFailedServers)}`);
   }
 
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
@@ -1000,35 +1125,14 @@ async function main(): Promise<void> {
     return context;
   };
 
-  // Create compactor with configuration from config.summarization
-  const compactionConfig: CompactionConfig = {
-    chunkSize: config.summarization?.chunk_size ?? 20,
-    keepRecent: config.summarization?.keep_recent ?? 5,
-    maxSummaryTokens: config.summarization?.max_summary_tokens ?? 1024,
-    clipFirst: config.summarization?.clip_first ?? 2,
-    clipLast: config.summarization?.clip_last ?? 2,
-    prompt: config.summarization?.prompt ?? null,
-    scoring: config.summarization ? {
-      roleWeightSystem: config.summarization.role_weight_system,
-      roleWeightUser: config.summarization.role_weight_user,
-      roleWeightAssistant: config.summarization.role_weight_assistant,
-      recencyDecay: config.summarization.recency_decay,
-      questionBonus: config.summarization.question_bonus,
-      toolCallBonus: config.summarization.tool_call_bonus,
-      keywordBonus: config.summarization.keyword_bonus,
-      importantKeywords: config.summarization.important_keywords,
-      contentLengthWeight: config.summarization.content_length_weight,
-    } : undefined,
-    timeout: config.summarization?.compaction_timeout ?? 120000,
-    maxRetries: config.summarization?.compaction_max_retries ?? 2,
-    maxChunkTokens: config.summarization?.max_chunk_tokens,
-    maxConsecutiveFailures: config.summarization?.max_consecutive_failures ?? 3,
-  };
+  // Create compactor with configuration from validated application config.
+  const compactionConfig = buildCompactionConfig(config);
 
   const compactor = createCompactor({
     model: summarizationModel,
     memory,
     persistence,
+    historyStore,
     config: compactionConfig,
     modelName: config.summarization?.name ?? config.model.name,
   });
@@ -1189,13 +1293,15 @@ async function main(): Promise<void> {
     },
   };
 
-  // Restore from checkpoint if one was loaded (AC6)
+  // Explicit resume is the only startup mode that mutates history or memory. Auto-resume
+  // trusts the durable active projection selected above and never replays checkpoint state.
   let restoredState: RestorationResult | null = null;
-  if (loadedCheckpoint && loadedCheckpoint.checkpoint) {
+  if (startupSelection.mode === 'explicit_restore' && loadedCheckpoint?.checkpoint) {
     const restorationDeps: RestorationDependencies = {
       persistence,
       memory,
       messageStore,
+      historyStore,
       predictionStore,
       interestRegistry,
       recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
@@ -1203,27 +1309,41 @@ async function main(): Promise<void> {
       owner: AGENT_OWNER,
     };
     try {
-      restoredState = await restoreFromCheckpoint(loadedCheckpoint.checkpoint, restorationDeps);
-      // Initialize agent state from restoration (AC6.1-6.3)
+      restoredState = await COMPOSITION_SEAM.restoreCheckpoint(loadedCheckpoint.checkpoint, restorationDeps);
+      const active = await historyStore.readActive(mainConversationId);
       agentStateRef.current = {
         turnNumber: restoredState.turnNumber,
         toolRound: restoredState.toolRound,
-        messageIds: [],
+        messageIds: active.messages.map(message => message.id),
+        transcriptRevision: active.revision,
+        activeArchiveIds: loadedCheckpoint.checkpoint.version === 2 ? loadedCheckpoint.checkpoint.activeArchiveIds : [],
+        provenanceRefs: loadedCheckpoint.checkpoint.version === 2 ? loadedCheckpoint.checkpoint.provenanceRefs : [],
         compactionMeta: restoredState.compactionMeta,
       };
-      console.log(
-        `restored: ${restoredState.messageCount} messages, turn ${restoredState.turnNumber}`,
-      );
+      console.log(`restored exact history: ${active.messages.length} messages, revision ${active.revision}, turn ${restoredState.turnNumber}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error(`failed to restore checkpoint: ${errorMsg}`);
       process.exit(1);
     }
+  } else if (startupSelection.mode === 'auto_resume' && startupSelection.history) {
+    const active = startupSelection.history;
+    agentStateRef.current = {
+      turnNumber: 0,
+      toolRound: 0,
+      messageIds: active.messages.map(message => message.id),
+      transcriptRevision: active.revision,
+      activeArchiveIds: loadedCheckpoint?.checkpoint.version === 2 ? loadedCheckpoint.checkpoint.activeArchiveIds : [],
+      provenanceRefs: loadedCheckpoint?.checkpoint.version === 2 ? loadedCheckpoint.checkpoint.provenanceRefs : [],
+      compactionMeta: { lastCompactedIndex: -1, summaryCount: 0 },
+    };
+    console.log(`auto-resume selected ${active.messages.length} durable active messages at revision ${active.revision}`);
   }
 
   // Build checkpoint dependencies and bound checkpoint function
   const checkpointDeps: CheckpointDependencies = {
     checkpointStore,
+    persistence,
     memory,
     predictionStore,
     interestRegistry,
@@ -1271,12 +1391,13 @@ async function main(): Promise<void> {
     : undefined;
 
   // Step 2: Create agent with source instructions and classified providers
-  const agent = createAgent({
+  const agent = createProductionAgent({
     model,
     memory,
     registry,
     runtime,
     persistence,
+    historyStore,
     embedding,
     config: {
       max_tool_rounds: config.agent.max_tool_rounds,
@@ -1314,6 +1435,7 @@ async function main(): Promise<void> {
     summarizationModelName: config.summarization?.name,
     checkpointFn,
     checkpointStateRef: agentStateRef,
+    integrityLifecycle,
     loopDetector,
     diarySection,
   }, mainConversationId);
@@ -1336,7 +1458,7 @@ async function main(): Promise<void> {
       {name: 'introspection', provider: introspectionContextProvider, classification: 'dynamic'},
     ];
 
-    subconsciousAgent = createAgent({
+    subconsciousAgent = createProductionAgent({
       model,
       memory,
       registry,
@@ -1380,12 +1502,13 @@ Focus on knowledge quality, deduplication, cross-referencing, and organization.
 Report a brief summary of actions taken.`],
     ]);
 
-    archivistAgent = createAgent({
+    archivistAgent = createProductionAgent({
       model,
       memory,
       registry,
       runtime,
       persistence,
+      historyStore,
       embedding,
       config: { ...config.agent, max_tool_rounds: 3 },
       owner: AGENT_OWNER,
@@ -1928,6 +2051,7 @@ Report a brief summary of actions taken.`],
     memory,
     persistence,
     readline: rl,
+    compactionRecovery: createCompactionRecoveryAction(compactor),
   });
 
   // Set up graceful shutdown
@@ -1948,6 +2072,9 @@ Report a brief summary of actions taken.`],
     async () => {
       return checkpointFn('shutdown');
     },
+    agent.shutdown ? async () => {
+      await agent.shutdown!();
+    } : undefined,
   );
 
   process.on('SIGINT', shutdownHandler);

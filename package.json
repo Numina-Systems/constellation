@@ -7,6 +7,11 @@
     "start": "bun run src/index.ts",
     "build": "tsc --noEmit",
     "test": "bun test",
+    "test:unit": "bun test src/testing/phase0.test.ts src/persistence/phase0-transaction.test.ts src/tool/outcome.test.ts",
+    "test:integration-required": "bun test src/testing/integration-required.test.ts src/persistence/transaction-ac21.integration-required.test.ts src/memory/memory-delete.integration-required.test.ts src/persistence/conversation-history.integration-required.test.ts src/custom-tool/custom_tool_commit_ack_reconciliation.integration-required.test.ts src/agent/phase3.integration-required.test.ts src/compaction/compaction.integration-required.test.ts src/remediation.e2e.integration-required.test.ts",
+    "test:legacy-isolated": "bun test src/persistence/checkpoint-store.test.ts src/persistence/message-store.test.ts src/agent/history-loading.test.ts src/agent/checkpoint-restore.test.ts src/archivist/pipeline.test.ts src/integration/e2e.test.ts src/integration/mutations.test.ts src/integration/compaction.test.ts src/memory/postgres-store.test.ts src/skill/postgres-store.test.ts src/scheduler/postgres-scheduler.test.ts src/reflexion/prediction-store.test.ts src/reflexion/trace-recorder.test.ts src/activity/postgres-activity-manager.test.ts src/search/search.integration.test.ts src/search/domains/memory.test.ts src/search/domains/conversations.test.ts src/subconscious/persistence.test.ts",
+    "test:isolated": "bun run test:full-isolated",
+    "test:full-isolated": "bun run test:unit && bun test src/persistence/tx-nesting.test.ts && bun run test:legacy-isolated && bun run test:integration-required",
     "migrate": "bun run src/persistence/migrate.ts",
     "backfill-embeddings": "bun run src/scripts/backfill-embeddings.ts"
   },

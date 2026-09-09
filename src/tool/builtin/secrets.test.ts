@@ -43,6 +43,18 @@ describe('Secret Tools', () => {
       expect(storeData['x = 1; malicious(); const y']).toBeUndefined();
     });
 
+    test('rejects names reserved by runtime bindings', async () => {
+      const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
+      const setTool = tools.find((t) => t.definition.name === 'secret_set');
+
+      for (const key of ['Deno', 'output', 'console', '__callTool__']) {
+        const result = await setTool!.handler({ key, value: 'value' });
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('reserved by the execution environment');
+        expect(storeData[key]).toBeUndefined();
+      }
+    });
+
     test('rejects keys starting with digits', async () => {
       const tools = createSecretTools({ store: mockStore, owner: 'test-owner' });
       const setTool = tools.find((t) => t.definition.name === 'secret_set');

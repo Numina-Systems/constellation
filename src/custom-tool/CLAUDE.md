@@ -1,36 +1,39 @@
-# Custom Tool
+# Custom tool
 
-Last verified: 2026-05-17
+Last verified: 2026-09-09
 
 ## Purpose
-Provides runtime custom tool creation with persistence, registry integration, and Deno sandbox execution. Agents create tools dynamically via `create_tool` agent tool, which persists to PostgreSQL and immediately becomes callable.
+
+Creates, validates, persists, publishes, and executes owner-scoped custom tools without allowing malformed metadata or ambiguous database outcomes to poison the registry.
 
 ## Contracts
-- **Exposes**: `CustomToolDefinition` type (immutable tool definition with id, owner, name, description, parameters, code, timestamps), `CustomToolStore` port interface (create, update, delete, list, getByName with owner isolation), `createPostgresCustomToolStore(persistence)`, `CustomToolManager` interface (create, update, delete, list, loadAll), `createCustomToolManager(deps)`, `CustomToolManagerDeps` type
-- **Guarantees**: Tools are per-owner (owner isolation via unique constraint on (owner, name)). Custom tool names cannot conflict with built-in tools at creation time. Updates to code/parameters are reflected immediately in the registry via closure re-evaluation. Deleted tools are removed from registry and database. `loadAll()` skips conflicting tool names silently on startup.
-- **Expects**: `PersistenceProvider` with `custom_tools` table. `ToolRegistry` for integration. `CodeRuntime` for Deno execution. `SecretResolver` for accessing secrets in tool code.
+
+- **Exposes**: `CustomToolDefinition`, `CustomToolStore`, `CustomToolManager`, validation helpers, and PostgreSQL store.
+- **Guarantees**:
+  - Names are unique per owner and cannot conflict with built-ins or runtime/credential bindings. Identifiers, reserved words, duplicate parameters, types, required flags, enum shapes, and supplied JSON Schemas are validated without string/boolean coercion.
+  - A supplied full `inputSchema` is retained as dispatch authority; flat parameters are a compatibility projection. Nested objects/arrays, unions, integer values, and enums are validated without narrowing them to strings.
+  - Create/update/delete mutations serialize per manager, reserve names before publication, and publish validated executable definitions only after confirmed/reconciled commit. Every mutation has an operation receipt.
+  - Confirmed rollback preserves the prior callable definition. Commit-unknown or post-commit publication failure quarantines the affected name and blocks dispatch until trusted `loadAll()` recovery. The code does not treat a thrown commit acknowledgement as proof of rollback.
+  - `loadAll()` leaves malformed persisted rows intact, reports bounded quarantine reasons/counts, skips invalid rows, and continues loading valid tools. It skips built-in name conflicts without rewriting storage.
+  - Handlers inject `PARAMS`, resolve secrets through `SecretResolver`, and pass execution options to `CodeRuntime`; runtime unknown effects are not retried automatically.
+- **Expects**: migrated `custom_tools` persistence, `ToolRegistry`, `CodeRuntime`, `SecretResolver`, and an owner.
 
 ## Dependencies
-- **Uses**: `src/persistence/` (PostgreSQL queries for CRUD), `src/tool/types.js` (ToolParameter, ToolDefinition, Tool), `src/runtime/types.js` (CodeRuntime), `src/secrets/resolver.js` (SecretResolver for tool environment)
-- **Used by**: `src/index.ts` (composition root wiring), `src/tool/builtin/custom-tools.ts` (create_tool, list_tools, update_tool, delete_tool agent tools)
-- **Boundary**: Custom tool handlers are closures that receive parameters via PARAMS constant and return ToolResult. Secrets are resolved and passed to CodeRuntime.execute() in ExecutionContext.
 
-## Key Decisions
-- Port/adapter pattern: `CustomToolStore` port with PostgreSQL adapter for testability
-- Definition cache in manager: In-memory cache of tool definitions for fast handler access; updates invalidate the cache
-- Closure-based handlers: Each tool gets a closure handler that reads from definition cache and wraps code with PARAMS injection
-- Silent conflict skipping on loadAll(): Custom tools created before a built-in was added don't crash startup
-- Owner isolation: (owner, name) unique constraint enforces per-owner tool namespacing
+- **Uses**: persistence, registry/tool types, runtime, and secrets.
+- **Used by**: composition root and custom-tool built-in commands.
+- **Boundary**: SQL stays in `CustomToolStore`; registry publication follows durable transaction truth.
 
 ## Invariants
-- Tool names are unique per owner
-- Custom tool names cannot conflict with built-in tool names at creation time
-- Tool definitions are immutable once created (updated via update, deleted via delete)
-- Persisted tools are reloaded on startup via loadAll()
-- Parameters injected via PARAMS const in tool code
 
-## Key Files
-- `types.ts` -- `CustomToolDefinition` type and `CustomToolStore` port interface
-- `postgres-store.ts` -- PostgreSQL adapter for custom tool persistence
-- `index.ts` -- Barrel exports
-- `manager.ts` -- `CustomToolManager` orchestrating CRUD and registry integration
+- Definitions are immutable values; changes use serialized update/delete operations.
+- Quarantined names cannot be ordinary re-registered over.
+- Runtime binding rules are shared with secret injection and generated stubs.
+
+## Key files
+
+- `types.ts` -- definitions, store, and mutation outcomes.
+- `validation.ts` -- metadata, schema, identifier, and reserved-binding validation.
+- `manager.ts` -- serialized CRUD, receipts, quarantine, and registry publication.
+- `postgres-store.ts` -- owner-scoped durable mutations and reconciliation.
+- `index.ts` -- public exports.

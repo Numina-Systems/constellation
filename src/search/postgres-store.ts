@@ -60,6 +60,7 @@ export function createSearchStore(embeddingProvider: EmbeddingProvider): SearchS
       endTime: params.endTime,
       role: params.role,
       tier: params.tier,
+      history: params.history,
     };
 
     const resultLists = await Promise.all(targetDomains.map((domain) => domain.search(domainSearchParams)));

@@ -1,7 +1,7 @@
 // pattern: Imperative Shell
 
-import type { Tool, ToolParameter } from '../types.js';
-import type { CustomToolManager } from '@/custom-tool/index.js';
+import type {Tool} from '../types.js';
+import type {CustomToolManager} from '@/custom-tool/index.js';
 
 export function createCustomToolTools(manager: CustomToolManager): ReadonlyArray<Tool> {
   const createTool: Tool = {
@@ -16,20 +16,13 @@ export function createCustomToolTools(manager: CustomToolManager): ReadonlyArray
       ],
     },
     handler: async (params) => {
-      const name = params['name'] as string;
-      const description = params['description'] as string;
-      const rawParams = params['parameters'] as Array<Record<string, unknown>>;
-      const code = params['code'] as string;
-
-      const toolParams: Array<ToolParameter> = rawParams.map(p => ({
-        name: String(p['name']),
-        type: String(p['type']) as ToolParameter['type'],
-        description: String(p['description']),
-        required: Boolean(p['required']),
-      }));
-
       try {
-        const def = await manager.create({ name, description, parameters: toolParams, code });
+        const def = await manager.create({
+          name: params['name'],
+          description: params['description'],
+          parameters: params['parameters'],
+          code: params['code'],
+        });
         return { success: true, output: `Custom tool "${def.name}" created successfully. It is now callable.` };
       } catch (error) {
         return { success: false, output: '', error: error instanceof Error ? error.message : String(error) };
@@ -67,19 +60,12 @@ export function createCustomToolTools(manager: CustomToolManager): ReadonlyArray
       ],
     },
     handler: async (params) => {
-      const name = params['name'] as string;
+      const name = params['name'];
+      if (typeof name !== 'string') return {success: false, output: '', error: 'name must be a string'};
       const patch: Record<string, unknown> = {};
       if ('description' in params) patch['description'] = params['description'];
       if ('code' in params) patch['code'] = params['code'];
-      if ('parameters' in params) {
-        const rawParams = params['parameters'] as Array<Record<string, unknown>>;
-        patch['parameters'] = rawParams.map(p => ({
-          name: String(p['name']),
-          type: String(p['type']),
-          description: String(p['description']),
-          required: Boolean(p['required']),
-        }));
-      }
+      if ('parameters' in params) patch['parameters'] = params['parameters'];
 
       try {
         const updated = await manager.update(name, patch as Parameters<CustomToolManager['update']>[1]);

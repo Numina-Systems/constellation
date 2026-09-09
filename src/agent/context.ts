@@ -33,7 +33,16 @@ export async function buildMessages(
   history: ReadonlyArray<ConversationMessage>,
   memory: MemoryManager,
 ): Promise<Array<Message>> {
+  return (await buildMessagesWithCurrent(history, memory)).messages;
+}
+
+export async function buildMessagesWithCurrent(
+  history: ReadonlyArray<ConversationMessage>,
+  memory: MemoryManager,
+  currentMessageId?: string,
+): Promise<{readonly messages: Array<Message>; readonly currentMessage: Message | null}> {
   const messages: Array<Message> = [];
+  let currentMessage: Message | null = null;
 
   // Add working memory blocks as context message if available
   const workingBlocks = await memory.getWorkingBlocks();
@@ -87,8 +96,8 @@ export async function buildMessages(
           {
             type: 'tool_result' as const,
             tool_use_id: msg.tool_call_id || '',
-            content: msg.content,
-            is_error: msg.content.toLowerCase().includes('error'),
+            content: msg.tool_outcome?.kind === 'success' ? msg.tool_outcome.output : msg.content,
+            is_error: msg.tool_outcome !== undefined && msg.tool_outcome.kind !== 'success',
           },
         ],
       });
@@ -99,9 +108,10 @@ export async function buildMessages(
         content: msg.content,
       });
     }
+    if (msg.id === currentMessageId) currentMessage = messages.at(-1) ?? null;
   }
 
-  return messages;
+  return {messages, currentMessage};
 }
 
 /**
@@ -180,6 +190,43 @@ export function shouldCompress(
  * AC3.4: Drops oldest non-system messages first
  * AC3.6: Never truncates below minimum viable context (leading system + latest user, if user exists)
  */
+export function truncateExchangeGroups(
+  messages: ReadonlyArray<Message>,
+  modelMaxTokens: number,
+  overheadTokens: number,
+): Array<Message> {
+  const safeLimit = Math.floor(modelMaxTokens * 0.9);
+  const availableTokens = safeLimit - overheadTokens;
+  if (availableTokens <= 0) return extractMinimumContext(messages);
+  const groups: Array<Array<Message>> = [];
+  let current: Array<Message> = [];
+  for (const message of messages) {
+    if (message.role === 'user' && current.length > 0) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(message);
+  }
+  if (current.length > 0) groups.push(current);
+  const latest = groups.at(-1) ?? [];
+  const leading = groups[0]?.[0]?.role === 'system' ? groups.shift() ?? [] : [];
+  const kept: Array<Message> = [];
+  let tokens = estimateMessageTokens(leading) + estimateMessageTokens(latest);
+  for (let index = groups.length - 1; index >= 0; index--) {
+    const group = groups[index];
+    if (!group) continue;
+    const groupTokens = estimateMessageTokens(group);
+    if (tokens + groupTokens > availableTokens) break;
+    kept.unshift(...group);
+    tokens += groupTokens;
+  }
+  return [...leading, ...kept, ...latest];
+}
+
+function estimateMessageTokens(messages: ReadonlyArray<Message>): number {
+  return messages.reduce((sum, message) => sum + estimateTokens(typeof message.content === 'string' ? message.content : JSON.stringify(message.content)), 0);
+}
+
 export function truncateOldest(
   messages: ReadonlyArray<Message>,
   modelMaxTokens: number,

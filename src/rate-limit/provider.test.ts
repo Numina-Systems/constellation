@@ -499,6 +499,105 @@ describe('createRateLimitedProvider', () => {
     });
   });
 
+  describe('request lifetime during rate-limit acquisition', () => {
+    it('aborts while waiting for bucket refill and does not call the provider', async () => {
+      let calls = 0;
+      const provider: ModelProvider = {
+        complete: async () => {
+          calls += 1;
+          return {
+            content: [{ type: 'text' as const, text: 'response' }],
+            stop_reason: 'end_turn' as const,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+        stream: async function* () { /* no-op */ },
+      };
+      const rateLimited = createRateLimitedProvider(provider, {
+        requestsPerMinute: 100,
+        inputTokensPerMinute: 10000,
+        outputTokensPerMinute: 1,
+        minOutputReserve: 1,
+      });
+
+      await rateLimited.complete(createRequest('first'));
+      const controller = new AbortController();
+      const pending = rateLimited.complete({ ...createRequest('second'), signal: controller.signal });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
+      expect(calls).toBe(1);
+      expect(rateLimited.getStatus().queueDepth).toBe(0);
+    });
+
+    it('honors a deadline while queued behind the mutex', async () => {
+      let releaseFirst: () => void = () => {};
+      const firstFinished = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      let calls = 0;
+      const provider: ModelProvider = {
+        complete: async () => {
+          calls += 1;
+          if (calls === 1) await firstFinished;
+          return {
+            content: [{ type: 'text' as const, text: 'response' }],
+            stop_reason: 'end_turn' as const,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+        stream: async function* () { /* no-op */ },
+      };
+      const rateLimited = createRateLimitedProvider(provider, config);
+      const first = rateLimited.complete(createRequest('first'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const queued = rateLimited.complete({ ...createRequest('queued'), deadline: Date.now() + 20 });
+
+      await expect(queued).rejects.toMatchObject({ code: 'TIMEOUT' });
+      expect(calls).toBe(1);
+      releaseFirst();
+      await first;
+      expect(rateLimited.getStatus().queueDepth).toBe(0);
+    });
+
+    it('cancels a mutex waiter without blocking the next queued caller', async () => {
+      let releaseFirst: () => void = () => {};
+      const firstFinished = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      let calls = 0;
+      const provider: ModelProvider = {
+        complete: async () => {
+          calls += 1;
+          if (calls === 1) await firstFinished;
+          return {
+            content: [{ type: 'text' as const, text: 'response' }],
+            stop_reason: 'end_turn' as const,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+        stream: async function* () { /* no-op */ },
+      };
+      const rateLimited = createRateLimitedProvider(provider, config);
+      const first = rateLimited.complete(createRequest('first'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const controller = new AbortController();
+      const canceled = rateLimited.complete({ ...createRequest('canceled'), signal: controller.signal });
+      const next = rateLimited.complete(createRequest('next'));
+      controller.abort();
+      await expect(canceled).rejects.toMatchObject({ code: 'CANCELLED' });
+      releaseFirst();
+      await expect(first).resolves.toBeDefined();
+      await expect(next).resolves.toBeDefined();
+      expect(calls).toBe(2);
+      expect(rateLimited.getStatus().queueDepth).toBe(0);
+    });
+
+    it('leaves normal acquisition behavior unchanged', async () => {
+      const provider = createMockProvider();
+      const rateLimited = createRateLimitedProvider(provider, config);
+      await expect(rateLimited.complete({ ...createRequest(), deadline: Date.now() + 1000 })).resolves.toBeDefined();
+      expect(rateLimited.getStatus().queueDepth).toBe(0);
+    });
+  });
+
   describe('syncFromServer()', () => {
     it('AC4.2: overwrites RPM bucket capacity and remaining tokens', () => {
       const provider = createMockProvider();

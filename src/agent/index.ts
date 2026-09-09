@@ -15,6 +15,8 @@ export type {
   ClassifiedProvider,
 } from './types.ts';
 export { createAgent } from './agent.ts';
+export type { IntegrityLifecycle, RecoveryState, UnresolvedToolCall } from './integrity-lifecycle.ts';
+export { createIntegrityLifecycle } from './integrity-lifecycle.ts';
 export {
   buildSystemPrompt,
   buildMessages,
@@ -22,6 +24,7 @@ export {
   estimateOverheadTokens,
   shouldCompress,
   truncateOldest,
+  truncateExchangeGroups,
 } from './context.ts';
 export { createSchedulingContextProvider } from './scheduling-context.ts';
 export type { SnapshotMode, SnapshotResult, SnapshotState } from './snapshot.ts';

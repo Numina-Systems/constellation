@@ -16,7 +16,8 @@ import type {
   CheckpointAgentState,
   AgentCheckpointState,
 } from './checkpoint-types.ts';
-import type {CheckpointStore} from '@/persistence/checkpoint-store.ts';
+import {saveAndPruneCheckpoint, type CheckpointStore} from '@/persistence/checkpoint-store.ts';
+import type {PersistenceProvider} from '@/persistence/types.ts';
 import type {MemoryManager} from '@/memory/manager.ts';
 import type {PredictionStore} from '@/reflexion/types.ts';
 import type {InterestRegistry} from '@/subconscious/types.ts';
@@ -24,6 +25,8 @@ import type {RecallContextState} from '@/recall/context.ts';
 
 export type CheckpointDependencies = {
   readonly checkpointStore: CheckpointStore;
+  /** When supplied, save and prune share one transaction. */
+  readonly persistence?: PersistenceProvider;
   readonly memory: MemoryManager;
   readonly predictionStore?: PredictionStore;
   readonly interestRegistry?: InterestRegistry;
@@ -99,6 +102,9 @@ export async function performCheckpoint(
       turnNumber: agentState.turnNumber,
       toolRound: agentState.toolRound,
       messageIds: agentState.messageIds,
+      transcriptRevision: agentState.transcriptRevision,
+      activeArchiveIds: agentState.activeArchiveIds,
+      provenanceRefs: agentState.provenanceRefs,
       workingMemory,
       pendingPredictions,
       activeInterests,
@@ -120,9 +126,13 @@ export async function performCheckpoint(
       createdAt,
     });
 
-    // Save and prune
-    await deps.checkpointStore.save(checkpoint);
-    await deps.checkpointStore.prune(deps.conversationId, deps.retentionCount);
+    // Save and prune atomically when the persistence boundary is available.
+    if (deps.persistence) {
+      await saveAndPruneCheckpoint(deps.persistence, checkpoint, deps.retentionCount);
+    } else {
+      await deps.checkpointStore.save(checkpoint);
+      await deps.checkpointStore.prune(deps.conversationId, deps.retentionCount);
+    }
 
     return checkpoint.id;
   } catch (error) {

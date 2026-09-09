@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { createPostgresProvider } from '../persistence/postgres.ts';
 import { createPredictionStore } from './prediction-store.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
 const TEST_OWNER_2 = 'test-user-' + Math.random().toString(36).substring(7);
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 let store: ReturnType<typeof createPredictionStore>;
 
@@ -17,12 +16,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('PredictionStore', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence;
     await cleanupTables();
 
     store = createPredictionStore(persistence);
@@ -33,7 +28,7 @@ describe('PredictionStore', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('AC1.1: Create prediction with all fields', () => {

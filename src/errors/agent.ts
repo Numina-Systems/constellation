@@ -6,7 +6,13 @@ export type AgentErrorCode =
   | 'TOOL_DISPATCH_FAILED'
   | 'COMPACTION_FAILED'
   | 'RECALL_FAILED'
-  | 'CHECKPOINT_FAILED';
+  | 'CHECKPOINT_FAILED'
+  | 'RECOVERY_REQUIRED'
+  | 'CONTEXT_UNFITTABLE'
+  | 'TURN_CANCELLED'
+  | 'INTEGRITY_FAILED'
+  | 'REENTRANT_INGRESS'
+  | 'EXCHANGE_CORRUPT';
 
 export class AgentError extends ConstellationError {
   constructor(

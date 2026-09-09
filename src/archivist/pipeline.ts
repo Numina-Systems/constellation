@@ -9,7 +9,8 @@
  * For now, console output is used for diagnostic messages during pipeline execution.
  */
 
-import type { MemoryStore } from '@/memory/store.js';
+import type {MemoryStoreWithMaintenance} from '@/memory/store.js';
+import type {MaintenanceMemoryConstraints} from '@/memory/deletion-policy.js';
 import type { MemoryManager } from '@/memory/manager.js';
 import type { EmbeddingProvider } from '@/embedding/types.js';
 import type { ModelProvider } from '@/model/types.js';
@@ -23,7 +24,7 @@ import { prune } from './stages/prune.js';
 import { reflect } from './stages/reflect.js';
 
 export type ArchivistPipelineDeps = {
-  readonly memoryStore: MemoryStore;
+  readonly memoryStore: MemoryStoreWithMaintenance;
   readonly memoryManager: MemoryManager;
   readonly embedding: EmbeddingProvider | null;
   readonly summarizationModel: ModelProvider | null;
@@ -41,6 +42,11 @@ export type ArchivistPipeline = {
 };
 
 export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistPipeline {
+  const maintenanceConstraints: MaintenanceMemoryConstraints = {
+    allowedTiers: ['working', 'archival'],
+    requireUnpinned: true,
+    requireReadwrite: true,
+  };
   const {
     memoryStore,
     memoryManager,
@@ -99,7 +105,7 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
       // Delete pruned blocks
       for (const id of pruneResult.prunedIds) {
         try {
-          await memoryStore.deleteBlock(id);
+          await memoryStore.deleteForMaintenance(owner, id, maintenanceConstraints);
         } catch (error) {
           console.error(`Failed to delete pruned block ${id}:`, error);
         }
@@ -200,12 +206,12 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
 
             // Delete all duplicates
             for (const duplicate of group.duplicates) {
-              await memoryStore.deleteBlock(duplicate.id);
+              await memoryStore.deleteForMaintenance(owner, duplicate.id, maintenanceConstraints);
               consolidatedBlockIds.add(duplicate.id);
             }
 
             // Delete canonical
-            await memoryStore.deleteBlock(group.canonical.id);
+            await memoryStore.deleteForMaintenance(owner, group.canonical.id, maintenanceConstraints);
             consolidatedBlockIds.add(group.canonical.id);
 
             // Update hashes map with proper hash of merged content
@@ -257,10 +263,12 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
               }
             }
 
-            await memoryStore.updateBlock(
+            await memoryStore.updateForMaintenance(
+              owner,
               action.blockId,
               updatedContent,
               updatedEmbedding,
+              maintenanceConstraints,
             );
           }
         } catch (error) {
@@ -281,7 +289,7 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
       // Delete pruned blocks
       for (const id of pruneResult.prunedIds) {
         try {
-          await memoryStore.deleteBlock(id);
+          await memoryStore.deleteForMaintenance(owner, id, maintenanceConstraints);
           currentHashes.delete(id);
         } catch (error) {
           console.error(`Failed to delete pruned block ${id}:`, error);

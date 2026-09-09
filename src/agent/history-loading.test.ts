@@ -2,15 +2,15 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { createAgent } from './agent.ts';
-import { createPostgresProvider } from '@/persistence/postgres.ts';
 import type { PersistenceProvider } from '@/persistence/types.ts';
 import type { ModelProvider, ModelRequest, ModelResponse } from '@/model/types.ts';
 import type { MemoryManager } from '@/memory/manager.ts';
 import type { ToolRegistry } from '@/tool/types.ts';
 import type { CodeRuntime } from '@/runtime/types.ts';
 import type { ConversationMessage, AgentConfig, AgentDependencies } from './types.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING = 'postgresql://constellation:constellation@localhost:5432/constellation';
+let database: TestDatabase;
 
 /**
  * Create a query-counting provider that wraps a base provider.
@@ -205,14 +205,10 @@ describe('arch-hardening.AC3: History loading per turn', () => {
   let queryCountingPersistence: PersistenceProvider & { historyLoadCount: number; reset: () => void };
 
   beforeAll(async () => {
-    // Connect to real PostgreSQL for integration testing
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
+    database = await createTestDatabase();
+    persistence = database.persistence;
 
-    // Connect and run migrations
-    await (persistence as any).connect();
-    await (persistence as any).runMigrations();
+    // The isolated harness has already connected and applied migrations.
 
     queryCountingPersistence = createQueryCountingProvider(persistence);
   });
@@ -223,10 +219,7 @@ describe('arch-hardening.AC3: History loading per turn', () => {
   });
 
   afterAll(async () => {
-    const persistenceAny = persistence as any;
-    if (persistenceAny.disconnect) {
-      await persistenceAny.disconnect();
-    }
+    await teardownTestDatabase(database);
   });
 
   it('arch-hardening.AC3.1: loadConversationHistory called exactly once per processMessage', async () => {

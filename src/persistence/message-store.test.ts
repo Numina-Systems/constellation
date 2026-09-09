@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { createPostgresProvider } from './postgres.ts';
 import { createMessageStore } from './message-store.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 let store: ReturnType<typeof createMessageStore>;
 
@@ -30,12 +29,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('arch-hardening.AC4: MessageStore interface', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
 
     store = createMessageStore(persistence);
@@ -46,7 +41,7 @@ describe('arch-hardening.AC4: MessageStore interface', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    if (database) await teardownTestDatabase(database);
   });
 
   describe('arch-hardening.AC4.1: count() returns accurate message count', () => {

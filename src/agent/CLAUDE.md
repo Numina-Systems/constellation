@@ -15,6 +15,8 @@ Runs serialized conversation turns: persists input and outcomes, assembles provi
   - An interrupted batch records unstarted calls as `cancelled` and started/uncertain calls as `outcome_unknown`. Persistence failure marks the conversation recovery-required and blocks further provider/handler execution for it.
   - Admission budgets the fully assembled request before each provider call. Irreducible mandatory context returns `context_unfittable` without a knowingly oversized call.
   - `compact_context` is deferred until the correlated tool batch is complete; cache/snapshot reset publishes only after durable compaction commit.
+  - An ambiguous compaction outcome (`history_state_unknown` result or `history_state_unknown`/`committed_publication_failed` fault) fails the turn closed: the history is not adopted, recovery is latched durably through the lifecycle seam, and no further provider or tool execution runs for the conversation. Turn signal/deadline bound compaction like any provider call.
+  - Explicit restores allocate a fresh operation identity per request, so re-restoring a checkpoint after later appends re-runs membership replacement instead of replaying the earlier receipt.
   - Checkpoints use v2 with ordered active IDs, revision, archive IDs, and provenance. v1 decodes through an explicit migration marker. Unknown versions and missing native-v2 IDs fail before mutation.
   - `auto_resume` reads durable active history and does not rewind later commits. Explicit restore replaces active membership transactionally, advances revision, and publishes working-memory restoration after durable success.
   - Recovery-required unfinished effects are never replayed automatically. Independent conversations can continue.

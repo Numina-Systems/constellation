@@ -116,7 +116,6 @@ type MessageRow = {
 type StateRow = {readonly revision: string | number};
 type ReceiptRow = {
   readonly operation_id: string;
-  readonly conversation_id: string;
   readonly status: string;
   readonly details: Record<string, unknown>;
 };
@@ -207,7 +206,8 @@ function receiptFromRow(row: ReceiptRow): HistoryReceipt {
     return typeof value === 'number' ? value : Number(value);
   };
   const summaryMessageId = details['summaryMessageId'];
-  const conversationId = row.conversation_id || details['conversationId'];
+  // operation_receipts has no conversation_id column; receipts carry it in details.
+  const conversationId = details['conversationId'];
   if (typeof summaryMessageId !== 'string' || typeof conversationId !== 'string') throw new Error('invalid history receipt: missing summary message or conversation');
   return {
     operationId: row.operation_id,
@@ -361,7 +361,7 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
   ): Promise<{truth: 'committed'; value: HistoryReceipt} | {truth: 'rolled_back'} | {truth: 'unknown'; error: unknown}> {
     try {
       const rows = await query<ReceiptRow>(
-        `SELECT operation_id, conversation_id, status, details
+        `SELECT operation_id, status, details
            FROM operation_receipts WHERE operation_id = $1`, [plan.operationId],
       );
       if (rows.length > 0 && rows[0]?.status === 'committed') return {truth: 'committed', value: receiptFromRow(rows[0])};
@@ -382,7 +382,7 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
     if (!transaction) throw new Error('exact history restore requires transaction outcome support');
     const reconcile = async (_outcome: TransactionOutcome<ExactRestoreReceipt>, query: QueryFunction): Promise<{truth: 'committed'; value: ExactRestoreReceipt} | {truth: 'rolled_back'} | {truth: 'unknown'; error: unknown}> => {
       try {
-        const rows = await query<ReceiptRow>('SELECT operation_id, conversation_id, status, details FROM operation_receipts WHERE operation_id = $1', [plan.operationId]);
+        const rows = await query<ReceiptRow>('SELECT operation_id, status, details FROM operation_receipts WHERE operation_id = $1', [plan.operationId]);
         if (rows.length > 0 && rows[0]?.status === 'committed') return {truth: 'committed', value: exactRestoreReceiptFromRow(rows[0])};
         if (rows.length === 0) return {truth: 'unknown', error: new Error(`receipt ${plan.operationId} is absent; commit truth is unknown`)};
         return {truth: 'unknown', error: new Error(`receipt ${plan.operationId} is not committed`)};
@@ -398,7 +398,7 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
       );
       const stateRows = await scope.query<StateRow>('SELECT revision FROM conversation_history_state WHERE conversation_id = $1 FOR UPDATE', [plan.conversationId]);
       const currentRevision = Number(stateRows[0]?.revision ?? 0);
-      const existing = await scope.query<ReceiptRow>('SELECT operation_id, conversation_id, status, details FROM operation_receipts WHERE operation_id = $1 FOR UPDATE', [plan.operationId]);
+      const existing = await scope.query<ReceiptRow>('SELECT operation_id, status, details FROM operation_receipts WHERE operation_id = $1 FOR UPDATE', [plan.operationId]);
       if (existing.length > 0) {
         if (existing[0]?.status !== 'committed') throw new Error(`operation ${plan.operationId} has non-committed receipt`);
         return exactRestoreReceiptFromRow(existing[0]);
@@ -441,7 +441,13 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
     if (outcome.status === 'confirmed_rollback' || outcome.status === 'reconciled_rollback') throw outcome.error;
     if (outcome.status === 'commit_unknown' || outcome.status === 'committed_publication_failed') throw historyUnknown(plan.conversationId, plan.operationId, outcome.error);
     const receipt = outcome.value;
-    return {receipt, history: await readActive(plan.conversationId)};
+    try {
+      return {receipt, history: await readActive(plan.conversationId)};
+    } catch (error) {
+      // The restore is durably committed; a failure materializing the new projection
+      // must be reported as committed-publication failure, not a generic store error.
+      throw historyUnknown(plan.conversationId, plan.operationId, error, 'committed_publication_failed');
+    }
   }
 
   async function commitCompaction(plan: PreparedCompactionPlan): Promise<Readonly<{receipt: HistoryReceipt; history: ActiveHistory}>> {
@@ -460,7 +466,7 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
       const currentRevision = Number(stateRows[0]?.revision ?? 0);
       // Idempotent retries reconcile by operation identity before stale-plan checks.
       const existing = await scope.query<ReceiptRow>(
-        'SELECT operation_id, conversation_id, status, details FROM operation_receipts WHERE operation_id = $1 FOR UPDATE', [plan.operationId],
+        'SELECT operation_id, status, details FROM operation_receipts WHERE operation_id = $1 FOR UPDATE', [plan.operationId],
       );
       if (existing.length > 0) {
         if (existing[0]?.status !== 'committed') throw new Error(`operation ${plan.operationId} has non-committed receipt`);
@@ -542,7 +548,13 @@ export function createConversationHistoryStore(persistence: PersistenceProvider)
     if (outcome.status === 'commit_unknown') throw historyUnknown(plan.conversationId, plan.operationId, outcome.error);
     if (outcome.status === 'committed_publication_failed') throw historyUnknown(plan.conversationId, plan.operationId, outcome.error, 'committed_publication_failed');
     const receipt = outcome.value;
-    return {receipt, history: await readActive(plan.conversationId)};
+    try {
+      return {receipt, history: await readActive(plan.conversationId)};
+    } catch (error) {
+      // The compaction is durably committed; a failure materializing the new projection
+      // must be reported as committed-publication failure, not a generic store error.
+      throw historyUnknown(plan.conversationId, plan.operationId, error, 'committed_publication_failed');
+    }
   }
 
   return {append, readActive, readByIds, readHistorical, enumerateCompactionSources, commitCompaction, restoreExactHistory};

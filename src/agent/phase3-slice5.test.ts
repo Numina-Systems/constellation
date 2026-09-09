@@ -93,4 +93,37 @@ describe('Phase 3 exact restore wiring', () => {
     expect(active.revision).toBe(3);
     expect((await historyStore.readHistorical('restore-success', 10)).some((item) => item.message.id === second.id && item.status === 'superseded')).toBe(true);
   });
+
+  it('repeat_restore_of_same_checkpoint_replaces_membership_after_later_appends', async () => {
+    const persistence = createInMemoryPersistence();
+    const historyStore = createConversationHistoryStore(persistence);
+    const first = await historyStore.append({conversation_id: 'restore-repeat', role: 'user', content: 'first'});
+    await historyStore.append({conversation_id: 'restore-repeat', role: 'assistant', content: 'second'});
+    const replacements: Array<ReadonlyArray<{label: string; content: string}>> = [];
+    const deps: RestorationDependencies = {
+      persistence,
+      memory: memory(replacements),
+      messageStore: createMessageStore(persistence, historyStore),
+      historyStore,
+      traceRecorder: {record: async () => undefined},
+      owner: 'phase3',
+    };
+    // One checkpoint object restored twice: each request owns a distinct operation
+    // identity, so the second restore must re-run membership replacement.
+    const checkpointToRestore = checkpoint('restore-repeat', [first.id]);
+
+    const firstRestore = await restoreFromCheckpoint(checkpointToRestore, deps);
+    expect(firstRestore.messageCount).toBe(1);
+    const appended = await historyStore.append({conversation_id: 'restore-repeat', role: 'user', content: 'later'});
+
+    const secondRestore = await restoreFromCheckpoint(checkpointToRestore, deps);
+
+    expect(secondRestore.messageCount).toBe(1);
+    const active = await historyStore.readActive('restore-repeat');
+    expect(active.messages.map((message) => message.id)).toEqual([first.id]);
+    // revision 2 (seed) → 3 (first restore) → 4 (append) → 5 (second restore).
+    expect(active.revision).toBe(5);
+    expect((await historyStore.readHistorical('restore-repeat', 10)).some((item) => item.message.id === appended.id && item.status === 'superseded')).toBe(true);
+    expect(replacements).toHaveLength(2);
+  });
 });

@@ -8,6 +8,8 @@ export type FailureInjection = {
   readonly error: Error;
   readonly commandTag?: 'COMMIT' | 'ROLLBACK';
   readonly when?: 'inside_transaction' | 'outside_transaction';
+  /** Optional SQL filter; a query injection fires only when the statement matches. */
+  readonly sqlPattern?: RegExp;
 };
 
 type Row = Readonly<Record<string, unknown>>;
@@ -32,6 +34,70 @@ function activeRows(rows: Map<string, Array<Row>>, frames: ReadonlyArray<Transac
 
 function tableFromSql(sql: string): string | null {
   return /(?:FROM|INTO|UPDATE|TABLE|DELETE\s+FROM)\s+([a-z_][a-z0-9_]*)/i.exec(sql)?.[1]?.toLowerCase() ?? null;
+}
+
+// Column fidelity for the fake, mirroring migrations 001/003/010/015/016. SELECT
+// statements are validated against this map so a query referencing a column the
+// real schema does not have fails in tests exactly as it would on PostgreSQL.
+const TABLE_COLUMNS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  messages: ['id', 'conversation_id', 'role', 'content', 'tool_calls', 'tool_call_id', 'reasoning_content', 'embedding', 'created_at'],
+  operation_receipts: ['operation_id', 'operation_type', 'status', 'details', 'created_at', 'updated_at'],
+  conversation_history_state: ['conversation_id', 'revision', 'updated_at'],
+  conversation_history_membership: ['conversation_id', 'message_id', 'position'],
+  conversation_history_provenance: ['operation_id', 'conversation_id', 'source_message_ids', 'source_archive_ids', 'previous_revision', 'new_revision', 'summary_message_id', 'supersedes_operation_id', 'created_at'],
+  conversation_history_archive_refs: ['operation_id', 'archive_block_id'],
+  memory_blocks: ['id', 'owner', 'tier', 'label', 'content', 'embedding', 'permission', 'pinned', 'history_owned', 'history_owner_operation_id', 'created_at', 'updated_at'],
+  session_checkpoints: ['id', 'conversation_id', 'checkpoint_data', 'created_at', 'updated_at'],
+};
+
+const SQL_CLAUSE_KEYWORDS: ReadonlySet<string> = new Set([
+  'where', 'group', 'order', 'limit', 'offset', 'on', 'set', 'as', 'left', 'right', 'inner', 'outer', 'cross',
+  'join', 'values', 'returning', 'for', 'update', 'and', 'or', 'not', 'when', 'then', 'else', 'end', 'with',
+  'union', 'select', 'from', 'asc', 'desc', 'case', 'distinct', 'into', 'default', 'using', 'exists', 'by',
+  'all', 'any', 'between', 'in', 'is', 'null', 'having',
+]);
+
+/**
+ * Rejects SELECT statements that reference columns absent from the fake's schema.
+ * Conservative by design: statements touching tables outside TABLE_COLUMNS are
+ * skipped, and only plain (possibly qualified) column references are checked.
+ */
+function validateSelectColumns(sql: string): void {
+  if (!/^SELECT\b/i.test(sql)) return;
+  const tables = new Map<string, string>();
+  let sawUnknownTable = false;
+  for (const match of sql.matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?([a-z_][a-z0-9_]*))?/gi)) {
+    const table = match[1]!.toLowerCase();
+    if (TABLE_COLUMNS[table] === undefined) {
+      sawUnknownTable = true;
+      continue;
+    }
+    const aliasCandidate = (match[2] ?? '').toLowerCase();
+    // A keyword candidate means the table carried no alias; keep the table itself.
+    const alias = aliasCandidate === '' || SQL_CLAUSE_KEYWORDS.has(aliasCandidate) ? table : aliasCandidate;
+    tables.set(alias, table);
+  }
+  if (sawUnknownTable) return;
+  const knownColumns = new Set<string>();
+  for (const table of new Set(tables.values())) {
+    for (const column of TABLE_COLUMNS[table] ?? []) knownColumns.add(column);
+  }
+  for (const match of sql.matchAll(/\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b/g)) {
+    const table = tables.get(match[1]!.toLowerCase());
+    if (table === undefined) continue;
+    if (!(TABLE_COLUMNS[table] ?? []).includes(match[2]!.toLowerCase())) {
+      throw new Error(`unknown column ${String(match[1])}.${String(match[2])} on ${table} (test schema mismatch)`);
+    }
+  }
+  const selectListMatch = /^SELECT\s+(?:DISTINCT\s+)?([\s\S]+?)\s+FROM\b/i.exec(sql);
+  if (!selectListMatch) return;
+  for (const entry of selectListMatch[1]!.split(',')) {
+    const bare = entry.trim().replace(/\s+AS\s+[a-z_][a-z0-9_]*$/i, '').trim();
+    if (/^[a-z_][a-z0-9_]*$/i.test(bare) && !SQL_CLAUSE_KEYWORDS.has(bare.toLowerCase())
+      && knownColumns.size > 0 && !knownColumns.has(bare.toLowerCase())) {
+      throw new Error(`unknown column ${bare} in select list (test schema mismatch)`);
+    }
+  }
 }
 
 function parameter(params: ReadonlyArray<unknown>, index: number): unknown {
@@ -75,6 +141,7 @@ function messageProjection(row: Row, historyStatus?: 'active' | 'historical' | '
 
 function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyArray<unknown>): Array<Row> {
   const normalized = sql.trim();
+  validateSelectColumns(normalized);
   const selectLiteral = /^SELECT\s+([0-9]+)\s+AS\s+([a-z_][a-z0-9_]*)/i.exec(normalized);
   if (selectLiteral) return [{[selectLiteral[2]!.toLowerCase()]: Number(selectLiteral[1])}];
 
@@ -299,9 +366,11 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
       return row && !sourceIds.has(id) ? [messageProjection(row)] : [];
     }).slice(0, limit);
   }
-  if (/SELECT operation_id, conversation_id, status, details/i.test(normalized)) {
+  if (/^SELECT operation_id, status, details FROM operation_receipts WHERE operation_id/i.test(normalized)) {
     const operationId = textParameter(params, 0);
-    return (rows.get('operation_receipts') ?? []).filter((row) => row['operation_id'] === operationId);
+    return (rows.get('operation_receipts') ?? [])
+      .filter((row) => row['operation_id'] === operationId)
+      .map((row) => ({operation_id: row['operation_id'], status: row['status'], details: row['details']}));
   }
   if (/^DELETE FROM conversation_history_membership WHERE conversation_id = \$1$/i.test(normalized)) {
     const conversationId = textParameter(params, 0);
@@ -417,7 +486,9 @@ export function createInMemoryPersistence(): TestPersistence {
     return failure?.error ?? null;
   };
   async function query<T extends Record<string, unknown>>(sql: string, params: ReadonlyArray<unknown> = []): Promise<Array<T>> {
-    const pending = failures.find((failure) => failure.operation === 'query' && (failure.when === undefined || (failure.when === 'inside_transaction') === (frames.length > 0)));
+    const pending = failures.find((failure) => failure.operation === 'query'
+      && (failure.when === undefined || (failure.when === 'inside_transaction') === (frames.length > 0))
+      && (failure.sqlPattern === undefined || failure.sqlPattern.test(sql)));
     const error = pending ? failures.splice(failures.indexOf(pending), 1)[0]?.error ?? null : null;
     if (error) throw error;
     return applySql(activeRows(rows, frames), sql, params) as Array<T>;

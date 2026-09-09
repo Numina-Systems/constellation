@@ -502,33 +502,82 @@ export function createAgent(
         if (!deps.compactor) {
           recordTrace('compact_context', {}, 'compaction admission skipped: compactor is not configured', 0, true, null);
         } else {
+          let ambiguousHistoryFailure: {readonly reason: string; readonly operationId: string | null} | null = null;
           try {
             const revision = deps.historyStore ? (await deps.historyStore.readActive(id)).revision : undefined;
             await invokeCheckpoint('pre_compaction', turnNumber, history, revision);
-            const compactionResult = await deps.compactor.compress(history, id);
-            history = Array.from(compactionResult.history);
-            const committedReplacement = compactionResult.failed !== true && compactionResult.messagesCompressed > 0;
-            if (committedReplacement) {
-              // Cache/snapshot state is published only after the compactor reports a
-              // successful durable replacement. Failed/no-op attempts must not make
-              // the next provider request observe a fabricated cache bust.
-              snapshotState.reset();
-              compactionOccurredThisTurn = true;
-              lastCompactionMessageCount = history.length;
-              lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
-              activeArchiveIds = compactionResult.archiveIds ?? [];
-              provenanceRefs = compactionResult.provenanceRefs ?? (compactionResult.operationId ? [compactionResult.operationId] : []);
+            // Caller cancellation and deadline bound summarization exactly as they bound
+            // provider inference; the compactor keeps its own timeout as the upper bound.
+            const compactionResult = await deps.compactor.compress(history, id, {
+              request: {signal: options?.signal, deadline: options?.deadline},
+            });
+            if (compactionResult.failed === true && compactionResult.failureCode === 'history_state_unknown') {
+              // Commit truth is unknown or the durable replacement failed to publish.
+              // The in-memory history may be a superseded projection: refuse to adopt it.
+              ambiguousHistoryFailure = {
+                reason: compactionResult.recoveryNote ?? 'compaction reported unknown history state',
+                operationId: compactionResult.operationId ?? null,
+              };
+            } else {
+              history = Array.from(compactionResult.history);
+              const committedReplacement = compactionResult.failed !== true && compactionResult.messagesCompressed > 0;
+              if (committedReplacement) {
+                // Cache/snapshot state is published only after the compactor reports a
+                // successful durable replacement. Failed/no-op attempts must not make
+                // the next provider request observe a fabricated cache bust.
+                snapshotState.reset();
+                compactionOccurredThisTurn = true;
+                lastCompactionMessageCount = history.length;
+                lastCompactionSummaryCount = compactionResult.batchesCreated ?? 0;
+                activeArchiveIds = compactionResult.archiveIds ?? [];
+                provenanceRefs = compactionResult.provenanceRefs ?? (compactionResult.operationId ? [compactionResult.operationId] : []);
+              }
+              deferredCompactionPending = false;
             }
-            deferredCompactionPending = false;
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            recordTrace('compact_context', {}, 'compaction admission failed; continuing without replacement', 0, false, message);
+            const errorCode = typeof error === 'object' && error !== null && 'code' in error && typeof (error as {code?: unknown}).code === 'string'
+              ? (error as {readonly code: string}).code
+              : null;
+            if (errorCode === 'history_state_unknown' || errorCode === 'committed_publication_failed') {
+              // A store-level ambiguous-history fault must not be swallowed by the
+              // catch-and-continue path below.
+              ambiguousHistoryFailure = {reason: message, operationId: null};
+            } else {
+              recordTrace('compact_context', {}, 'compaction admission failed; continuing without replacement', 0, false, message);
+              if (deps.traceRecorder) {
+                const structured = isConstellationError(error)
+                  ? error
+                  : wrapError(error, 'COMPACTION_FAILED', 'agent', {conversationId: id});
+                traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
+              }
+            }
+          }
+          if (ambiguousHistoryFailure !== null) {
+            // Fail closed: ambiguous compaction means durable truth is unknown, so no
+            // further provider or tool execution may run against a possibly superseded
+            // transcript. The latch must survive restart via the lifecycle receipt.
+            recoveryRequired = true;
+            recoveryReason = `compaction left history state ambiguous for conversation ${id}${ambiguousHistoryFailure.operationId ? ` (operation ${ambiguousHistoryFailure.operationId})` : ''}: ${ambiguousHistoryFailure.reason}`;
+            recordTrace('compact_context', {}, 'compaction left history state ambiguous; halting turn for trusted recovery', 0, false, recoveryReason);
             if (deps.traceRecorder) {
-              const structured = isConstellationError(error)
-                ? error
-                : wrapError(error, 'COMPACTION_FAILED', 'agent', {conversationId: id});
+              const structured = isConstellationError(ambiguousHistoryFailure)
+                ? ambiguousHistoryFailure
+                : wrapError(new Error(recoveryReason), 'COMPACTION_FAILED', 'agent', {conversationId: id});
               traceError(structured, deps.traceRecorder, deps.owner ?? 'unknown', id);
             }
+            if (deps.integrityLifecycle?.markCompactionRecoveryRequired) {
+              try {
+                await deps.integrityLifecycle.markCompactionRecoveryRequired(recoveryReason);
+              } catch {
+                // The in-memory latch remains fail-closed if the durable marker also fails.
+              }
+            }
+            throw new AgentError('RECOVERY_REQUIRED', `conversation ${id} requires trusted recovery after ambiguous compaction`, {
+              conversationId: id,
+              reason: recoveryReason,
+              operationId: ambiguousHistoryFailure.operationId,
+            }, {suggestion: 'reload trusted active history and re-run compaction before admitting further turns'});
           }
         }
         roundCount--;

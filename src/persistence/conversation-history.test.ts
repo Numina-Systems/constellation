@@ -279,4 +279,58 @@ describe('Package D retained history real-store fake contracts', () => {
     expect(snapshot).toMatchObject({revision: 1, messages: [{id: 'm1'}]});
     expect(await history.readActive('conv')).toMatchObject({revision: 2, messages: [{id: 'm1'}, {id: 'm2'}]});
   });
+
+  it('fake_rejects_select_columns_missing_from_real_schema', async () => {
+    const persistence = createInMemoryPersistence();
+    // operation_receipts (migration 015) has no conversation_id column. This exact
+    // mismatch previously passed through the fake unnoticed and failed only on PostgreSQL.
+    await expect(persistence.query(
+      'SELECT operation_id, conversation_id, status, details FROM operation_receipts WHERE operation_id = $1', ['op'],
+    )).rejects.toThrow(/unknown column conversation_id/);
+    await expect(persistence.query(
+      'SELECT r.conversation_id FROM operation_receipts r WHERE r.operation_id = $1', ['op'],
+    )).rejects.toThrow(/unknown column r\.conversation_id/);
+  });
+
+  it('fake_accepts_schema_accurate_receipt_reads', async () => {
+    const persistence = createInMemoryPersistence();
+    expect(await persistence.query(
+      'SELECT operation_id, status, details FROM operation_receipts WHERE operation_id = $1', ['absent'],
+    )).toEqual([]);
+  });
+
+  it('compaction_materialization_failure_reports_committed_publication_failed', async () => {
+    const persistence = createInMemoryPersistence();
+    const history = createConversationHistoryStore(persistence);
+    await seed(history, message('m1', 'conv'), message('m2', 'conv'));
+    const before = await history.readActive('conv');
+    // The failure fires only on the post-commit active-history reread, not on any
+    // statement inside the compaction transaction itself.
+    persistence.failures.push({operation: 'query', error: new Error('projection reread failed'), when: 'inside_transaction', sqlPattern: /FROM conversation_history_membership h/});
+
+    await expect(history.commitCompaction(createPlan('conv', ['m1'], before.revision, 'publication-op')))
+      .rejects.toMatchObject({code: 'committed_publication_failed'});
+
+    // The compaction itself is durably committed despite the publication failure.
+    expect(await persistence.query('SELECT operation_id FROM operation_receipts WHERE operation_id = $1', ['publication-op'])).toHaveLength(1);
+    const after = await history.readActive('conv');
+    expect(after.messages.map((item) => item.id)).toEqual(['m2', 'summary-publication-op']);
+  });
+
+  it('restore_materialization_failure_reports_committed_publication_failed', async () => {
+    const persistence = createInMemoryPersistence();
+    const history = createConversationHistoryStore(persistence);
+    await seed(history, message('m1', 'conv'), message('m2', 'conv'));
+    persistence.failures.push({operation: 'query', error: new Error('projection reread failed'), when: 'inside_transaction', sqlPattern: /FROM conversation_history_membership h/});
+
+    await expect(history.restoreExactHistory({
+      operationId: 'restore-publication', conversationId: 'conv', expectedRevision: 2,
+      messageIds: ['m2'], checkpointId: 'checkpoint-publication', sourceArchiveIds: [], provenanceRefs: [],
+    })).rejects.toMatchObject({code: 'committed_publication_failed'});
+
+    expect(await persistence.query('SELECT operation_id FROM operation_receipts WHERE operation_id = $1', ['restore-publication'])).toHaveLength(1);
+    const after = await history.readActive('conv');
+    expect(after.messages.map((item) => item.id)).toEqual(['m2']);
+    expect(after.revision).toBe(3);
+  });
 });

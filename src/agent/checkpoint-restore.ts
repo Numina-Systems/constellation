@@ -6,6 +6,7 @@
  * Integrated into the composition root startup sequence, before the agent loop begins.
  */
 
+import {randomUUID} from 'node:crypto';
 import type {SessionCheckpoint} from './checkpoint-types.ts';
 import type {PersistenceProvider} from '@/persistence/types.ts';
 import type {MemoryManager} from '@/memory/manager.ts';
@@ -83,7 +84,11 @@ export async function restoreFromCheckpoint(
     if (!isNativeV2) log('checkpoint restore: v1 provenance gap; archive selection cannot be resolved from legacy metadata');
     const current = await deps.historyStore.readActive(checkpoint.conversationId);
     const restored = await deps.historyStore.restoreExactHistory({
-      operationId: `checkpoint-restore-${checkpoint.id}`,
+      // Each restore request owns a distinct operation identity so a repeat restore
+      // after new appends re-runs membership replacement instead of short-circuiting
+      // on this checkpoint's earlier committed receipt. The identity is reconciled
+      // internally for retries of this single request.
+      operationId: `checkpoint-restore-${checkpoint.id}-${randomUUID()}`,
       conversationId: checkpoint.conversationId,
       expectedRevision: current.revision,
       messageIds: checkpoint.messageIds,

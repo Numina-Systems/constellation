@@ -305,6 +305,10 @@ describe('Unresolved execution effects and interrupted batches', () => {
     await expect(agent.processMessage('go')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
     expect(regularInvocations).toBe(0);
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    // The retried transcript append records the true outcome, not a cancelled stand-in.
+    const history = await agent.getConversationHistory();
+    const uncertainRow = history.find((item) => item.role === 'tool' && item.tool_call_id === 'exec-1');
+    expect(uncertainRow?.tool_outcome?.kind).toBe('outcome_unknown');
     const restarted = createAgent(deps({conversationId: 'conv-append-fail', persistence, integrityLifecycle: lifecycle, model: fakeModel([text('blocked')]), runtime, registry}), 'conv-append-fail');
     await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
   });
@@ -325,10 +329,16 @@ describe('Unresolved execution effects and interrupted batches', () => {
     const runtime: CodeRuntime = {execute: async () => ({success: false, output: '', error: 'unresolved host tool calls', tool_calls_made: 1, duration_ms: 5, outcome: 'outcome_unknown', unresolved_call_ids: ['host-call-1'], unresolved_call_count: 1})};
     const agent = createAgent(deps({conversationId: 'conv-marker-fail', historyStore, model, runtime, registry, integrityLifecycle: failingMarkerLifecycle, config: normalConfig}), 'conv-marker-fail');
 
-    // Without a confirmed durable marker the original receipt must stay unfinished,
-    // so a restarted agent (reading receipts only) still observes recovery-required.
+    // Without a confirmed durable marker the original receipt itself is typed as an
+    // unresolved-effect marker, so neither generic recovery nor a restarted agent
+    // may clear the latch.
     await expect(agent.processMessage('go')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
     await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    await lifecycle.recover([], 'generic tool backfill');
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    const recoveredAgent = createAgent(deps({conversationId: 'conv-marker-fail', persistence, historyStore, model: fakeModel([text('blocked')]), runtime, registry, integrityLifecycle: lifecycle}), 'conv-marker-fail');
+    await recoveredAgent.recoverIntegrity?.([], 'generic tool backfill');
+    await expect(recoveredAgent.processMessage('after recovery')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
     const restarted = createAgent(deps({conversationId: 'conv-marker-fail', persistence, historyStore, model: fakeModel([text('blocked')]), runtime, registry, integrityLifecycle: lifecycle}), 'conv-marker-fail');
     await expect(restarted.processMessage('after restart')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
   });

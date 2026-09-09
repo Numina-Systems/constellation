@@ -993,13 +993,14 @@ export function createAgent(
               }
               for (const toolUse of toolUseBlocks) {
                 if (transcriptPersistedCallIds.has(toolUse.id)) continue;
+                const isUncertainCall = toolUse.id === unresolvedEffectCallId && unresolvedEffectOutcome !== null;
                 try {
                   await persistMessage({
                     conversation_id: id,
                     role: 'tool',
-                    content: unresolvedEffectReason ?? 'unresolved host tool effect',
+                    content: isUncertainCall ? (unresolvedEffectOutcome?.message ?? unresolvedEffectReason ?? 'unresolved host tool effect') : (unresolvedEffectReason ?? 'unresolved host tool effect'),
                     tool_call_id: toolUse.id,
-                    tool_outcome: {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'},
+                    tool_outcome: isUncertainCall ? unresolvedEffectOutcome! : {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'},
                   });
                   transcriptPersistedCallIds.add(toolUse.id);
                 } catch {
@@ -1013,8 +1014,10 @@ export function createAgent(
                   recoveryRequired = true;
                 }
               } else {
+                // No confirmed dedicated marker: type the original receipt itself as
+                // an unresolved-effect marker so generic recovery cannot complete it.
                 try {
-                  await deps.integrityLifecycle.markRecoveryRequired?.(batchId, unresolvedEffectReason ?? 'unresolved host tool effect');
+                  await deps.integrityLifecycle.markRecoveryRequired?.(batchId, unresolvedEffectReason ?? 'unresolved host tool effect', 'unresolved-effect');
                 } catch {
                   recoveryRequired = true;
                 }

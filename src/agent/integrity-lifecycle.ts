@@ -23,8 +23,8 @@ export type IntegrityLifecycle = Readonly<{
   beginBatch(callIds: ReadonlyArray<string>): Promise<string>;
   recordOutcome(batchId: string, callId: string, outcome: ToolOutcome): Promise<void>;
   completeBatch(batchId: string): Promise<void>;
-  /** Mark an incomplete batch as requiring trusted recovery when a write fails. */
-  markRecoveryRequired?: (batchId: string, reason: string) => Promise<void>;
+  /** Mark an incomplete batch as requiring trusted recovery when a write fails. An optional kind types the batch itself so generic recovery skips it. */
+  markRecoveryRequired?: (batchId: string, reason: string, markerKind?: RecoveryMarkerKind) => Promise<void>;
   /**
    * Latch durable recovery-required state for a non-batch fault such as ambiguous
    * compaction, an in-progress restore, or an unresolved tool effect; returns the
@@ -158,7 +158,7 @@ export function createIntegrityLifecycle(
     };
   }
 
-  async function markRecoveryRequired(batchId: string, reason: string): Promise<void> {
+  async function markRecoveryRequired(batchId: string, reason: string, markerKind?: RecoveryMarkerKind): Promise<void> {
     const batches = await readBatches();
     const batch = batches.find((candidate) => candidate.batchId === batchId);
     if (!batch) {
@@ -167,7 +167,9 @@ export function createIntegrityLifecycle(
         batchId,
       });
     }
-    await writeBatch({...batch, recoveryRequired: true, reason});
+    await writeBatch(markerKind
+      ? {...batch, recoveryRequired: true, reason, markerKind}
+      : {...batch, recoveryRequired: true, reason});
   }
 
   async function markConversationRecoveryRequired(reason: string, markerKind: RecoveryMarkerKind = 'compaction'): Promise<string> {

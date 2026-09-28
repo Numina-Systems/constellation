@@ -275,10 +275,16 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
       })
       .map((row) => ({details: row['details']}));
   }
-  if (/^SELECT operation_id, operation_type, status, details FROM operation_receipts WHERE operation_id/i.test(normalized)) {
+  if (/^SELECT\s+operation_id,\s*operation_type,\s*status,\s*details\s+FROM\s+operation_receipts\s+WHERE\s+operation_id/i.test(normalized)) {
     const operationId = textParameter(params, 0);
+    const scopedToConversation = /details->>'conversationId'\s*=\s*\$2/i.test(normalized);
     return (rows.get('operation_receipts') ?? [])
       .filter((row) => row['operation_id'] === operationId)
+      .filter((row) => {
+        if (!scopedToConversation) return true;
+        const details = row['details'];
+        return typeof details === 'object' && details !== null && (details as Record<string, unknown>)['conversationId'] === textParameter(params, 1);
+      })
       .map((row) => ({operation_id: row['operation_id'], operation_type: row['operation_type'], status: row['status'], details: row['details']}));
   }
   if (/^SELECT operation_id FROM operation_receipts/i.test(normalized) && /operation_type = 'compaction_intent'/i.test(normalized)) {
@@ -503,7 +509,6 @@ export function createInMemoryPersistence(): TestPersistence {
   const rows = new Map<string, Array<Row>>();
   const failures: Array<FailureInjection> = [];
   const frames: Array<TransactionFrame> = [];
-  let pendingPublications: Array<() => void | Promise<void>> = [];
   const maybeFail = (operation: FailureInjection['operation']): Error | null => {
     const index = failures.findIndex((failure) => failure.operation === operation);
     if (index < 0) return null;
@@ -527,35 +532,41 @@ export function createInMemoryPersistence(): TestPersistence {
     const secondary = secondaryError instanceof Error ? secondaryError : new Error(String(secondaryError));
     return new AggregateError([root, secondary], `${root.message}; reconciliation failed: ${secondary.message}`);
   }
-  async function runTransaction<T>(fn: (scope: TransactionScope) => Promise<T>): Promise<TransactionOutcome<T>> {
+  async function runTransaction<T>(fn: (scope: TransactionScope) => Promise<T>): Promise<{readonly outcome: TransactionOutcome<T>; readonly publications: ReadonlyArray<() => void | Promise<void>>}> {
     const isOutermost = frames.length === 0;
-    if (isOutermost) pendingPublications = [];
     const frame: TransactionFrame = {rows: cloneRows(isOutermost ? rows : frames[frames.length - 1]!.rows), publications: []};
     frames.push(frame);
     const scope: TransactionScope = {
       query, depth: frames.length - 1, isOutermost, isProvisional: !isOutermost,
-      registerAfterCommit: (publication) => { if (!isOutermost) throw new Error('nested transaction scope cannot publish or reconcile'); frame.publications.push(publication); pendingPublications.push(publication); },
+      registerAfterCommit: (publication) => { if (!isOutermost) throw new Error('nested transaction scope cannot publish or reconcile'); frame.publications.push(publication); },
     };
     try {
       const value = await fn(scope);
-      if (!isOutermost) { frames.pop(); copyFrameTo(frames[frames.length - 1]!.rows, frame.rows); frames[frames.length - 1]!.publications.push(...frame.publications); return {status: 'provisional', value}; }
+      if (!isOutermost) { frames.pop(); copyFrameTo(frames[frames.length - 1]!.rows, frame.rows); frames[frames.length - 1]!.publications.push(...frame.publications); return {outcome: {status: 'provisional', value}, publications: []}; }
       const commitFailure = failures.find((failure) => failure.operation === 'commit');
       if (commitFailure) {
         failures.splice(failures.indexOf(commitFailure), 1);
         frames.pop();
         if (commitFailure.commandTag === 'COMMIT') copyFrameTo(rows, frame.rows);
-        return commitFailure.commandTag === 'ROLLBACK' ? {status: 'confirmed_rollback', error: commitFailure.error} : {status: 'commit_unknown', error: commitFailure.error};
+        // A lost commit acknowledgement keeps the registered publications: the
+        // reconciler must still be able to deliver them (postgres mirrors this
+        // with a per-transaction list).
+        return commitFailure.commandTag === 'ROLLBACK'
+          ? {outcome: {status: 'confirmed_rollback', error: commitFailure.error}, publications: []}
+          : {outcome: {status: 'commit_unknown', error: commitFailure.error}, publications: [...frame.publications]};
       }
-      frames.pop(); copyFrameTo(rows, frame.rows); pendingPublications = frame.publications; return {status: 'confirmed_commit', value};
+      frames.pop(); copyFrameTo(rows, frame.rows);
+      return {outcome: {status: 'confirmed_commit', value}, publications: [...frame.publications]};
     } catch (error) {
       frames.pop();
       const rollbackError = maybeFail('rollback');
-      if (rollbackError) return {status: 'commit_unknown', error: errorWithRoot(error, rollbackError)};
-      return {status: 'confirmed_rollback', error};
+      if (rollbackError) return {outcome: {status: 'commit_unknown', error: errorWithRoot(error, rollbackError)}, publications: []};
+      return {outcome: {status: 'confirmed_rollback', error}, publications: []};
     }
   }
   async function withTransactionOutcome<T>(fn: (scope: TransactionScope) => Promise<T>, reconcile?: (outcome: TransactionOutcome<T>, queryFn: QueryFunction) => Promise<void | TransactionReconciliation<T>>): Promise<TransactionOutcome<T>> {
-    let outcome = await runTransaction(fn);
+    const initial = await runTransaction(fn);
+    let outcome = initial.outcome;
     if (reconcile && (outcome.status === 'commit_unknown' || outcome.status === 'confirmed_commit')) {
       try {
         const result = await reconcile(outcome, query);
@@ -569,13 +580,12 @@ export function createInMemoryPersistence(): TestPersistence {
       } catch (error) { return {status: 'commit_unknown', error: outcome.status === 'commit_unknown' ? errorWithRoot(outcome.error, error) : error, value: outcome.value}; }
     }
     if (outcome.status === 'confirmed_commit' || outcome.status === 'reconciled_commit') {
-      for (const [index, publication] of pendingPublications.entries()) { try { const failure = maybeFail('publication'); if (failure) throw failure; await publication(); } catch (error) { const skipped = pendingPublications.length - index - 1; pendingPublications = []; return {status: 'committed_publication_failed', value: outcome.value, error, details: {attempted: index + 1, skipped}}; } }
-      pendingPublications = [];
+      for (const [index, publication] of initial.publications.entries()) { try { const failure = maybeFail('publication'); if (failure) throw failure; await publication(); } catch (error) { const skipped = initial.publications.length - index - 1; return {status: 'committed_publication_failed', value: outcome.value, error, details: {attempted: index + 1, skipped}}; } }
     }
     return outcome;
   }
   async function withTransaction<T>(fn: (queryFn: QueryFunction) => Promise<T>): Promise<T> {
-    const outcome = await runTransaction(async (scope) => fn(scope.query));
+    const {outcome} = await runTransaction(async (scope) => fn(scope.query));
     if (outcome.status === 'confirmed_commit' || outcome.status === 'provisional') return outcome.value;
     throw outcome.error instanceof Error ? outcome.error : new Error(String(outcome.error));
   }

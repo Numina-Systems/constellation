@@ -130,7 +130,38 @@ describe('Cycle-7 runtime cancellation and uncertainty regressions', () => {
 
     expect(result.success).toBe(false);
     expect(result.outcome).toBe('outcome_unknown');
-    expect(result.unresolved_call_ids).toContain('outer-1');
-    expect(result.unresolved_call_ids).toContain('inner-outer-1');
+    expect(result.unresolved_call_ids).toContain('nested:outer-1');
+    expect(result.unresolved_call_ids).toContain('nested:inner-outer-1');
+  });
+
+  it('later_completion_cannot_erase_observed_nested_uncertainty', async () => {
+    let callCount = 0;
+    const registry = createRegistry(async (_name, params) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          success: false,
+          output: '',
+          error: 'nested runtime reported unresolved host effects',
+          runtime_outcome: 'outcome_unknown' as const,
+          unresolved_call_ids: [String(params['callId'])],
+        };
+      }
+      return {success: true, output: 'fine'};
+    });
+    const process = createControlledRuntimeProcess();
+    const executor = createDenoExecutor(createRuntimeConfig({working_dir: workdir}), registry, () => process);
+
+    const execution = executor.execute('', '');
+    await Promise.resolve();
+    process.pushStdout(new Uint8Array([...toolCall('dup'), ...toolCall('dup')]));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    process.finish(0);
+
+    const result = await execution;
+
+    expect(result.success).toBe(false);
+    expect(result.outcome).toBe('outcome_unknown');
+    expect(result.unresolved_call_ids).toContain('nested:dup');
   });
 });

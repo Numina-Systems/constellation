@@ -109,7 +109,7 @@ describe('mapInputSchemaToParameters', () => {
       expect(result[0]?.enum_values).toEqual(['active', 'inactive', 'pending']);
     });
 
-    it('should convert enum numeric values to strings', () => {
+    it('does not project non-string enums into lossy strings', () => {
       const schema = {
         type: 'object',
         properties: {
@@ -119,8 +119,10 @@ describe('mapInputSchemaToParameters', () => {
 
       const result = mapInputSchemaToParameters(schema);
 
+      // The projection is advisory; the full inputSchema keeps enforcing the
+      // numeric enum at dispatch, so no lossy ['1','2','3'] copy is emitted.
       expect(result).toHaveLength(1);
-      expect(result[0]?.enum_values).toEqual(['1', '2', '3']);
+      expect(result[0]?.enum_values).toBeUndefined();
     });
 
     it('should mark properties in required array as required true', () => {

@@ -1,5 +1,6 @@
 import {describe, expect, it} from 'bun:test';
 import {createIntegrityLifecycle} from './integrity-lifecycle.ts';
+import {AgentError} from '@/errors/agent.ts';
 import {createInMemoryPersistence, type TestPersistence} from '@/testing/ports.ts';
 
 function trackedPersistence(inner: TestPersistence): {readonly persistence: TestPersistence; readonly returned: () => number} {
@@ -44,5 +45,25 @@ describe('Integrity lifecycle receipt access bounds', () => {
     expect(afterOutcome - before).toBeLessThanOrEqual(2);
     expect(afterRecoveryState - afterOutcome).toBeLessThanOrEqual(2);
     expect(afterRecover - afterRecoveryState).toBeLessThanOrEqual(2);
+  });
+
+  it('by_id_operations_reject_foreign_conversation_receipts', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycleA = createIntegrityLifecycle(persistence, 'conv-a');
+    const lifecycleB = createIntegrityLifecycle(persistence, 'conv-b');
+    const batchA = await lifecycleA.beginBatch(['call-a']);
+    const batchB = await lifecycleB.beginBatch(['call-b']);
+
+    await expect(lifecycleB.recordOutcome(batchA, 'call-a', {kind: 'success', output: 'x'})).rejects.toBeInstanceOf(AgentError);
+    await expect(lifecycleB.completeBatch(batchA)).rejects.toBeInstanceOf(AgentError);
+    await expect(lifecycleB.markRecoveryRequired!(batchA, 'foreign attempt')).rejects.toBeInstanceOf(AgentError);
+
+    // Neither recovery state may change, and A's receipt stays intact for A.
+    await expect(lifecycleA.getRecoveryState()).resolves.toMatchObject({required: true, batchId: batchA});
+    await expect(lifecycleB.getRecoveryState()).resolves.toMatchObject({required: true, batchId: batchB});
+    await lifecycleA.recordOutcome(batchA, 'call-a', {kind: 'success', output: 'ok'});
+    await lifecycleA.completeBatch(batchA);
+    await expect(lifecycleA.getRecoveryState()).resolves.toMatchObject({required: false});
+    await expect(lifecycleB.getRecoveryState()).resolves.toMatchObject({required: true, batchId: batchB});
   });
 });

@@ -89,10 +89,12 @@ export function createIntegrityLifecycle(
   const UNFINISHED_BATCH_PREDICATE = `((details->>'completed') IS DISTINCT FROM 'true' OR (details->>'recoveryRequired') = 'true')`;
 
   async function readBatchById(batchId: string): Promise<BatchDetails | null> {
-    // Receipts are addressed by primary key: hot paths never re-read history.
+    // Receipts are addressed by primary key within this conversation's scope:
+    // hot paths never re-read history and never touch foreign receipts.
     const rows = await persistence.query<{readonly operation_type: string; readonly details: unknown}>(
-      'SELECT operation_id, operation_type, status, details FROM operation_receipts WHERE operation_id = $1',
-      [batchId],
+      `SELECT operation_id, operation_type, status, details FROM operation_receipts
+        WHERE operation_id = $1 AND details->>'conversationId' = $2`,
+      [batchId, conversationId],
     );
     const row = rows[0];
     if (row === undefined || row.operation_type !== 'agent_batch') return null;

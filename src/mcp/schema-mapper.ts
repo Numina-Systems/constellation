@@ -38,8 +38,11 @@ export function mapInputSchemaToParameters(
     const description = typeof propertySchema['description'] === 'string' ? propertySchema['description'] : '';
     const parameter: ToolParameter = {name, type, description, required: required.has(name)};
     const enumValues = propertySchema['enum'];
-    if (Array.isArray(enumValues) && enumValues.every(isJsonValue)) {
-      parameter.enum_values = enumValues.map((value) => String(value));
+    // The flat projection is advisory: only unique all-string enums project
+    // without introducing validation errors. Structural enum values remain
+    // authoritative in the full inputSchema.
+    if (Array.isArray(enumValues) && enumValues.length > 0 && enumValues.every((value) => typeof value === 'string') && new Set(enumValues).size === enumValues.length) {
+      parameter.enum_values = [...enumValues];
     }
     parameters.push(parameter);
   }

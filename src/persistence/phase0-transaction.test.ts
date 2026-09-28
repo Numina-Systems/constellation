@@ -84,4 +84,26 @@ describe('Phase0/AC21 transaction contracts', () => {
     expect(outcome.status).toBe('reconciled_commit');
     expect(publications).toEqual(['published']);
   });
+
+  it('publications survive a reconciler that opens its own transaction', async () => {
+    const persistence = createInMemoryPersistence();
+    const error = new Error('commit acknowledgement lost');
+    persistence.failures.push({operation: 'commit', error});
+    const publications: Array<string> = [];
+    const outcome = await persistence.withTransactionOutcome(
+      async (scope) => {
+        scope.registerAfterCommit(() => { publications.push('first'); });
+        scope.registerAfterCommit(() => { publications.push('second'); });
+        return 'value';
+      },
+      async () => {
+        // Reconciliation legitimately opens its own top-level transaction; the
+        // original outcome's publications must neither be dropped nor replaced.
+        await persistence.withTransaction(async (query) => { await query('SELECT 1 AS ok'); });
+        return {truth: 'committed' as const, value: 'recovered'};
+      },
+    );
+    expect(outcome.status).toBe('reconciled_commit');
+    expect(publications).toEqual(['first', 'second']);
+  });
 });

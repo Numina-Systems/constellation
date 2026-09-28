@@ -211,6 +211,8 @@ export function createDenoExecutor(
       let processExitCode: number | null = null;
       let terminalError: string | null = null;
       const unresolved = new Set<string>();
+      const tainted = new Set<string>();
+      const effectIds = (): ReadonlySet<string> => tainted.size === 0 ? unresolved : new Set([...unresolved, ...tainted]);
       const dispatchQueue: Array<{readonly message: Extract<IpcMessage, {type: '__tool_call__'}>}> = [];
       let pumpActive = false;
       const readers: Array<{readonly cancel: () => Promise<unknown>}> = [];
@@ -241,6 +243,12 @@ export function createDenoExecutor(
             if (!item || !lifecycle.isOpen()) break;
             const message = item.message;
             if (!lifecycle.isOpen()) break;
+            if (unresolved.has(message.call_id)) {
+              // Sandbox protocol violation: a call ID must identify exactly one
+              // admitted host call per execution.
+              close('protocol_error', `duplicate tool call id: ${message.call_id}`);
+              break;
+            }
             unresolved.add(message.call_id);
             const dispatchPromise = registry.dispatch(message.name, message.params, dispatchOptions);
             const completed = await Promise.race([
@@ -260,9 +268,11 @@ export function createDenoExecutor(
             const carried = 'error' in completed ? null : carriedUnknownCallIds(completed.value);
             if (carried !== null) {
               // A nested custom tool returned while its own host effects remain
-              // unconfirmed; the outer call inherits that uncertainty.
-              for (const id of carried) unresolved.add(id);
-              unresolved.add(message.call_id);
+              // unconfirmed. The record is sticky and namespaced: no later
+              // completion can erase an observed uncertainty, and nested IDs
+              // cannot collide with this execution's own call IDs.
+              for (const id of carried) tainted.add(`nested:${id}`);
+              tainted.add(`nested:${message.call_id}`);
             }
             const response = 'error' in completed
               ? {type: '__tool_error__' as const, call_id: message.call_id, error: completed.error instanceof Error ? completed.error.message : String(completed.error)}
@@ -390,20 +400,21 @@ export function createDenoExecutor(
         if (lifecycle.isOpen()) close('completed');
         await Promise.race([Promise.allSettled([stdoutPromise, stderrPromise]), new Promise<void>((resolve) => setTimeout(resolve, CLEANUP_TIMEOUT_MS))]);
         context?.signal?.removeEventListener('abort', abortHandler);
+        const observedUnknown = unresolved.size > 0 || tainted.size > 0;
         const reason = lifecycle.reason();
-        if (reason === 'timeout') return makeResult(startTime, false, output, terminalError ?? 'execution timed out', toolCallCount, unresolved.size > 0 ? 'outcome_unknown' : 'cancelled', unresolved);
-        if (reason === 'cancelled') return makeResult(startTime, false, output, terminalError ?? 'execution cancelled', toolCallCount, unresolved.size > 0 ? 'outcome_unknown' : 'cancelled', unresolved);
-        if (reason !== 'completed') return makeResult(startTime, false, output, terminalError ?? (stderrOutput.trim() || diagnostics.trim() || `sandbox execution failed (${reason})`), toolCallCount, unresolved.size > 0 ? 'outcome_unknown' : 'error', unresolved);
+        if (reason === 'timeout') return makeResult(startTime, false, output, terminalError ?? 'execution timed out', toolCallCount, observedUnknown ? 'outcome_unknown' : 'cancelled', effectIds());
+        if (reason === 'cancelled') return makeResult(startTime, false, output, terminalError ?? 'execution cancelled', toolCallCount, observedUnknown ? 'outcome_unknown' : 'cancelled', effectIds());
+        if (reason !== 'completed') return makeResult(startTime, false, output, terminalError ?? (stderrOutput.trim() || diagnostics.trim() || `sandbox execution failed (${reason})`), toolCallCount, observedUnknown ? 'outcome_unknown' : 'error', effectIds());
         // Uncertainty outranks diagnostic classification: admitted tool work that never
         // reported back must fail closed even when stderr explains the exit.
-        if (unresolved.size > 0) {
-          return makeResult(startTime, false, output, terminalError ?? 'execution completed with unresolved host tool calls', toolCallCount, 'outcome_unknown', unresolved);
+        if (observedUnknown) {
+          return makeResult(startTime, false, output, terminalError ?? 'execution completed with unresolved host tool calls', toolCallCount, 'outcome_unknown', effectIds());
         }
         if (!output.trim() && stderrOutput.trim()) return makeResult(startTime, false, '', stderrOutput.trim(), toolCallCount, 'error', unresolved);
         return makeResult(startTime, processExitCode === 0 || processExitCode === null, output, processExitCode === 0 || processExitCode === null ? null : `sandbox process exited with code ${processExitCode}`, toolCallCount, 'success', unresolved);
       } catch (error) {
         close('protocol_error', error instanceof Error ? error.message : 'unknown runtime error');
-        return makeResult(startTime, false, output, terminalError ?? 'unknown runtime error', toolCallCount, unresolved.size > 0 ? 'outcome_unknown' : 'error', unresolved);
+        return makeResult(startTime, false, output, terminalError ?? 'unknown runtime error', toolCallCount, unresolved.size > 0 || tainted.size > 0 ? 'outcome_unknown' : 'error', effectIds());
       } finally {
         if (timeoutId !== null) clearTimeout(timeoutId);
         if (deadlineId !== null) clearTimeout(deadlineId);

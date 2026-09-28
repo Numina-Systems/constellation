@@ -22,3 +22,5 @@ export {
   createTransitionHandler,
   registerSchedulerHandlers,
 } from './scheduler-handlers.ts';
+export type { PreStartTaskRegistrationDeps, PostStartTaskRegistrationDeps } from './task-registration.ts';
+export { registerPreStartSystemTasks, registerPostStartSystemTasks } from './task-registration.ts';

@@ -46,10 +46,8 @@ import { createSubconsciousTools } from '@/tool/builtin/subconscious';
 import {
   createInterestRegistry,
   createImpulseAssembler,
-  buildImpulseCron,
   createSubconsciousContextProvider,
   createIntrospectionAssembler,
-  buildIntrospectionCron,
   createIntrospectionContextProvider,
   createContinuationBudget,
   createContinuationJudge,
@@ -60,10 +58,14 @@ import {
   createActivityManager,
   createActivityContextProvider,
   currentMode,
-  sleepTaskCron,
 } from '@/activity/index.ts';
 import type { ActivityManager, ScheduleConfig } from '@/activity/index.ts';
-import { createEventDrain, registerSchedulerHandlers } from '@/orchestration';
+import {
+  createEventDrain,
+  registerSchedulerHandlers,
+  registerPreStartSystemTasks,
+  registerPostStartSystemTasks,
+} from '@/orchestration';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -1525,150 +1527,32 @@ Report a brief summary of actions taken.`],
     trickleDelayMs: 5000,
   });
 
-  // Register hourly review job if not already scheduled
-  const existingTasks = await persistence.query<{ id: string }>(
-    `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-    ['system', 'review-predictions'],
-  );
-
-  if (existingTasks.length === 0) {
-    await systemScheduler.schedule({
-      id: crypto.randomUUID(),
-      name: 'review-predictions',
-      schedule: '0 * * * *', // Every hour at minute 0
-      payload: { type: 'prediction-review' },
-    });
-    console.log('review job scheduled (hourly)');
-  } else {
-    console.log('review job already scheduled');
-  }
-
-  // Register impulse task if subconscious is enabled and not already scheduled
-  if (subconsciousAgent && impulseAssembler && config.subconscious?.impulse_interval_minutes) {
-    const impulseMinutes = config.subconscious.impulse_interval_minutes;
-    const impulseCron = buildImpulseCron(impulseMinutes);
-
-    const existingImpulseTasks = await persistence.query<{ id: string }>(
-      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-      ['system', 'subconscious-impulse'],
-    );
-
-    if (existingImpulseTasks.length === 0) {
-      await systemScheduler.schedule({
-        id: crypto.randomUUID(),
-        name: 'subconscious-impulse',
-        schedule: impulseCron,
-        payload: { taskType: 'impulse' },
-      });
-      console.log(`impulse task scheduled (every ${impulseMinutes} minutes)`);
-    } else {
-      console.log('impulse task already scheduled');
-    }
-  }
-
-  // Register introspection task if subconscious is enabled and not already scheduled
-  if (subconsciousAgent && introspectionAssembler && config.subconscious?.impulse_interval_minutes) {
-    const impulseMinutes = config.subconscious.impulse_interval_minutes;
-    const offsetMinutes = config.subconscious.introspection_offset_minutes ?? 3;
-    const introspectionCron = buildIntrospectionCron(impulseMinutes, offsetMinutes);
-
-    const existingIntrospectionTasks = await persistence.query<{ id: string }>(
-      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-      ['system', 'subconscious-introspection'],
-    );
-
-    if (existingIntrospectionTasks.length === 0) {
-      await systemScheduler.schedule({
-        id: crypto.randomUUID(),
-        name: 'subconscious-introspection',
-        schedule: introspectionCron,
-        payload: { taskType: 'introspection' },
-      });
-      console.log(`introspection task scheduled (cron: ${introspectionCron}, offset: ${offsetMinutes}m from impulse)`);
-    } else {
-      console.log('introspection task already scheduled');
-    }
-  }
+  // Register default system tasks before schedulers start
+  await registerPreStartSystemTasks({
+    persistence,
+    systemScheduler,
+    owner: 'system',
+    hasImpulse: Boolean(subconsciousAgent && impulseAssembler),
+    hasIntrospection: Boolean(subconsciousAgent && introspectionAssembler),
+    impulseIntervalMinutes: config.subconscious?.impulse_interval_minutes,
+    introspectionOffsetMinutes: config.subconscious?.introspection_offset_minutes,
+  });
 
   // Start both schedulers
   agentScheduler.start();
   systemScheduler.start();
   console.log('schedulers started (agent + system)');
 
-  // --- Archivist task registration (before activity tasks) ---
-  if (config.archivist?.enabled !== false) {
-    const archivistIncrementalCron = config.archivist?.incremental_cron ?? '0 */3 * * *';
-
-    const existingIncrementalTasks = await persistence.query<{ id: string }>(
-      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-      ['system', 'archivist-incremental'],
-    );
-
-    if (existingIncrementalTasks.length === 0) {
-      await systemScheduler.schedule({
-        id: crypto.randomUUID(),
-        name: 'archivist-incremental',
-        schedule: archivistIncrementalCron,
-        payload: { type: 'archivist-incremental' },
-      });
-      console.log(`archivist incremental task scheduled (${archivistIncrementalCron})`);
-    } else {
-      console.log('archivist incremental task already scheduled');
-    }
-
-    if (activityManager && activityScheduleConfig) {
-      const offsetHours = config.archivist?.sleep_offset_hours ?? 3;
-      const archivistSleepCron = sleepTaskCron(activityScheduleConfig.sleepSchedule, offsetHours, activityScheduleConfig.timezone);
-
-      const existingSleepTasks = await persistence.query<{ id: string }>(
-        `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-        ['system', 'sleep-archivist'],
-      );
-
-      if (existingSleepTasks.length === 0) {
-        await systemScheduler.schedule({
-          id: crypto.randomUUID(),
-          name: 'sleep-archivist',
-          schedule: archivistSleepCron,
-          payload: { type: 'sleep-archivist' },
-        });
-        console.log(`archivist sleep task scheduled (${archivistSleepCron})`);
-      } else {
-        console.log('archivist sleep task already scheduled');
-      }
-    }
-  }
-
-  // --- Activity task registration (after schedulers started) ---
-  if (activityManager && activityScheduleConfig) {
-    const { sleepSchedule, wakeSchedule, timezone } = activityScheduleConfig;
-
-    const activityTasks = [
-      { name: 'transition-to-sleep', schedule: sleepSchedule },
-      { name: 'transition-to-wake', schedule: wakeSchedule },
-      { name: 'sleep-compaction', schedule: sleepTaskCron(sleepSchedule, 2, timezone) },
-      { name: 'sleep-prediction-review', schedule: sleepTaskCron(sleepSchedule, 4, timezone) },
-      { name: 'sleep-pattern-analysis', schedule: sleepTaskCron(sleepSchedule, 6, timezone) },
-    ];
-
-    for (const task of activityTasks) {
-      const existing = await persistence.query<{ id: string }>(
-        `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-        ['system', task.name],
-      );
-      if (existing.length === 0) {
-        await systemScheduler.schedule({
-          id: crypto.randomUUID(),
-          name: task.name,
-          schedule: task.schedule,
-          payload: { type: 'activity', sleepTask: true },
-        });
-        console.log(`[activity] registered task: ${task.name} (${task.schedule})`);
-      }
-    }
-
-    console.log('[activity] all activity tasks registered');
-  }
+  // Register archivist and activity tasks after schedulers start
+  await registerPostStartSystemTasks({
+    persistence,
+    systemScheduler,
+    owner: 'system',
+    archivistEnabled: config.archivist?.enabled !== false,
+    incrementalCron: config.archivist?.incremental_cron,
+    sleepOffsetHours: config.archivist?.sleep_offset_hours,
+    activityScheduleConfig,
+  });
 
   // Set up readline interface for REPL
   const rl = readline.createInterface({

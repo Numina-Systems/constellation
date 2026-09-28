@@ -6,6 +6,7 @@
 
 import { describe, it, expect, mock } from 'bun:test';
 import { processEventQueue, createEventDrain } from './event-drain.ts';
+import type { EventDrainOptions } from './types.ts';
 import type { Agent } from '@/agent/types';
 import type { IncomingMessage } from '@/extensions/data-source';
 
@@ -174,6 +175,49 @@ describe('createEventDrain', () => {
 
     expect(agent.processEvent).toHaveBeenCalledTimes(2);
     expect(drain.queue.length).toBe(0);
+  });
+
+  it('resets the in-flight flag when the drain itself rejects mid-loop', async () => {
+    const agent = createMockAgent({ processEvent: mock(async () => 'ok') });
+    const drain = createEventDrain({ capacity: 10, agent, sourceLabel: 'test' });
+    drain.queue.push(testEvent('a'));
+
+    const originalShift = drain.queue.shift.bind(drain.queue);
+    let shiftCalls = 0;
+    drain.queue.shift = (): IncomingMessage | null => {
+      shiftCalls += 1;
+      if (shiftCalls === 1) {
+        return originalShift();
+      }
+      throw new Error('queue corrupted mid-drain');
+    };
+
+    await expect(drain.drain()).rejects.toThrow('queue corrupted mid-drain');
+
+    // The finally block must have reset the flag: a later drain still runs.
+    drain.queue.shift = originalShift;
+    drain.queue.push(testEvent('b'));
+    await drain.drain();
+
+    expect(agent.processEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('validates required options at the factory boundary', () => {
+    const agent = createMockAgent();
+    const options = { capacity: 10, agent, sourceLabel: 'test' };
+
+    expect(() =>
+      createEventDrain({ ...options, agent: undefined } as unknown as Readonly<EventDrainOptions>),
+    ).toThrow('event drain options missing required field: agent');
+    expect(() => createEventDrain({ ...options, capacity: 0 })).toThrow(
+      'event drain options missing required field: capacity (positive number)',
+    );
+    expect(() => createEventDrain({ ...options, capacity: Number.NaN })).toThrow(
+      'event drain options missing required field: capacity (positive number)',
+    );
+    expect(() => createEventDrain({ ...options, sourceLabel: '' })).toThrow(
+      'event drain options missing required field: sourceLabel',
+    );
   });
 
   it('keeps single-flight state per drain (independent queues do not block each other)', async () => {

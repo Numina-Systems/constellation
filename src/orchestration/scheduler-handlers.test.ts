@@ -519,6 +519,17 @@ describe('createPostImpulseHousekeeping', () => {
 
     expect(quietError).toHaveBeenCalledWith('[subconscious] housekeeping error:', expect.any(Error));
   });
+
+  it('throws at the boundary when required numeric deps are missing', () => {
+    const harness = createHarness();
+
+    expect(() =>
+      createPostImpulseHousekeeping({ ...harness.deps, engagementHalfLifeDays: undefined as unknown as number }),
+    ).toThrow('scheduler handler deps missing required field: engagementHalfLifeDays');
+    expect(() =>
+      createPostImpulseHousekeeping({ ...harness.deps, maxActiveInterests: undefined as unknown as number }),
+    ).toThrow('scheduler handler deps missing required field: maxActiveInterests');
+  });
 });
 
 describe('createActivityAwareSystemHandler', () => {
@@ -639,6 +650,14 @@ describe('createTransitionHandler', () => {
     expect(harness.order).toEqual(['resetCycle', 'assembleMorningAgenda', 'subconscious:morning-agenda-event', 'decay', 'wake']);
     expect(manager.transitions).toEqual([]);
     expect(wakeHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws at the boundary when wakeHandler is missing', () => {
+    const harness = createHarness({ activityManager: createMockActivityManager() });
+
+    expect(() =>
+      createTransitionHandler({ ...harness.deps, wakeHandler: undefined as unknown as () => Promise<void> }),
+    ).toThrow('scheduler handler deps missing required field: wakeHandler');
   });
 });
 

@@ -42,6 +42,15 @@ export async function processEventQueue(
  */
 export function createEventDrain(options: Readonly<EventDrainOptions>): EventDrain {
   const { capacity, agent, sourceLabel } = options;
+  if (agent === undefined || agent === null) {
+    throw new Error('event drain options missing required field: agent');
+  }
+  if (typeof capacity !== 'number' || !Number.isFinite(capacity) || capacity <= 0) {
+    throw new Error('event drain options missing required field: capacity (positive number)');
+  }
+  if (typeof sourceLabel !== 'string' || sourceLabel === '') {
+    throw new Error('event drain options missing required field: sourceLabel');
+  }
   const queue = createEventQueue(capacity);
   let processing = false;
 

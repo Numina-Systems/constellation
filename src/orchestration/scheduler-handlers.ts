@@ -197,7 +197,7 @@ export function createSleepTaskHandler(deps: Readonly<SchedulerHandlerDeps>): Sc
  * active-interest cap. Errors are logged, never propagated.
  */
 export function createPostImpulseHousekeeping(deps: Readonly<SchedulerHandlerDeps>): () => Promise<void> {
-  assertRequiredDeps(deps, ['owner', 'interestRegistry']);
+  assertRequiredDeps(deps, ['owner', 'interestRegistry', 'engagementHalfLifeDays', 'maxActiveInterests']);
   const { interestRegistry, owner, engagementHalfLifeDays, maxActiveInterests } = deps;
 
   return async function runPostImpulseHousekeeping(): Promise<void> {
@@ -315,6 +315,7 @@ export function createActivityAwareSystemHandler(deps: Readonly<ActivityAwareSys
  * the wake drain. Fire-and-forget.
  */
 export function createTransitionHandler(deps: Readonly<TransitionHandlerDeps>): (task: { name: string }) => void {
+  assertRequiredDeps(deps, ['wakeHandler']);
   const activityManager = deps.activityManager;
   if (!activityManager) {
     throw new Error('scheduler handler deps missing required field: activityManager');

@@ -1343,6 +1343,14 @@ async function main(): Promise<void> {
     // cannot overwrite the main agent's snapshot state.
     const subconsciousSkillsContextProvider = createSkillsContextProvider();
     const subconsciousWorkingMemoryContextProvider = createWorkingMemoryContextProvider();
+    const subconsciousLoopDetector = loopDetectionConfig.enabled
+      ? createLoopDetector({
+          config: loopDetectionConfig,
+          traceRecorder,
+          owner: AGENT_OWNER,
+          conversationId: config.subconscious.inner_conversation_id,
+        })
+      : undefined;
 
     // Build classified providers for subconscious agent (subset of main agent)
     const subconsciousClassifiedProviders: Array<ClassifiedProvider> = [
@@ -1383,6 +1391,7 @@ async function main(): Promise<void> {
       searchStore: searchStore,
       summarizationModel: summarizationModel,
       summarizationModelName: config.summarization?.name,
+      loopDetector: subconsciousLoopDetector,
     }, config.subconscious.inner_conversation_id);
 
     console.log(`subconscious agent enabled (conversation: ${config.subconscious.inner_conversation_id})`);

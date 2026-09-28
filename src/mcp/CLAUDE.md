@@ -1,6 +1,6 @@
 # MCP
 
-Last verified: 2026-09-09
+Last verified: 2026-09-27
 
 ## Purpose
 
@@ -13,7 +13,7 @@ Connects stdio/HTTP MCP servers and publishes validated, namespaced tools, promp
   - Tool names are `mcp_{server}_{tool}` with hyphens normalized to underscores. Duplicate original names and distinct normalized collisions fail before publication.
   - Each list operation has one absolute deadline and page cap. Defaults are 30000 ms and 64 pages. Caller cancellation, deadline expiry, repeated cursors, and page caps return typed errors with no partial result publication.
   - Discovery builds immutable generation-tagged snapshots off to the side. A stale or failed attempt leaves the prior generation intact; stale handlers fail rather than dispatch a newly mapped tool.
-  - Full valid input schemas are retained. Flat parameters are only a model/stub projection. Nested objects/arrays, unions, and enums validate through the schema path; unsupported schema keywords fail closed with a bounded path diagnostic.
+  - Full valid input schemas are retained. Flat parameters are only an advisory model/stub projection: `enum_values` is emitted only for unique all-string enums, and structural enums remain authoritative in the full `inputSchema`. Nested objects/arrays, unions, and enums validate through the schema path; unsupported schema keywords fail closed with a bounded path diagnostic.
   - MCP result-level `isError`, structured content, and bounded text/image/audio/resource/resource-link descriptors are preserved. Transport/protocol failures remain distinct from result errors.
   - Failed startup clients are disconnected and later configured servers continue with a bounded visible summary. Shutdown disconnects connected clients.
   - `${VAR_NAME}` expansion applies to configured command, args, environment values, and URLs. MCP is disabled by default when its config section is absent.

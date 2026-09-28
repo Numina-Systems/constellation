@@ -548,9 +548,7 @@ export function createInMemoryPersistence(): TestPersistence {
         failures.splice(failures.indexOf(commitFailure), 1);
         frames.pop();
         if (commitFailure.commandTag === 'COMMIT') copyFrameTo(rows, frame.rows);
-        // A lost commit acknowledgement keeps the registered publications: the
-        // reconciler must still be able to deliver them (postgres mirrors this
-        // with a per-transaction list).
+        // a lost commit acknowledgement keeps publications available for reconciliation.
         return commitFailure.commandTag === 'ROLLBACK'
           ? {outcome: {status: 'confirmed_rollback', error: commitFailure.error}, publications: []}
           : {outcome: {status: 'commit_unknown', error: commitFailure.error}, publications: [...frame.publications]};

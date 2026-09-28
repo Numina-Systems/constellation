@@ -1,6 +1,6 @@
 # Persistence
 
-Last verified: 2026-09-09
+Last verified: 2026-09-27
 
 ## Purpose
 
@@ -29,7 +29,7 @@ Provides PostgreSQL ports and adapters for migrations, owner-scoped data, revisi
 
 - Existing migrations are append-only.
 - Active membership cannot point to a message from another conversation.
-- Durable publication and in-memory publication occur only after confirmed/reconciled commit.
+- Durable publication and in-memory publication occur only after confirmed/reconciled commit, and registered after-commit publications run on every confirmed or reconciled commit path, whichever path established commit truth.
 - Ambiguous history state blocks affected execution rather than claiming rollback or unchanged state.
 
 ## Key files
@@ -38,3 +38,4 @@ Provides PostgreSQL ports and adapters for migrations, owner-scoped data, revisi
 - `conversation-history-store.ts` -- active/retained history and compaction/restore commits.
 - `checkpoint-store.ts`, `message-store.ts` -- checkpoint and active-message access.
 - `migrations/016_conversation_history.sql`, `migrations/017_scope_history_summary_fk.sql` -- history schema additions.
+- `migrations/018_agent_batch_conversation_idx.sql` -- additive, repeat-safe conversation-scoped index on operation receipts.

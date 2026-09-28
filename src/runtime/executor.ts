@@ -211,6 +211,7 @@ export function createDenoExecutor(
       let processExitCode: number | null = null;
       let terminalError: string | null = null;
       const unresolved = new Set<string>();
+      const seenCallIds = new Set<string>();
       const tainted = new Set<string>();
       const effectIds = (): ReadonlySet<string> => tainted.size === 0 ? unresolved : new Set([...unresolved, ...tainted]);
       const dispatchQueue: Array<{readonly message: Extract<IpcMessage, {type: '__tool_call__'}>}> = [];
@@ -243,12 +244,14 @@ export function createDenoExecutor(
             if (!item || !lifecycle.isOpen()) break;
             const message = item.message;
             if (!lifecycle.isOpen()) break;
-            if (unresolved.has(message.call_id)) {
+            if (seenCallIds.has(message.call_id)) {
               // Sandbox protocol violation: a call ID must identify exactly one
-              // admitted host call per execution.
+              // admitted host call per execution, and an admitted ID is never
+              // reused even after its dispatch completes.
               close('protocol_error', `duplicate tool call id: ${message.call_id}`);
               break;
             }
+            seenCallIds.add(message.call_id);
             unresolved.add(message.call_id);
             const dispatchPromise = registry.dispatch(message.name, message.params, dispatchOptions);
             const completed = await Promise.race([

@@ -134,17 +134,38 @@ describe('Cycle-7 runtime cancellation and uncertainty regressions', () => {
     expect(result.unresolved_call_ids).toContain('nested:inner-outer-1');
   });
 
+  it('duplicate_call_ids_are_rejected_before_dispatch', async () => {
+    let dispatchCount = 0;
+    const registry = createRegistry(async () => {
+      dispatchCount += 1;
+      return {success: true, output: 'ok'};
+    });
+    const process = createControlledRuntimeProcess();
+    const executor = createDenoExecutor(createRuntimeConfig({working_dir: workdir}), registry, () => process);
+
+    const execution = executor.execute('', '');
+    await Promise.resolve();
+    process.pushStdout(new Uint8Array([...toolCall('same'), ...toolCall('same')]));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    process.finish(0);
+
+    const result = await execution;
+
+    expect(dispatchCount).toBe(1);
+    expect(result.success).toBe(false);
+    expect(result.outcome).toBe('error');
+    expect(result.error).toContain('duplicate tool call id');
+  });
+
   it('later_completion_cannot_erase_observed_nested_uncertainty', async () => {
-    let callCount = 0;
     const registry = createRegistry(async (_name, params) => {
-      callCount += 1;
-      if (callCount === 1) {
+      if (String(params['callId']) === 'a') {
         return {
           success: false,
           output: '',
           error: 'nested runtime reported unresolved host effects',
           runtime_outcome: 'outcome_unknown' as const,
-          unresolved_call_ids: [String(params['callId'])],
+          unresolved_call_ids: ['b'],
         };
       }
       return {success: true, output: 'fine'};
@@ -154,7 +175,7 @@ describe('Cycle-7 runtime cancellation and uncertainty regressions', () => {
 
     const execution = executor.execute('', '');
     await Promise.resolve();
-    process.pushStdout(new Uint8Array([...toolCall('dup'), ...toolCall('dup')]));
+    process.pushStdout(new Uint8Array([...toolCall('a'), ...toolCall('b')]));
     await new Promise((resolve) => setTimeout(resolve, 25));
     process.finish(0);
 
@@ -162,6 +183,6 @@ describe('Cycle-7 runtime cancellation and uncertainty regressions', () => {
 
     expect(result.success).toBe(false);
     expect(result.outcome).toBe('outcome_unknown');
-    expect(result.unresolved_call_ids).toContain('nested:dup');
+    expect(result.unresolved_call_ids).toContain('nested:b');
   });
 });

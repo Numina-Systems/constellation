@@ -50,6 +50,18 @@ describe('Phase 0 AC.21 real PostgreSQL transaction boundary', () => {
     expect(await provider.query('SELECT value FROM phase0_ac21_markers WHERE value = $1', ['reconciled-pub'])).toHaveLength(1);
   });
 
+  it('real driver failures are surfaced as typed PersistenceError with sanitized query context', async () => {
+    const missingTableQuery = 'SELECT * FROM phase0_ac21_missing_typed_error WHERE token = $1';
+    let observed: unknown;
+    try {
+      await provider.query(missingTableQuery, ['not-a-secret-value']);
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toBeInstanceOf((await import('@/errors/index.js')).PersistenceError);
+    expect(observed).toMatchObject({code: 'QUERY_FAILED', context: {query: missingTableQuery}});
+  });
+
   it('nested provisional work is not published after outer rollback', async () => {
     const publications: Array<string> = [];
     const result = await provider.withTransactionOutcome!(async (outer) => {

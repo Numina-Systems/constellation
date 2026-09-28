@@ -101,34 +101,49 @@ export function createPostgresProvider(
         : await pool.query<QueryResultRow>(sql, params as Array<unknown>);
       return result.rows as Array<T>;
     } catch (error) {
-      if (error instanceof PersistenceError) throw error;
-      const cause = error instanceof Error ? error : new Error(String(error));
-      throw new PersistenceError(
-        'QUERY_FAILED',
-        'database query failed',
-        {query: sanitizeQuery(sql)},
-        {cause, suggestion: 'check database availability and query schema'},
-      );
+      throw wrapQueryFailure(error, sql);
     }
+  }
+
+  function wrapQueryFailure(error: unknown, sql: string): PersistenceError {
+    if (error instanceof PersistenceError) return error;
+    const cause = error instanceof Error ? error : new Error(String(error));
+    return new PersistenceError(
+      'QUERY_FAILED',
+      'database query failed',
+      {query: sanitizeQuery(sql)},
+      {cause, suggestion: 'check database availability and query schema'},
+    );
   }
 
   async function queryOnIndependentConnection<T extends Record<string, unknown>>(
     sql: string,
     params?: ReadonlyArray<unknown>,
   ): Promise<Array<T>> {
-    const client = await pool.connect();
+    let client: PoolClient | null = null;
     try {
+      client = await pool.connect();
       const result = await client.query<QueryResultRow>(sql, params as Array<unknown>);
       return result.rows as Array<T>;
+    } catch (error) {
+      throw wrapQueryFailure(error, sql);
     } finally {
-      client.release();
+      client?.release();
+    }
+  }
+
+  async function queryControl(client: PoolClient, sql: string): Promise<QueryResult<QueryResultRow>> {
+    try {
+      return await client.query(sql);
+    } catch (error) {
+      throw wrapQueryFailure(error, sql);
     }
   }
 
   async function rollback(client: PoolClient): Promise<void> {
     await faults.beforeRollback?.();
-    const result = await client.query('ROLLBACK');
-    if (!isRollbackResult(result)) throw new Error(`rollback returned unexpected command tag: ${result.command}`);
+    const result = await queryControl(client, 'ROLLBACK');
+    if (!isRollbackResult(result)) throw new PersistenceError('QUERY_FAILED', 'transaction control returned an unexpected command tag', {query: sanitizeQuery('ROLLBACK')});
     await faults.afterRollback?.();
   }
 
@@ -138,7 +153,7 @@ export function createPostgresProvider(
   ): Promise<TransactionOutcome<T>> {
     const depth = parent.depth + 1;
     const savepoint = `sp_${depth}`;
-    await parent.client.query(`SAVEPOINT ${savepoint}`);
+    await queryControl(parent.client, `SAVEPOINT ${savepoint}`);
     const context: TxContext = {...parent, depth};
     const scope: TransactionScope = {
       query,
@@ -151,11 +166,11 @@ export function createPostgresProvider(
     };
     try {
       const value = await txStorage.run(context, () => fn(scope));
-      await parent.client.query(`RELEASE SAVEPOINT ${savepoint}`);
+      await queryControl(parent.client, `RELEASE SAVEPOINT ${savepoint}`);
       return {status: 'provisional', value};
     } catch (error) {
       try {
-        await parent.client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        await queryControl(parent.client, `ROLLBACK TO SAVEPOINT ${savepoint}`);
       } catch {
         // Preserve the callback's original error; the outer transaction remains responsible for rollback.
       }
@@ -238,7 +253,7 @@ export function createPostgresProvider(
       return outcome;
     };
     try {
-      await client.query('BEGIN');
+      await queryControl(client, 'BEGIN');
       const context: TxContext = {client, depth: 0, publications};
       const scope: TransactionScope = {
         query,
@@ -270,7 +285,7 @@ export function createPostgresProvider(
         return {status: 'confirmed_rollback', error};
       }
       try {
-        const commitResult = await client.query('COMMIT');
+        const commitResult = await queryControl(client, 'COMMIT');
         const commitCommand = faults.commitCommandTag ?? commitResult.command;
         if (commitCommand !== 'COMMIT') {
           clientIsBroken = true;

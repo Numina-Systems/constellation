@@ -1,6 +1,6 @@
 # Subconscious
 
-Last verified: 2026-05-17
+Last verified: 2026-09-28
 
 ## Purpose
 Autonomous curiosity system that gives the agent an inner life of interests, curiosity threads, and self-directed exploration. Runs on a separate conversation with periodic impulse events that prompt reflection, idea generation, and tool-assisted exploration. Engagement scores decay over time to surface genuinely sustained interests. An introspection loop periodically reviews recent conversation and observations, formalizing worthy ones into tracked interests while maintaining an unformalised digest.
@@ -29,7 +29,7 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 
 ## Dependencies
 - **Uses**: `src/persistence/` (PersistenceProvider for SQL), `src/reflexion/` (TraceStore for impulse context), `src/memory/` (MemoryManager for recent memories in impulse context, MemoryStore for introspection digest), `src/scheduled-context.ts` (formatTraceSummary for impulse prompts), `src/agent/types.ts` (ExternalEvent, ContextProvider)
-- **Used by**: `src/tool/builtin/subconscious.ts` (tools consume InterestRegistry), `src/index.ts` (composition root wires registry, assembler, scheduler, context provider, continuation budget/judge, and separate agent instance)
+- **Used by**: `src/tool/builtin/subconscious.ts` (tools consume InterestRegistry), `src/orchestration/` (scheduler handlers wire the registry, assemblers, continuation budget/judge, and the subconscious agent), `src/index.ts` (composition root constructs the agent instance, assemblers, and budget/judge)
 - **Boundary**: Domain types and impulse builders are Functional Core. Registry adapter, impulse assembler, and context provider are Imperative Shell.
 
 ## Key Decisions

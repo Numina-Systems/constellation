@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-09-08
+Last verified: 2026-09-28
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and Deno code execution. Preserve its Functional Core / Imperative Shell architecture and injected port/adapter boundaries.
 
@@ -36,7 +36,7 @@ Deno integration tests spawn real subprocesses and require Deno on PATH. Databas
 | Retrieval and maintenance | `src/search/`, `src/recall/`, `src/diary/`, `src/skill/`, `src/archivist/`, `src/ingest/`. |
 | Models and configuration | `src/model/`, `src/embedding/`, `src/rate-limit/`, `src/config/`, `src/errors/`. |
 | Tools and execution | `src/tool/`, `src/custom-tool/`, `src/runtime/`, `src/shell/`, `src/secrets/`, `src/mcp/`. |
-| Autonomous activity | `src/scheduler/`, `src/activity/`, `src/subconscious/`, `src/reflexion/`, `src/loop-detection/`; `src/scheduled-context.ts` formats activity context. |
+| Autonomous activity | `src/scheduler/`, `src/activity/`, `src/subconscious/`, `src/reflexion/`, `src/loop-detection/`, `src/orchestration/` (event drains, scheduler onDue handlers, sleep/wake transitions, default task registration); `src/scheduled-context.ts` formats activity context. |
 | External services | `src/extensions/` and `src/extensions/bluesky/`, `src/web/`, `src/email/`. |
 | Planning documents | `docs/design-plans/`, `docs/implementation-plans/`, `docs/test-plans/`; plans describe intent, not proof of completed wiring. |
 

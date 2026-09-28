@@ -1,7 +1,14 @@
 // pattern: Imperative Shell
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { createFetcher } from "./fetch.ts";
+import { createFetcher as createFetcherWithPorts } from "./fetch.ts";
+
+function createFetcher(config: Parameters<typeof createFetcherWithPorts>[0]) {
+  return createFetcherWithPorts({
+    ...config,
+    resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
+  });
+}
 
 type MockResponse = {
   status: number;
@@ -330,9 +337,7 @@ describe("web-tools.AC2: Fetch pipeline", () => {
         cache_ttl: 300000,
       });
 
-      const result = await fetcher("https://example.com/oversized");
-
-      expect(result.content).toContain("Content truncated");
+      await expect(fetcher("https://example.com/oversized")).rejects.toMatchObject({ name: "WebFetchError" });
     });
   });
 
@@ -441,6 +446,75 @@ describe("web-tools.AC2: Fetch pipeline", () => {
       expect(typeof result.total_length).toBe("number");
       expect(typeof result.offset).toBe("number");
       expect(typeof result.has_more).toBe("boolean");
+    });
+  });
+
+  describe("SSRF and streamed size limits", () => {
+    const baseConfig = {
+      fetch_timeout: 5000,
+      max_fetch_size: 8,
+      cache_ttl: 1000,
+    };
+
+    it("blocks a link-local IP literal before fetch", async () => {
+      let fetchCalls = 0;
+      const fetcher = createFetcherWithPorts({
+        ...baseConfig,
+        fetchFn: (async () => { fetchCalls++; return new Response(""); }) as unknown as typeof fetch,
+        resolveHost: async () => [{ address: "169.254.169.254", family: 4 }],
+      });
+      await expect(fetcher("http://169.254.169.254/")).rejects.toMatchObject({ name: "WebFetchError" });
+      expect(fetchCalls).toBe(0);
+    });
+
+    it("blocks a hostname that resolves to a private address", async () => {
+      let fetchCalls = 0;
+      let resolvedHostname = "";
+      const fetcher = createFetcherWithPorts({
+        ...baseConfig,
+        fetchFn: (async () => { fetchCalls++; return new Response(""); }) as unknown as typeof fetch,
+        resolveHost: async hostname => {
+          resolvedHostname = hostname;
+          return [{ address: "10.20.30.40", family: 4 }];
+        },
+      });
+      await expect(fetcher("https://fake.internal/")).rejects.toMatchObject({ name: "WebFetchError" });
+      expect(resolvedHostname).toBe("fake.internal");
+      expect(fetchCalls).toBe(0);
+    });
+
+    it("rejects non-http schemes", async () => {
+      let resolverCalls = 0;
+      const fetcher = createFetcherWithPorts({
+        ...baseConfig,
+        fetchFn: (async () => new Response("")) as unknown as typeof fetch,
+        resolveHost: async () => { resolverCalls++; return [{ address: "93.184.216.34", family: 4 }]; },
+      });
+      await expect(fetcher("file:///etc/passwd")).rejects.toMatchObject({ name: "WebFetchError" });
+      expect(resolverCalls).toBe(0);
+    });
+
+    it("cancels an oversized stream and discards partial content", async () => {
+      let cancelled = false;
+      let fetchCalls = 0;
+      const fetcher = createFetcherWithPorts({
+        ...baseConfig,
+        fetchFn: (async () => {
+          fetchCalls++;
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("12345678"));
+              controller.enqueue(new TextEncoder().encode("9"));
+            },
+            cancel() { cancelled = true; },
+          });
+          return new Response(body, { headers: { "content-type": "text/html" } });
+        }) as unknown as typeof fetch,
+        resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
+      });
+      await expect(fetcher("https://fake.example/")).rejects.toMatchObject({ name: "WebFetchError" });
+      expect(cancelled).toBe(true);
+      expect(fetchCalls).toBe(1);
     });
   });
 });

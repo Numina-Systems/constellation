@@ -17,6 +17,7 @@ function createTestRegistry(config?: { brave_api_key?: string }) {
     fetch_timeout: 5000,
     max_fetch_size: 1000000,
     cache_ttl: 3600000,
+    resolveHost: async () => [{address: '93.184.216.34', family: 4}],
   });
 
   const webTools = createWebTools({
@@ -330,12 +331,7 @@ allowed_hosts = []
       `;
 
       globalThis.fetch = (async () => {
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers({'content-type': 'text/html'}),
-          text: async () => mockHtml,
-        } as any;
+        return new Response(mockHtml, {status: 200, headers: {'content-type': 'text/html'}});
       }) as any;
 
       const registry = createTestRegistry();
@@ -371,12 +367,7 @@ allowed_hosts = []
       `;
 
       globalThis.fetch = (async () => {
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers({'content-type': 'text/html'}),
-          text: async () => longHtml,
-        } as any;
+        return new Response(longHtml, {status: 200, headers: {'content-type': 'text/html'}});
       }) as any;
 
       const registry = createTestRegistry();

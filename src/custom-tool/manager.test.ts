@@ -19,11 +19,9 @@ function createMockSecretResolver(): SecretResolver {
     async listKeys() {
       return ['TEST_SECRET', 'API_KEY'];
     },
-    async resolve() {
-      return {
-        TEST_SECRET: 'secret-value',
-        API_KEY: 'api-key-value',
-      };
+    async resolve(keys) {
+      const allSecrets = {TEST_SECRET: 'secret-value', API_KEY: 'api-key-value'};
+      return Object.fromEntries(keys.filter(key => Object.hasOwn(allSecrets, key)).map(key => [key, allSecrets[key as keyof typeof allSecrets]]));
     },
   };
 }
@@ -118,6 +116,39 @@ describe('CustomToolManager', () => {
       runtime,
       secretResolver,
       owner: TEST_OWNER,
+    });
+  });
+
+  describe('crafted metadata rejection', () => {
+    test('rejects executable-shaped identifiers, reserved names, and unsupported parameter types at create, update, and publication', async () => {
+      const validParameters: Array<ToolParameter> = [{name: 'value', type: 'string', description: 'value', required: true}];
+      for (const name of ['x(){}; await __callTool__(...)', '__proto__', 'constructor', 'await']) {
+        await expect(manager.create({name, description: 'crafted', parameters: [], code: 'output("x")'})).rejects.toThrow();
+      }
+      await expect(manager.create({
+        name: 'wrong_type_tool', description: 'bad type',
+        parameters: [{name: 'value', type: 'callable', description: 'bad', required: true}] as unknown as ToolParameter[], code: 'output("x")',
+      })).rejects.toThrow();
+
+      await manager.create({name: 'safe_update_tool', description: 'safe', parameters: validParameters, code: 'output("x")'});
+      await expect(manager.update('safe_update_tool', {
+        parameters: [{name: 'x(){}; await __callTool__(...)', type: 'string', description: 'crafted', required: true}],
+      })).rejects.toThrow();
+      await expect(manager.update('safe_update_tool', {
+        parameters: [{name: 'value', type: 'callable', description: 'bad type', required: true}] as unknown as ToolParameter[],
+      })).rejects.toThrow();
+      expect(registry.getDefinitions().find((definition) => definition.name === 'safe_update_tool')?.parameters).toEqual(validParameters);
+
+      for (const name of ['x(){}; await __callTool__(...)', '__proto__', 'constructor', 'await']) {
+        expect(() => registry.register({
+          definition: {name, description: 'crafted', parameters: []},
+          handler: async () => ({success: true, output: 'unused'}),
+        })).toThrow();
+      }
+      expect(() => registry.register({
+        definition: {name: 'wrong_type_registration', description: 'bad type', parameters: [{name: 'value', type: 'callable', description: 'bad', required: true}] as unknown as ToolParameter[]},
+        handler: async () => ({success: true, output: 'unused'}),
+      })).toThrow();
     });
   });
 
@@ -475,6 +506,33 @@ describe('CustomToolManager', () => {
       expect(found?.description).toBe('Built-in');
     });
 
+    test('handler injects only secret keys referenced by the custom tool source', async () => {
+      let receivedContext: ExecutionContext | undefined;
+      const contextCapturingRuntime: CodeRuntime = {
+        async execute(_code, _toolStubs, context) {
+          receivedContext = context;
+          return { success: true, output: 'done', error: null, tool_calls_made: 0, duration_ms: 10 };
+        },
+      };
+      const scopedManager = createCustomToolManager({
+        store,
+        registry,
+        runtime: contextCapturingRuntime,
+        secretResolver,
+        owner: TEST_OWNER,
+      });
+      await scopedManager.create({
+        name: 'scoped_secret_tool',
+        description: 'Uses one secret',
+        parameters: [],
+        code: 'const token = TEST_SECRET;',
+      });
+
+      await registry.dispatch('scoped_secret_tool', {});
+
+      expect(Object.keys(receivedContext?.secrets ?? {}).sort()).toEqual(['TEST_SECRET']);
+    });
+
     test('AC2.8: handler passes secrets to runtime.execute()', async () => {
       let receivedContext: ExecutionContext | undefined;
       const contextCapturingRuntime: CodeRuntime = {
@@ -496,15 +554,14 @@ describe('CustomToolManager', () => {
         name: 'secret_tool',
         description: 'Uses secrets',
         parameters: [],
-        code: 'const key = PARAMS.key;',
+        code: 'const key = TEST_SECRET;',
       });
 
       await registry.dispatch('secret_tool', {});
 
       expect(receivedContext).toBeDefined();
       expect(receivedContext?.secrets).toBeDefined();
-      expect(receivedContext?.secrets?.['TEST_SECRET']).toBe('secret-value');
-      expect(receivedContext?.secrets?.['API_KEY']).toBe('api-key-value');
+      expect(Object.keys(receivedContext?.secrets ?? {}).sort()).toEqual(['TEST_SECRET']);
     });
   });
 });

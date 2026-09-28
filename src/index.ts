@@ -811,6 +811,11 @@ async function main(): Promise<void> {
     registry,
     runtime,
     secretResolver,
+    resolveSecretsForCode: async (code) => {
+      const keys = await secretResolver.listKeys();
+      const referencedKeys = keys.filter(key => new RegExp(`(^|[^A-Za-z0-9_$])${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}($|[^A-Za-z0-9_$])`).test(code));
+      return secretResolver.resolve(referencedKeys);
+    },
     owner: AGENT_OWNER,
   });
 

@@ -147,6 +147,39 @@ describe("callWithRetry", () => {
       expect(delays[2]).toBe(60_000);
     });
 
+    it("falls back to jittered backoff for Retry-After zero", async () => {
+      const delays: Array<number> = [];
+      let calls = 0;
+      await expect(callWithRetry(async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("rate limited"), {status: 429, headers: new Headers({"retry-after": "0"})});
+        return "ok";
+      }, () => true, undefined, {random: () => 0.5, sleep: async ms => { delays.push(ms); }})).resolves.toBe("ok");
+      expect(calls).toBe(2);
+      expect(delays).toEqual([500]);
+    });
+
+    it("falls back to jittered backoff for a stale Retry-After HTTP-date", async () => {
+      const delays: Array<number> = [];
+      let calls = 0;
+      await expect(callWithRetry(async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("rate limited"), {status: 429, headers: new Headers({"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"})});
+        return "ok";
+      }, () => true, undefined, {random: () => 0.25, sleep: async ms => { delays.push(ms); }})).resolves.toBe("ok");
+      expect(calls).toBe(2);
+      expect(delays).toEqual([250]);
+    });
+
+    it("stops before retry when the deadline has expired", async () => {
+      let calls = 0;
+      await expect(callWithRetry(async () => {
+        calls += 1;
+        throw Object.assign(new Error("rate limited"), {status: 429, headers: new Headers({"retry-after": "0"})});
+      }, () => true, undefined, {deadline: Date.now(), random: () => 0.5, sleep: async () => {}})).rejects.toMatchObject({code: "TIMEOUT"});
+      expect(calls).toBe(0);
+    });
+
     it("applies bounded deterministic jitter and respects deadline", async () => {
       const delays: Array<number> = [];
       let calls = 0;

@@ -46,8 +46,8 @@ function retryAfterMs(error: unknown): number | null {
   }
   if (!value) return null;
   const seconds = /^\s*\d+(?:\.\d+)?\s*$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
-  if (!Number.isFinite(seconds)) return null;
-  return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, seconds));
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.min(MAX_RETRY_AFTER_MS, seconds);
 }
 
 function cancellationError(signal: AbortSignal | undefined, deadline: number | null | undefined): ModelError {
@@ -93,7 +93,7 @@ export async function callWithRetry<T>(
         const jitteredMs = exponentialMs * (options.random ?? Math.random)();
         const delayMs = retryAfterMs(error) ?? jitteredMs;
         const backoffMs = remaining === null ? delayMs : Math.min(delayMs, remaining);
-        if (backoffMs <= 0) throw cancellationError(options.signal, options.deadline);
+        if (backoffMs <= 0 && options.deadline !== null && options.deadline !== undefined) throw cancellationError(options.signal, options.deadline);
         await (options.sleep ?? wait)(backoffMs, options.signal);
       }
     }

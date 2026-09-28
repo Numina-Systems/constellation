@@ -1460,7 +1460,6 @@ Report a brief summary of actions taken.`],
       })
     : undefined;
 
-  // Step 3: Create shared external event queue and single-flight drain (for all DataSource events)
   const externalDrain = createEventDrain({ capacity: 50, agent, sourceLabel: 'external' });
 
   // Step 4: Build and create DataSource registry
@@ -1500,11 +1499,9 @@ Report a brief summary of actions taken.`],
     registry.register(tool);
   }
 
-  // Create event queue and single-flight drain for scheduler events
   const schedulerDrain = createEventDrain({ capacity: 10, agent, sourceLabel: 'scheduler' });
 
-  // --- Scheduler onDue handlers and sleep/wake transitions ---
-  // Registration must complete before scheduler.start() below.
+  // Register handlers before starting either scheduler.
   registerSchedulerHandlers({
     systemScheduler,
     agentScheduler,

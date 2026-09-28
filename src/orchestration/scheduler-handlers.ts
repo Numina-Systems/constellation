@@ -28,7 +28,7 @@ import type {
  */
 export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse', 'subconscious-introspection'] as const;
 
-/** Defense in depth: required deps must be present at the factory boundary. */
+/** Reject missing required dependencies before a handler captures them. */
 function assertRequiredDeps(deps: Readonly<Record<string, unknown>>, names: ReadonlyArray<string>): void {
   for (const name of names) {
     if (deps[name] === undefined || deps[name] === null) {
@@ -38,13 +38,9 @@ function assertRequiredDeps(deps: Readonly<Record<string, unknown>>, names: Read
 }
 
 /**
- * Build the system scheduler onDue handler.
- *
- * Expires stale predictions, gates hourly review jobs on recent agent traces
- * (shouldSkipReview), runs the introspection continuation loop on a budget
- * shared with the impulse path, and routes all other tasks through
- * buildAgentScheduledEvent into the scheduler sink. Fire-and-forget: the
- * handler returns void and never throws into the scheduler tick.
+ * Create the system scheduler handler. It expires stale predictions, gates review-predictions on recent traces
+ * (shouldSkipReview), runs introspection on the impulse-shared continuation budget, and routes other tasks through
+ * buildAgentScheduledEvent to the scheduler sink. It contains asynchronous failures to prevent unhandled rejections.
  */
 export function createSystemTaskHandler(deps: Readonly<SchedulerHandlerDeps>): SchedulerTaskHandler {
   assertRequiredDeps(deps, ['owner', 'agent', 'predictionStore', 'traceStore', 'interestRegistry', 'schedulerSink']);
@@ -117,8 +113,7 @@ export function createSystemTaskHandler(deps: Readonly<SchedulerHandlerDeps>): S
 }
 
 /**
- * Build the agent scheduler onDue handler: every due task becomes an
- * agent-scheduled event queued into the scheduler sink. Fire-and-forget.
+ * Create a fire-and-forget handler that sends each due task to the agent scheduler sink.
  */
 export function createAgentTaskHandler(deps: Readonly<SchedulerHandlerDeps>): SchedulerTaskHandler {
   assertRequiredDeps(deps, ['owner', 'traceStore', 'schedulerSink']);
@@ -361,8 +356,7 @@ export function createTransitionHandler(deps: Readonly<TransitionHandlerDeps>): 
 }
 
 /**
- * Register scheduler onDue handlers on both schedulers, replicating the
- * composition root's registration wiring.
+ * Register onDue handlers on both schedulers.
  *
  * With an activity manager, both schedulers are wrapped in the activity
  * dispatch (createActivityDispatch) and only the system side suppresses

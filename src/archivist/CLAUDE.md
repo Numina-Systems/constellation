@@ -1,6 +1,6 @@
 # Archivist
 
-Last verified: 2026-05-17
+Last verified: 2026-09-28
 
 ## Purpose
 Maintains memory health through a six-stage pipeline that deduplicates, consolidates, cross-references, prunes, and reflects on the agent's memory blocks. Runs as a scheduled sleep task during the circadian cycle.
@@ -12,7 +12,7 @@ Maintains memory health through a six-stage pipeline that deduplicates, consolid
 
 ## Dependencies
 - **Uses**: `src/memory/` (MemoryStore + MemoryManager for block CRUD and writes), `src/embedding/` (optional, for re-embedding merged content), `src/model/` (optional, for consolidation summarization and reflection), `src/persistence/` (transaction support)
-- **Used by**: `src/activity/sleep-events.ts` (buildArchivistEvent), `src/index.ts` (composition root wiring, scheduled task handlers)
+- **Used by**: `src/activity/sleep-events.ts` (buildArchivistEvent), `src/orchestration/` (routes `archivist-incremental` to the pipeline and `sleep-archivist` to the archivist sub-agent), `src/index.ts` (composition root constructs the pipeline)
 - **Boundary**: This module operates on memory blocks only. It does not interact with conversations, tools, or the agent loop directly.
 
 ## Pipeline Stages

@@ -20,11 +20,7 @@ type EnsureScheduledTaskOptions = {
   readonly alreadyScheduledMessage?: string;
 };
 
-/**
- * Schedule a task unless an uncancelled row already exists for the owner and
- * name. Captures the five verbatim copies of this pattern previously inlined
- * in main(); call sites keep their exact log lines.
- */
+/** Schedule only when no uncancelled row exists for the owner and name; call sites keep their exact log lines. */
 async function ensureScheduledTask(options: Readonly<EnsureScheduledTaskOptions>): Promise<void> {
   const existing = await options.persistence.query<{ id: string }>(
     `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,

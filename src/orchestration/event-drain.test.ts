@@ -1,8 +1,4 @@
-/**
- * Tests for the serialized event drain extracted from the composition root.
- * Verifies sequential per-queue processing, per-event error isolation, and
- * the single-flight coalescing semantics previously inlined in main().
- */
+/** Tests event ordering, per-event error isolation, and single-flight drain behavior. */
 
 import { describe, it, expect, mock } from 'bun:test';
 import { processEventQueue, createEventDrain } from './event-drain.ts';
@@ -143,7 +139,7 @@ describe('createEventDrain', () => {
     await Promise.all([drain.drain(), drain.drain()]);
 
     expect(agent.processEvent).toHaveBeenCalledTimes(2);
-    // A second concurrent loop would process both events in parallel.
+    // A second concurrent loop would make maxActive 2.
     expect(maxActive).toBe(1);
   });
 

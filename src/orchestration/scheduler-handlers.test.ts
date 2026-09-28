@@ -1,5 +1,5 @@
 /**
- * Tests for the scheduler onDue handler factories extracted from main().
+ * Tests scheduler handler routing, sequencing, and failure handling.
  * Verifies sleep-task routing, archivist routing, the review gate, budget
  * reset points, continuation wiring, branch sequencing, sleep/wake
  * transitions, and the asymmetric activity-aware registration wiring.

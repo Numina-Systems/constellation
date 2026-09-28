@@ -1,5 +1,5 @@
 /**
- * Tests for the default scheduled-task registration extracted from main().
+ * Tests default task registration and its startup ordering.
  * Verifies idempotency per task name, cron computation, gating conditions,
  * and the pre-start versus post-start task sets.
  */
@@ -144,7 +144,6 @@ describe('registerPreStartSystemTasks', () => {
       owner: 'system',
       hasImpulse: true,
       hasIntrospection: false,
-      // impulseIntervalMinutes omitted
     });
 
     expect(scheduled.map((task) => task.name)).toEqual(['review-predictions']);

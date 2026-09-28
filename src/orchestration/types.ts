@@ -15,12 +15,8 @@ import type { ArchivistPipeline } from '@/archivist';
 import type { Scheduler } from '@/scheduler';
 
 /**
- * Port for a bounded event queue plus its single-flight drain loop.
- *
- * Producers push onto `queue`; consumers call `drain()`, which serializes
- * `agent.processEvent` calls. At most one drain loop runs per EventDrain:
- * concurrent `drain()` calls coalesce, and the in-flight flag always resets
- * (finally), so a failing drain cannot wedge the queue.
+ * Bounded event queue and its drain operation. Concurrent drain calls share
+ * one processing loop, and a failed drain does not leave the queue locked.
  */
 export type EventDrain = {
   readonly queue: EventQueue;

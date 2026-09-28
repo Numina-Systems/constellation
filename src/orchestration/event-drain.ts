@@ -33,12 +33,9 @@ export async function processEventQueue(
 }
 
 /**
- * Create a bounded event queue with a single-flight drain, capturing the
- * external-event and scheduler-event loops previously inlined in main().
- *
- * `drain()` is safe to call from every producer: while a drain is in flight,
- * additional calls return immediately instead of starting a second loop, and
- * the in-flight flag resets in a finally block even when the drain throws.
+ * Create a bounded event queue whose drain calls share one processing loop.
+ * Concurrent calls return while a drain is active. The active state resets
+ * even if the drain throws.
  */
 export function createEventDrain(options: Readonly<EventDrainOptions>): EventDrain {
   const { capacity, agent, sourceLabel } = options;

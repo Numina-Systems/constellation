@@ -108,7 +108,11 @@ export function createSystemTaskHandler(deps: Readonly<SchedulerHandlerDeps>): S
       schedulerSink.drain().catch((error) => {
         console.error('scheduler event processing error:', error);
       });
-    })();
+    })().catch((error) => {
+      // Fire-and-forget like the sibling handlers: never surface an
+      // unhandled rejection into the process (fatal under Bun).
+      console.error('system scheduler onDue error:', error);
+    });
   };
 }
 

@@ -367,6 +367,23 @@ describe('createSystemTaskHandler', () => {
       expect.objectContaining({ source: 'agent-scheduled' }),
     );
   });
+
+  it('AC.7: catches async failures and logs them instead of an unhandled rejection', async () => {
+    const harness = createHarness();
+    const traceStore = createMockTraceStore();
+    traceStore.queryTraces = mock(async () => {
+      throw new Error('trace store unavailable');
+    });
+    const handler = createSystemTaskHandler({ ...harness.deps, traceStore });
+
+    handler(task('review-predictions', { type: 'prediction-review' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Without the .catch on the fire-and-forget IIFE, the rejected promise
+    // is unhandled and Bun treats it as fatal, failing the whole file.
+    expect(quietError).toHaveBeenCalledWith('system scheduler onDue error:', expect.any(Error));
+    expect(harness.agent.processEvent).not.toHaveBeenCalled();
+  });
 });
 
 describe('createAgentTaskHandler', () => {

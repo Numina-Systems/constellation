@@ -24,7 +24,7 @@ import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createPostgresSecretStore, createSecretResolver } from '@/secrets';
 import { createSecretTools } from '@/tool/builtin/secrets';
 import { createDenoExecutor } from '@/runtime/executor';
-import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
+import { createBlueskySource, seedBlueskyTemplates } from '@/extensions/bluesky';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
@@ -35,10 +35,9 @@ import type { ServerRateLimitSync } from '@/rate-limit/types.js';
 import { createPostgresSkillStore } from '@/skill/postgres-store';
 import { createSkillRegistry } from '@/skill/registry';
 import { createSkillTools } from '@/skill/tools';
-import { createPredictionStore, createTraceRecorder, shouldSkipReview } from '@/reflexion';
+import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
-import { formatTraceSummary } from '@/scheduled-context';
 import { createPostgresScheduler } from '@/scheduler';
 import { createMailgunSender, createEmailTools } from '@/email';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
@@ -47,39 +46,32 @@ import { createSubconsciousTools } from '@/tool/builtin/subconscious';
 import {
   createInterestRegistry,
   createImpulseAssembler,
-  buildImpulseCron,
   createSubconsciousContextProvider,
   createIntrospectionAssembler,
-  buildIntrospectionCron,
   createIntrospectionContextProvider,
   createContinuationBudget,
   createContinuationJudge,
-  runContinuationLoop,
 } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
 import {
   createActivityManager,
   createActivityContextProvider,
-  createActivityDispatch,
-  createWakeHandler,
   currentMode,
-  sleepTaskCron,
-  isSleepTask,
-  queuedEventToExternal,
-  buildCompactionEvent,
-  buildPredictionReviewEvent,
-  buildPatternAnalysisEvent,
-  buildArchivistEvent,
 } from '@/activity/index.ts';
 import type { ActivityManager, ScheduleConfig } from '@/activity/index.ts';
+import {
+  createEventDrain,
+  registerSchedulerHandlers,
+  registerPreStartSystemTasks,
+  registerPostStartSystemTasks,
+} from '@/orchestration';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
 import type { ExecutionContext } from '@/runtime/types';
-import type { EventQueue } from '@/extensions/bluesky';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
@@ -153,8 +145,6 @@ export const COMPOSITION_SEAM = createCompositionSeam();
 /** Production agent construction is routed through the injected composition seam. */
 export const createProductionAgent = COMPOSITION_SEAM.createAgent;
 
-export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse', 'subconscious-introspection'] as const;
-
 export type CompactionRecoveryAction = (command: string) => Promise<string | null>;
 
 type InteractionLoopDeps = {
@@ -223,106 +213,6 @@ export async function performShutdown(
 ): Promise<void> {
   rl.close();
   await persistence.disconnect();
-}
-
-/**
- * Build a review event from a scheduled task with trace enrichment.
- * Queries recent operation traces and includes them in the event content.
- * Extracted for testability - allows tests to verify the exact event shape
- * that the scheduler's onDue handler produces.
- */
-export async function buildReviewEvent(
-  task: {
-    id: string;
-    name: string;
-    schedule: string;
-    payload?: Record<string, unknown>;
-  },
-  traceStore: TraceStore,
-  owner: string,
-): Promise<{
-  source: string;
-  content: string;
-  metadata: Record<string, unknown>;
-  timestamp: Date;
-}> {
-  const traces = await traceStore.queryTraces({
-    owner,
-    lookbackSince: new Date(Date.now() - 2 * 3600_000),
-    limit: 20,
-  });
-  const activitySection = formatTraceSummary(traces);
-
-  return {
-    source: 'review-job',
-    content: [
-      `Scheduled task "${task.name}" has fired.`,
-      '',
-      'Review your pending predictions against recent operation traces.',
-      'Use self_introspect to see your recent tool usage, then use list_predictions to see pending predictions.',
-      'For each prediction, use annotate_prediction to record whether it was accurate.',
-      'After reviewing, write a brief reflection to archival memory summarizing what you learned.',
-      '',
-      'If you have no pending predictions, still write a brief reflection noting this and consider whether you should be making predictions about outcomes of your actions.',
-      '',
-      activitySection,
-    ].join('\n'),
-    metadata: {
-      taskId: task.id,
-      taskName: task.name,
-      schedule: task.schedule,
-      ...task.payload,
-    },
-    timestamp: new Date(),
-  };
-}
-
-/**
- * Build an agent-scheduled event from a scheduled task with trace enrichment.
- * Queries recent operation traces and includes them in the event content.
- * For tasks scheduled by the agent itself (not system review tasks).
- */
-export async function buildAgentScheduledEvent(
-  task: {
-    id: string;
-    name: string;
-    schedule: string;
-    payload?: Record<string, unknown>;
-  },
-  traceStore: TraceStore,
-  owner: string,
-): Promise<{
-  source: string;
-  content: string;
-  metadata: Record<string, unknown>;
-  timestamp: Date;
-}> {
-  const traces = await traceStore.queryTraces({
-    owner,
-    lookbackSince: new Date(Date.now() - 2 * 3600_000),
-    limit: 20,
-  });
-  const activitySection = formatTraceSummary(traces);
-
-  const prompt = String(task.payload?.['prompt'] ?? '') || 'Execute this scheduled task.';
-
-  return {
-    source: 'agent-scheduled',
-    content: [
-      `Scheduled task "${task.name}" has fired.`,
-      '',
-      prompt,
-      '',
-      activitySection,
-    ].join('\n'),
-    metadata: {
-      taskId: task.id,
-      taskName: task.name,
-      schedule: task.schedule,
-      ...task.payload,
-    },
-    timestamp: new Date(),
-  };
 }
 
 /**
@@ -413,33 +303,6 @@ function promptForLine(rl: readline.Interface, prompt: string): Promise<string> 
       resolve(answer.trim());
     });
   });
-}
-
-/**
- * Process events from a queue, catching errors so one failed event doesn't crash the loop.
- * Extracted for testability (AC6.5: processEvent errors don't crash listener).
- * Caller provides the event queue and agent; this function drains the queue
- * and ensures errors are logged but don't prevent subsequent events from processing.
- */
-export async function processEventQueue(
-  eventQueue: EventQueue,
-  agent: Agent,
-  sourceLabel: string = 'bluesky',
-): Promise<void> {
-  let event = eventQueue.shift();
-  while (event) {
-    try {
-      const result = await agent.processEvent(event);
-      if (result) {
-        console.log(`[${sourceLabel}] agent response: ${result}`);
-      }
-    } catch (error) {
-      // AC6.5: Log error but don't crash
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`${sourceLabel} processEvent error: ${errorMsg}`);
-    }
-    event = eventQueue.shift();
-  }
 }
 
 /**
@@ -1597,26 +1460,14 @@ Report a brief summary of actions taken.`],
       })
     : undefined;
 
-  // Step 3: Create shared external event queue and processing loop (for all DataSource events)
-  const externalEventQueue = createEventQueue(50);
-  let externalProcessing = false;
-
-  async function processExternalEvent(): Promise<void> {
-    if (externalProcessing) return;
-    externalProcessing = true;
-    try {
-      await processEventQueue(externalEventQueue, agent, 'external');
-    } finally {
-      externalProcessing = false;
-    }
-  }
+  const externalDrain = createEventDrain({ capacity: 50, agent, sourceLabel: 'external' });
 
   // Step 4: Build and create DataSource registry
   const dataSourceRegistry: DataSourceRegistry | null = registrations.length > 0
     ? createDataSourceRegistry({
         registrations,
-        eventSink: externalEventQueue,
-        processEvents: processExternalEvent,
+        eventSink: externalDrain.queue,
+        processEvents: () => externalDrain.drain(),
         activityManager: activityManager ?? undefined,
       })
     : null;
@@ -1648,435 +1499,57 @@ Report a brief summary of actions taken.`],
     registry.register(tool);
   }
 
-  // Create event queue and processing function for scheduler events
-  const schedulerEventQueue = createEventQueue(10);
-  let schedulerProcessing = false;
+  const schedulerDrain = createEventDrain({ capacity: 10, agent, sourceLabel: 'scheduler' });
 
-  async function processSchedulerEvent(): Promise<void> {
-    if (schedulerProcessing) return;
-    schedulerProcessing = true;
-    try {
-      await processEventQueue(schedulerEventQueue, agent, 'scheduler');
-    } finally {
-      schedulerProcessing = false;
-    }
-  }
+  // Register handlers before starting either scheduler.
+  registerSchedulerHandlers({
+    systemScheduler,
+    agentScheduler,
+    owner: AGENT_OWNER,
+    agent,
+    subconsciousAgent,
+    archivistAgent,
+    archivistPipeline,
+    predictionStore,
+    traceStore: traceRecorder,
+    interestRegistry,
+    impulseAssembler,
+    introspectionAssembler,
+    continuationBudget,
+    continuationJudge,
+    activityManager,
+    schedulerSink: schedulerDrain,
+    engagementHalfLifeDays: config.subconscious?.engagement_half_life_days ?? 7,
+    maxActiveInterests: config.subconscious?.max_active_interests ?? 10,
+    trickleDelayMs: 5000,
+  });
 
-  // --- Scheduler onDue handlers ---
-  // Extract handler logic into named functions for reuse
-  function handleSystemSchedulerTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-    (async () => {
-      try {
-        const expiredCount = await predictionStore.expireStalePredictions(
-          AGENT_OWNER,
-          new Date(Date.now() - 24 * 3600_000),
-        );
-        if (expiredCount > 0) {
-          console.log(`review job: expired ${expiredCount} stale predictions`);
-        }
-      } catch (error) {
-        console.warn('review job: failed to expire stale predictions', error);
-      }
-
-      // Before building the review event, check if there's been any activity
-      if (task.name === 'review-predictions') {
-        const recentTraces = await traceRecorder.queryTraces({
-          owner: AGENT_OWNER,
-          lookbackSince: new Date(Date.now() - 2 * 3600_000),
-          limit: 1,
-        });
-
-        if (shouldSkipReview(recentTraces.length)) {
-          console.log('[review-gate] skipping review-predictions: no agent-initiated traces since last window');
-          return;
-        }
-
-        continuationBudget?.resetEvent();
-        const roundStart = new Date();
-        const event = await buildReviewEvent(task, traceRecorder, AGENT_OWNER);
-        const responseText = await agent.processEvent(event);
-
-        // Introspection continuation loop (shared budget with impulse — AC5.2)
-        if (continuationBudget && continuationJudge) {
-          await runContinuationLoop(
-            {
-              judge: continuationJudge,
-              budget: continuationBudget,
-              queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
-              queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
-              assembleEvent: () => buildReviewEvent(task, traceRecorder, AGENT_OWNER),
-              processEvent: (e) => agent.processEvent(e),
-              eventType: 'introspection',
-              // No onHousekeeping — engagement decay is impulse-specific
-            },
-            responseText,
-            roundStart,
-          );
-        }
-        return;
-      }
-
-      const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
-
-      schedulerEventQueue.push(event);
-      processSchedulerEvent().catch((error) => {
-        console.error('scheduler event processing error:', error);
-      });
-    })();
-  }
-
-  function handleAgentSchedulerTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-    (async () => {
-      try {
-        const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
-        schedulerEventQueue.push(event);
-        processSchedulerEvent().catch((error) => {
-          console.error('agent scheduler event processing error:', error);
-        });
-      } catch (error) {
-        console.error('agent scheduler onDue error:', error);
-      }
-    })();
-  }
-
-  if (activityManager) {
-    // Capture narrowed reference for use in closures (avoids activityManager! assertions)
-    const am = activityManager;
-
-    // Sleep task handler: routes sleep tasks to the correct event builder with flagged events
-    function handleSleepTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-      (async () => {
-        const flaggedEvents = await am.getFlaggedEvents();
-        let event;
-
-        switch (task.name) {
-          case 'sleep-compaction':
-            event = buildCompactionEvent(flaggedEvents, new Date());
-            break;
-          case 'sleep-prediction-review':
-            event = buildPredictionReviewEvent(flaggedEvents, new Date());
-            break;
-          case 'sleep-pattern-analysis':
-            event = buildPatternAnalysisEvent(flaggedEvents, new Date());
-            break;
-          case 'sleep-archivist':
-            event = buildArchivistEvent(flaggedEvents, new Date());
-            if (archivistAgent) {
-              // Route to archivist sub-agent
-              archivistAgent.processEvent(event).catch((error) => {
-                console.error('[archivist] full pipeline event error:', error);
-              });
-              return; // Don't queue to main agent
-            }
-            break;
-          default:
-            console.warn(`[activity] unknown sleep task: ${task.name}`);
-            return;
-        }
-
-        schedulerEventQueue.push(event);
-        processSchedulerEvent().catch((error) => {
-          console.error(`sleep task event processing error (${task.name}):`, error);
-        });
-      })().catch((error) => {
-        console.error(`[activity] sleep task error (${task.name}):`, error);
-      });
-    }
-
-    // Activity-aware system handler: routes sleep tasks to handleSleepTask,
-    // impulse tasks to subconscious agent, and other tasks to the original handler
-    async function runPostImpulseHousekeeping(): Promise<void> {
-      try {
-        const halfLife = config.subconscious?.engagement_half_life_days ?? 7;
-        const maxActive = config.subconscious?.max_active_interests ?? 10;
-
-        await interestRegistry.applyEngagementDecay(AGENT_OWNER, halfLife);
-
-        const dormanted = await interestRegistry.enforceActiveInterestCap(AGENT_OWNER, maxActive);
-
-        if (dormanted.length > 0) {
-          console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActive})`);
-        }
-      } catch (error) {
-        console.error('[subconscious] housekeeping error:', error);
-      }
-    }
-
-    function handleSystemSchedulerTaskWithActivity(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-      if (isSleepTask(task.name)) {
-        handleSleepTask(task);
-      } else if (task.name === 'subconscious-impulse' && subconsciousAgent && impulseAssembler) {
-        (async () => {
-          try {
-            continuationBudget?.resetEvent();
-            const roundStart = new Date();
-            const event = await impulseAssembler.assembleImpulse();
-            const responseText = await subconsciousAgent.processEvent(event);
-            await runPostImpulseHousekeeping();
-
-            // Continuation loop (best-effort, errors don't break normal flow)
-            if (continuationBudget && continuationJudge) {
-              await runContinuationLoop(
-                {
-                  judge: continuationJudge,
-                  budget: continuationBudget,
-                  queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
-                  queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
-                  assembleEvent: () => impulseAssembler.assembleImpulse(),
-                  processEvent: (e) => subconsciousAgent.processEvent(e),
-                  onHousekeeping: runPostImpulseHousekeeping,
-                  eventType: 'impulse',
-                },
-                responseText,
-                roundStart,
-              );
-            }
-          } catch (error) {
-            console.error('impulse event processing error:', error);
-          }
-        })().catch((error) => {
-          console.error('impulse task error:', error);
-        });
-      } else if (task.name === 'subconscious-introspection' && subconsciousAgent && introspectionAssembler) {
-        (async () => {
-          try {
-            const event = await introspectionAssembler.assembleIntrospection();
-            await subconsciousAgent.processEvent(event);
-          } catch (error) {
-            console.error('introspection event processing error:', error);
-          }
-        })().catch((error) => {
-          console.error('introspection task error:', error);
-        });
-      } else if (task.name === 'archivist-incremental' && archivistPipeline) {
-        (async () => {
-          try {
-            console.log('[archivist] running incremental pipeline');
-            const result = await archivistPipeline.runIncremental();
-            console.log(`[archivist] incremental complete: scanned=${result.scanned}, deduped=${result.deduped}, pruned=${result.pruned}`);
-          } catch (error) {
-            console.error('[archivist] incremental pipeline error:', error);
-          }
-        })().catch((error) => {
-          console.error('[archivist] incremental task error:', error);
-        });
-      } else {
-        handleSystemSchedulerTask(task);
-      }
-    }
-
-    // Activity-aware dispatch: wraps original handlers
-    const wakeHandler = createWakeHandler({
-      activityManager: am,
-      onEvent: async (event) => {
-        const externalEvent = queuedEventToExternal(event);
-        schedulerEventQueue.push(externalEvent);
-        processSchedulerEvent().catch((error) => {
-          console.error('wake drain event processing error:', error);
-        });
-      },
-      trickleDelayMs: 5000,
-    });
-
-    const handleTransition = (task: { name: string }): void => {
-      (async () => {
-        if (task.name === 'transition-to-sleep') {
-          // Dispatch wrap-up to subconscious before sleep
-          if (subconsciousAgent && impulseAssembler) {
-            try {
-              const wrapUpEvent = await impulseAssembler.assembleWrapUp();
-              await subconsciousAgent.processEvent(wrapUpEvent);
-              await runPostImpulseHousekeeping();
-            } catch (error) {
-              console.error('[subconscious] wrap-up error:', error);
-            }
-          }
-          await am.transitionTo('sleeping');
-          console.log('[activity] transitioned to sleeping mode');
-        } else if (task.name === 'transition-to-wake') {
-          // Reset continuation budget for new wake cycle
-          continuationBudget?.resetCycle();
-
-          // Dispatch morning agenda to subconscious before queue drain
-          if (subconsciousAgent && impulseAssembler) {
-            try {
-              const morningEvent = await impulseAssembler.assembleMorningAgenda();
-              await subconsciousAgent.processEvent(morningEvent);
-              await runPostImpulseHousekeeping();
-            } catch (error) {
-              console.error('[subconscious] morning agenda error:', error);
-            }
-          }
-          await wakeHandler();
-        }
-      })().catch((error) => {
-        console.error('[activity] transition error:', error);
-      });
-    };
-
-    // Register activity-aware handlers BEFORE scheduler.start()
-    systemScheduler.onDue(createActivityDispatch({
-      activityManager: am,
-      originalHandler: handleSystemSchedulerTaskWithActivity,
-      onTransition: handleTransition,
-      suppressDuringSleep: SUPPRESS_DURING_SLEEP,
-    }));
-
-    agentScheduler.onDue(createActivityDispatch({
-      activityManager: am,
-      originalHandler: handleAgentSchedulerTask,
-      onTransition: handleTransition,
-    }));
-  } else {
-    // No activity: register original handlers directly
-    systemScheduler.onDue(handleSystemSchedulerTask);
-    agentScheduler.onDue(handleAgentSchedulerTask);
-  }
-
-  // Register hourly review job if not already scheduled
-  const existingTasks = await persistence.query<{ id: string }>(
-    `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-    ['system', 'review-predictions'],
-  );
-
-  if (existingTasks.length === 0) {
-    await systemScheduler.schedule({
-      id: crypto.randomUUID(),
-      name: 'review-predictions',
-      schedule: '0 * * * *', // Every hour at minute 0
-      payload: { type: 'prediction-review' },
-    });
-    console.log('review job scheduled (hourly)');
-  } else {
-    console.log('review job already scheduled');
-  }
-
-  // Register impulse task if subconscious is enabled and not already scheduled
-  if (subconsciousAgent && impulseAssembler && config.subconscious?.impulse_interval_minutes) {
-    const impulseMinutes = config.subconscious.impulse_interval_minutes;
-    const impulseCron = buildImpulseCron(impulseMinutes);
-
-    const existingImpulseTasks = await persistence.query<{ id: string }>(
-      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-      ['system', 'subconscious-impulse'],
-    );
-
-    if (existingImpulseTasks.length === 0) {
-      await systemScheduler.schedule({
-        id: crypto.randomUUID(),
-        name: 'subconscious-impulse',
-        schedule: impulseCron,
-        payload: { taskType: 'impulse' },
-      });
-      console.log(`impulse task scheduled (every ${impulseMinutes} minutes)`);
-    } else {
-      console.log('impulse task already scheduled');
-    }
-  }
-
-  // Register introspection task if subconscious is enabled and not already scheduled
-  if (subconsciousAgent && introspectionAssembler && config.subconscious?.impulse_interval_minutes) {
-    const impulseMinutes = config.subconscious.impulse_interval_minutes;
-    const offsetMinutes = config.subconscious.introspection_offset_minutes ?? 3;
-    const introspectionCron = buildIntrospectionCron(impulseMinutes, offsetMinutes);
-
-    const existingIntrospectionTasks = await persistence.query<{ id: string }>(
-      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-      ['system', 'subconscious-introspection'],
-    );
-
-    if (existingIntrospectionTasks.length === 0) {
-      await systemScheduler.schedule({
-        id: crypto.randomUUID(),
-        name: 'subconscious-introspection',
-        schedule: introspectionCron,
-        payload: { taskType: 'introspection' },
-      });
-      console.log(`introspection task scheduled (cron: ${introspectionCron}, offset: ${offsetMinutes}m from impulse)`);
-    } else {
-      console.log('introspection task already scheduled');
-    }
-  }
+  // Register default system tasks before schedulers start
+  await registerPreStartSystemTasks({
+    persistence,
+    systemScheduler,
+    owner: 'system',
+    hasImpulse: Boolean(subconsciousAgent && impulseAssembler),
+    hasIntrospection: Boolean(subconsciousAgent && introspectionAssembler),
+    impulseIntervalMinutes: config.subconscious?.impulse_interval_minutes,
+    introspectionOffsetMinutes: config.subconscious?.introspection_offset_minutes,
+  });
 
   // Start both schedulers
   agentScheduler.start();
   systemScheduler.start();
   console.log('schedulers started (agent + system)');
 
-  // --- Archivist task registration (before activity tasks) ---
-  if (config.archivist?.enabled !== false) {
-    const archivistIncrementalCron = config.archivist?.incremental_cron ?? '0 */3 * * *';
-
-    const existingIncrementalTasks = await persistence.query<{ id: string }>(
-      `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-      ['system', 'archivist-incremental'],
-    );
-
-    if (existingIncrementalTasks.length === 0) {
-      await systemScheduler.schedule({
-        id: crypto.randomUUID(),
-        name: 'archivist-incremental',
-        schedule: archivistIncrementalCron,
-        payload: { type: 'archivist-incremental' },
-      });
-      console.log(`archivist incremental task scheduled (${archivistIncrementalCron})`);
-    } else {
-      console.log('archivist incremental task already scheduled');
-    }
-
-    if (activityManager && activityScheduleConfig) {
-      const offsetHours = config.archivist?.sleep_offset_hours ?? 3;
-      const archivistSleepCron = sleepTaskCron(activityScheduleConfig.sleepSchedule, offsetHours, activityScheduleConfig.timezone);
-
-      const existingSleepTasks = await persistence.query<{ id: string }>(
-        `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-        ['system', 'sleep-archivist'],
-      );
-
-      if (existingSleepTasks.length === 0) {
-        await systemScheduler.schedule({
-          id: crypto.randomUUID(),
-          name: 'sleep-archivist',
-          schedule: archivistSleepCron,
-          payload: { type: 'sleep-archivist' },
-        });
-        console.log(`archivist sleep task scheduled (${archivistSleepCron})`);
-      } else {
-        console.log('archivist sleep task already scheduled');
-      }
-    }
-  }
-
-  // --- Activity task registration (after schedulers started) ---
-  if (activityManager && activityScheduleConfig) {
-    const { sleepSchedule, wakeSchedule, timezone } = activityScheduleConfig;
-
-    const activityTasks = [
-      { name: 'transition-to-sleep', schedule: sleepSchedule },
-      { name: 'transition-to-wake', schedule: wakeSchedule },
-      { name: 'sleep-compaction', schedule: sleepTaskCron(sleepSchedule, 2, timezone) },
-      { name: 'sleep-prediction-review', schedule: sleepTaskCron(sleepSchedule, 4, timezone) },
-      { name: 'sleep-pattern-analysis', schedule: sleepTaskCron(sleepSchedule, 6, timezone) },
-    ];
-
-    for (const task of activityTasks) {
-      const existing = await persistence.query<{ id: string }>(
-        `SELECT id FROM scheduled_tasks WHERE owner = $1 AND name = $2 AND cancelled = FALSE`,
-        ['system', task.name],
-      );
-      if (existing.length === 0) {
-        await systemScheduler.schedule({
-          id: crypto.randomUUID(),
-          name: task.name,
-          schedule: task.schedule,
-          payload: { type: 'activity', sleepTask: true },
-        });
-        console.log(`[activity] registered task: ${task.name} (${task.schedule})`);
-      }
-    }
-
-    console.log('[activity] all activity tasks registered');
-  }
+  // Register archivist and activity tasks after schedulers start
+  await registerPostStartSystemTasks({
+    persistence,
+    systemScheduler,
+    owner: 'system',
+    archivistEnabled: config.archivist?.enabled !== false,
+    incrementalCron: config.archivist?.incremental_cron,
+    sleepOffsetHours: config.archivist?.sleep_offset_hours,
+    activityScheduleConfig,
+  });
 
   // Set up readline interface for REPL
   const rl = readline.createInterface({

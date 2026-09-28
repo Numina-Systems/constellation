@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect, mock } from 'bun:test';
-import { processPendingMutations, performShutdown, createInteractionLoop, processEventQueue } from '@/index';
+import { processPendingMutations, performShutdown, createInteractionLoop } from '@/index';
+import { processEventQueue } from '@/orchestration';
 import type { Agent } from '@/agent/types';
 import type { MemoryManager } from '@/memory/manager';
 import type { PersistenceProvider } from '@/persistence/types';

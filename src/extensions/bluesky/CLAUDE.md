@@ -1,6 +1,6 @@
 # Bluesky DataSource
 
-Last verified: 2026-03-03
+Last verified: 2026-09-28
 
 ## Purpose
 First concrete `DataSource` implementation. Connects the agent to Bluesky via the AT Protocol, receiving posts/replies from a Jetstream firehose subscription and providing credentials for sandbox code to post back.
@@ -19,7 +19,7 @@ First concrete `DataSource` implementation. Connects the agent to Bluesky via th
 
 ## Dependencies
 - **Uses**: `src/extensions/data-source.ts` (DataSource/IncomingMessage), `src/config/schema.ts` (BlueskyConfig), `src/memory/store.ts` + `src/embedding/` (template seeding), `@atproto/api`, `@atcute/jetstream`
-- **Used by**: `src/index.ts` (composition root)
+- **Used by**: `src/index.ts` (composition root), `src/orchestration/` (EventDrain wraps EventQueue for serialized agent processing)
 - **Boundary**: This module does not import from `src/agent/` or `src/model/`. Event routing happens in the composition root.
 
 ## Key Decisions

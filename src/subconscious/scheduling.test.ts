@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { buildImpulseCron } from './impulse';
 import { createActivityDispatch } from '@/activity/dispatch';
-import { SUPPRESS_DURING_SLEEP } from '@/index';
+import { SUPPRESS_DURING_SLEEP } from '@/orchestration';
 import type { ActivityManager } from '@/activity/types';
 
 describe('subconscious.AC1.1: Impulse scheduling', () => {

@@ -1,6 +1,6 @@
 # Activity
 
-Last verified: 2026-05-17
+Last verified: 2026-09-28
 
 ## Purpose
 Implements a circadian sleep/wake cycle for the agent. During sleep, external events are queued instead of dispatched, and the agent runs reflective tasks (compaction, prediction review, pattern analysis). On wake, queued events trickle-drain back into the agent loop.
@@ -12,7 +12,7 @@ Implements a circadian sleep/wake cycle for the agent. During sleep, external ev
 
 ## Dependencies
 - **Uses**: `src/persistence/` (PersistenceProvider), `src/agent/types.ts` (ContextProvider), `croner` (cron parsing)
-- **Used by**: `src/index.ts` (composition root wiring)
+- **Used by**: `src/orchestration/` (dispatch wrapper, wake handler, and sleep-event builders wired into the scheduler handlers and transitions), `src/index.ts` (composition root creates the activity manager and context provider)
 - **Boundary**: Activity module does not import from agent loop, scheduler, or extensions directly. Integration happens in the composition root.
 
 ## Key Decisions

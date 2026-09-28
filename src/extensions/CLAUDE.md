@@ -1,6 +1,6 @@
 # Extensions
 
-Last verified: 2026-04-05
+Last verified: 2026-09-28
 
 ## Purpose
 Defines extension point interfaces and hosts concrete implementations. Extension interfaces are contracts that plugins implement to extend the agent's capabilities.
@@ -12,7 +12,7 @@ Defines extension point interfaces and hosts concrete implementations. Extension
 
 ## Dependencies
 - **Uses**: `src/tool/types.ts` (ToolProvider references ToolDefinition/ToolResult)
-- **Used by**: `src/index.ts` (composition root imports Bluesky source and DataSource registry), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port), `src/activity/` (activity interceptor consumes `IncomingMessage` type)
+- **Used by**: `src/index.ts` (composition root imports Bluesky source and DataSource registry), `src/scheduler/` (implements Scheduler interface), `src/tool/builtin/scheduling.ts` (scheduling tools depend on Scheduler port), `src/activity/` (activity interceptor consumes `IncomingMessage` type), `src/orchestration/` (EventDrain wraps EventQueue)
 - **Boundary**: Extension interfaces live here. Implementations live in `src/extensions/<name>/`.
 
 ## Extension Points

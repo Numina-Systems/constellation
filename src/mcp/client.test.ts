@@ -1,8 +1,23 @@
 // pattern: Functional Core (tests for pure functions and disconnected client behaviour)
 
 import { describe, it, expect } from 'bun:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { createMockMcpTransport, type MockMcpTransport } from '@/testing/mcp-transport.ts';
 import { mapToolResult, createMcpClient, buildTransportOptions } from './client.ts';
 import type { McpServerConfig } from './schema.ts';
+
+async function respondToRequest(transport: MockMcpTransport, method: string, result: Record<string, unknown>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const request = transport.sent.find((message): message is Extract<JSONRPCMessage, {method: string; id: number | string}> => 'method' in message && message.method === method && 'id' in message);
+    if (request !== undefined) {
+      transport.deliver({jsonrpc: '2.0', id: request.id, result});
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`timed out waiting for MCP request: ${method}`);
+}
 
 describe('mapToolResult', () => {
   describe('AC4.5: Map text ContentBlocks to ToolResult.output', () => {
@@ -129,6 +144,79 @@ describe('mapToolResult', () => {
       expect(result.error).toContain('my-special-server');
       expect(result.error).toContain('not connected');
     });
+  });
+});
+
+describe('createMcpClient reconnection', () => {
+  it('reconnects after onclose with capped exponential backoff and serves tool calls on the replacement client', async () => {
+    const transports: Array<MockMcpTransport> = [];
+    const delays: Array<number> = [];
+    let clientsCreated = 0;
+    const client = createMcpClient('reconnect-server', {transport: 'http', url: 'http://loopback.test/mcp'}, {
+      clientFactory: () => { clientsCreated += 1; return new Client({name: `test-${clientsCreated}`, version: '1'}); },
+      transportFactory: () => { const transport = createMockMcpTransport(); transports.push(transport); return transport; },
+      reconnect: {maxAttempts: 3, initialDelayMs: 10, maxDelayMs: 15, sleep: async (delayMs) => { delays.push(delayMs); }},
+    });
+
+    const initialConnect = client.connect();
+    const firstTransport = transports[0];
+    if (!firstTransport) throw new Error('expected initial transport');
+    await respondToRequest(firstTransport, 'initialize', {protocolVersion: '2025-11-25', capabilities: {tools: {}}, serverInfo: {name: 'loopback', version: '1'}});
+    await initialConnect;
+    await firstTransport.close();
+
+    for (let attempt = 0; attempt < 100 && transports.length < 2; attempt += 1) await Promise.resolve();
+    const reconnectedTransport = transports[1];
+    if (!reconnectedTransport) throw new Error('expected replacement transport');
+    await respondToRequest(reconnectedTransport, 'initialize', {protocolVersion: '2025-11-25', capabilities: {tools: {}}, serverInfo: {name: 'loopback', version: '1'}});
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    const toolCall = client.callTool('hello', {});
+    await respondToRequest(reconnectedTransport, 'tools/call', {content: [{type: 'text', text: 'reconnected'}]});
+    const result = await toolCall;
+    await client.disconnect();
+
+    expect(delays).toEqual([10]);
+    expect(clientsCreated).toBe(2);
+    expect(result.success).toBe(true);
+    expect(result.output).toBe('reconnected');
+  });
+
+  it('exposes a typed terminal error and structured log after the bounded retries fail', async () => {
+    const errors: Array<ReadonlyArray<unknown>> = [];
+    const originalError = console.error;
+    console.error = (...values: Array<unknown>) => { errors.push(values); };
+    const transports: Array<MockMcpTransport> = [];
+    let clientsCreated = 0;
+    const delays: Array<number> = [];
+    const client = createMcpClient('offline-server', {transport: 'http', url: 'http://loopback.test/mcp'}, {
+      clientFactory: () => {
+        clientsCreated += 1;
+        const sdkClient = new Client({name: `offline-${clientsCreated}`, version: '1'});
+        if (clientsCreated > 1) sdkClient.connect = async () => { throw new Error('offline'); };
+        return sdkClient;
+      },
+      transportFactory: () => { const transport = createMockMcpTransport(); transports.push(transport); return transport; },
+      reconnect: {maxAttempts: 2, initialDelayMs: 5, maxDelayMs: 10, sleep: async (delayMs) => { delays.push(delayMs); }},
+    });
+
+    try {
+      const initialConnect = client.connect();
+      const initialTransport = transports[0];
+      if (!initialTransport) throw new Error('expected initial transport');
+      await respondToRequest(initialTransport, 'initialize', {protocolVersion: '2025-11-25', capabilities: {tools: {}}, serverInfo: {name: 'loopback', version: '1'}});
+      await initialConnect;
+      await initialTransport.close();
+      for (let attempt = 0; attempt < 100 && !errors.some((values) => values[0] === '[mcp] reconnect exhausted'); attempt += 1) await Promise.resolve();
+      const result = await client.callTool('hello', {});
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('mcp_reconnect_exhausted');
+      expect(delays).toEqual([5, 10]);
+      expect(errors.some((values) => values[0] === '[mcp] reconnect exhausted' && (values[1] as Record<string, unknown>)['code'] === 'mcp_reconnect_exhausted')).toBe(true);
+      expect(clientsCreated).toBe(3);
+    } finally {
+      await client.disconnect();
+      console.error = originalError;
+    }
   });
 });
 

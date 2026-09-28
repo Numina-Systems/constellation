@@ -922,7 +922,7 @@ export function createAgent(
               // outcomes for cancellation and unresolved host calls.
               const code = String(toolUse.input['code']);
               const stubs = deps.registry.generateStubs();
-              const baseContext = await deps.getExecutionContext?.();
+              const baseContext = await deps.getExecutionContext?.(code);
               const context = {
                 ...(baseContext ?? {}),
                 signal: options?.signal ?? baseContext?.signal,

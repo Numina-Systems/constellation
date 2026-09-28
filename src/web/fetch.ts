@@ -101,10 +101,21 @@ export function createFetcher(config: FetcherConfig): (url: string, offset?: num
     let extractedHtml = "";
 
     try {
-      const parsedUrl = await validateUrl(url, config.resolveHost ?? resolvePublicHost);
-      const response = await (config.fetchFn ?? fetch)(parsedUrl, {
-        signal: AbortSignal.timeout(config.fetch_timeout),
-      });
+      let currentUrl = url;
+      let response: Response | null = null;
+      for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+        const parsedUrl = await validateUrl(currentUrl, config.resolveHost ?? resolvePublicHost);
+        response = await (config.fetchFn ?? fetch)(parsedUrl, {
+          signal: AbortSignal.timeout(config.fetch_timeout),
+          redirect: "manual",
+        });
+        if (response.status < 300 || response.status >= 400) break;
+        if (redirectCount === 5) throw new WebFetchError("Redirect limit exceeded");
+        const location = response.headers.get("location");
+        if (!location) throw new WebFetchError("Redirect response is missing Location");
+        currentUrl = new URL(location, parsedUrl).toString();
+      }
+      if (response === null) throw new WebFetchError("Failed to fetch URL");
 
       // Check content-type
       const contentType = response.headers.get("content-type");

@@ -494,6 +494,70 @@ describe("web-tools.AC2: Fetch pipeline", () => {
       expect(resolverCalls).toBe(0);
     });
 
+    it("blocks a redirect to a link-local IP before requesting it", async () => {
+      const requested: Array<string> = [];
+      const fetcher = createFetcherWithPorts({
+        fetch_timeout: 5000, max_fetch_size: 1000, cache_ttl: 1000,
+        fetchFn: (async (input: string | URL) => {
+          const target = String(input);
+          requested.push(target);
+          return new Response(null, {status: 302, headers: {location: "http://169.254.169.254/"}});
+        }) as unknown as typeof fetch,
+        resolveHost: async () => [{address: "93.184.216.34", family: 4}],
+      });
+      await expect(fetcher("https://public.example/")).rejects.toMatchObject({name: "WebFetchError"});
+      expect(requested).toEqual(["https://public.example/"]);
+    });
+
+    it("validates each hostname in a multi-hop chain and blocks a private final host", async () => {
+      const requested: Array<string> = [];
+      const resolved: Array<string> = [];
+      const fetcher = createFetcherWithPorts({
+        fetch_timeout: 5000, max_fetch_size: 1000, cache_ttl: 1000,
+        fetchFn: (async (input: string | URL) => {
+          const target = String(input);
+          requested.push(target);
+          return new Response(null, {status: 302, headers: {location: target.includes("start") ? "https://second.example/" : "https://private.example/"}});
+        }) as unknown as typeof fetch,
+        resolveHost: async hostname => {
+          resolved.push(hostname);
+          return [{address: hostname === "private.example" ? "192.168.1.8" : "93.184.216.34", family: 4}];
+        },
+      });
+      await expect(fetcher("https://start.example/")).rejects.toMatchObject({name: "WebFetchError"});
+      expect(resolved).toEqual(["start.example", "second.example", "private.example"]);
+      expect(requested).toEqual(["https://start.example/", "https://second.example/"]);
+    });
+
+    it("follows a public-to-public redirect successfully", async () => {
+      const requested: Array<string> = [];
+      const fetcher = createFetcherWithPorts({
+        fetch_timeout: 5000, max_fetch_size: 1000, cache_ttl: 1000,
+        fetchFn: (async (input: string | URL) => {
+          const target = String(input);
+          requested.push(target);
+          return target.includes("start")
+            ? new Response(null, {status: 302, headers: {location: "/final"}})
+            : new Response("<html><body><h1>Final page</h1></body></html>", {headers: {"content-type": "text/html"}});
+        }) as unknown as typeof fetch,
+        resolveHost: async () => [{address: "93.184.216.34", family: 4}],
+      });
+      const result = await fetcher("https://public.example/start");
+      expect(result.content).toContain("Final page");
+      expect(requested).toEqual(["https://public.example/start", "https://public.example/final"]);
+    });
+
+    it("rejects redirect chains that exceed the hop limit", async () => {
+      let fetchCalls = 0;
+      const fetcher = createFetcherWithPorts({
+        fetch_timeout: 5000, max_fetch_size: 1000, cache_ttl: 1000,
+        fetchFn: (async () => { fetchCalls++; return new Response(null, {status: 302, headers: {location: "/again"}}); }) as unknown as typeof fetch,
+        resolveHost: async () => [{address: "93.184.216.34", family: 4}],
+      });
+      await expect(fetcher("https://public.example/start")).rejects.toMatchObject({name: "WebFetchError"});
+      expect(fetchCalls).toBe(6);
+    });
+
     it("cancels an oversized stream and discards partial content", async () => {
       let cancelled = false;
       let fetchCalls = 0;

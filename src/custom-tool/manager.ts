@@ -25,7 +25,7 @@ export type CustomToolManager = Readonly<{
 
 type MutationValue = CustomToolDefinition | boolean | null;
 
-async function resolveReferencedSecrets(secretResolver: SecretResolver, code: string): Promise<Record<string, string>> {
+export async function resolveReferencedSecrets(secretResolver: SecretResolver, code: string): Promise<Record<string, string>> {
   const keys = await secretResolver.listKeys();
   const referencedKeys = keys.filter(key => new RegExp(`(^|[^A-Za-z0-9_$])${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}($|[^A-Za-z0-9_$])`).test(code));
   return secretResolver.resolve(referencedKeys);

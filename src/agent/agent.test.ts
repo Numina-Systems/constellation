@@ -735,6 +735,60 @@ describe('Agent loop', () => {
     expect(response).toBe('Code ran successfully');
   });
 
+  it('passes the executed code to getExecutionContext so secret resolution is scoped to referenced keys', async () => {
+    const receivedCode: Array<string> = [];
+
+    const mockRuntime: CodeRuntime = {
+      async execute(_code: string, _toolStubs: string) {
+        return {
+          success: true,
+          output: 'Code executed',
+          error: null,
+          tool_calls_made: 0,
+          duration_ms: 5,
+        };
+      },
+    };
+
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'code-scope-1',
+          name: 'execute_code',
+          input: { code: 'console.log(API_TOKEN)' },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Code ran successfully' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+      getExecutionContext: (code: string) => {
+        receivedCode.push(code);
+        return { secrets: {} };
+      },
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Execute some code');
+
+    expect(receivedCode).toEqual(['console.log(API_TOKEN)']);
+  });
+
   it('returns text response on max_tokens stop reason', async () => {
     const maxTokensResponse: ModelResponse = {
       content: [{ type: 'text', text: 'Response cut off due to max tokens' }],

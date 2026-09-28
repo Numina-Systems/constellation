@@ -102,22 +102,14 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
       const pruneResult = prune(scanResult.blocks);
       pruned = pruneResult.prunedIds.length;
 
-      // Delete pruned blocks
-      for (const id of pruneResult.prunedIds) {
-        try {
+      // Delete pruned blocks and publish the matching snapshot atomically.
+      await persistence.withTransaction(async () => {
+        for (const id of pruneResult.prunedIds) {
           await memoryStore.deleteForMaintenance(owner, id, maintenanceConstraints);
-        } catch (error) {
-          console.error(`Failed to delete pruned block ${id}:`, error);
         }
-      }
-
-      // Update state snapshot
-      const stateMap = Object.fromEntries(currentHashes);
-      await memoryManager.write(
-        'archivist:state',
-        JSON.stringify(stateMap),
-        'working',
-      );
+        const stateMap = Object.fromEntries(currentHashes);
+        await memoryManager.write('archivist:state', JSON.stringify(stateMap), 'working');
+      });
 
       return {
         mode: 'incremental',
@@ -286,15 +278,13 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
       pruneResult = prune(filteredBlocks);
       pruned = pruneResult.prunedIds.length;
 
-      // Delete pruned blocks
-      for (const id of pruneResult.prunedIds) {
-        try {
+      // Delete all pruned blocks as one atomic batch.
+      await persistence.withTransaction(async () => {
+        for (const id of pruneResult.prunedIds) {
           await memoryStore.deleteForMaintenance(owner, id, maintenanceConstraints);
-          currentHashes.delete(id);
-        } catch (error) {
-          console.error(`Failed to delete pruned block ${id}:`, error);
         }
-      }
+      });
+      for (const id of pruneResult.prunedIds) currentHashes.delete(id);
     } catch (error) {
       console.warn('Prune stage failed, continuing:', error);
       pruneResult = { prunedIds: [] };

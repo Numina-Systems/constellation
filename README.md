@@ -2,96 +2,122 @@
 
 A stateful AI agent daemon with persistent memory, tool use, and sandboxed code execution. Constellation maintains a three-tier memory system (core, working, archival) backed by PostgreSQL with pgvector, runs user-generated code in a Deno sandbox, and exposes an interactive REPL for conversation.
 
-## Prerequisites
+## Install and run
 
-- [Bun](https://bun.sh) >= 1.3
-- [Deno](https://deno.land) >= 2.6
-- [Docker](https://docs.docker.com/get-docker/) (for PostgreSQL)
-- An [Anthropic API key](https://console.anthropic.com/) (or an OpenAI-compatible endpoint)
-- An embedding provider — either [Ollama](https://ollama.com) running `nomic-embed-text`, or an OpenAI-compatible embedding API
+Constellation runs from source. This repository does not provide a separate end-user installer. Follow [Developer setup](#developer-setup) to install it.
 
-## Quick Start
+You need a terminal, PostgreSQL with pgvector, and access to model and embedding services. Hosted providers can require accounts and charge for requests. Local Ollama models do not require an API key. The repository does not declare a supported operating-system list.
 
-```bash
-# 1. Clone and install dependencies
-git clone <repo-url> && cd constellation
-bun install
+After setup:
 
-# 2. Start PostgreSQL with pgvector
-docker compose up -d
+1. Open your terminal application.
+2. Enter the `constellation` folder with `cd constellation` from its parent folder.
+3. Start the daemon:
 
-# 3. Set your API key
-export ANTHROPIC_API_KEY="sk-ant-..."
+   ```bash
+   bun run start
+   ```
 
-# 4. Run database migrations
-bun run migrate
+4. Wait for the `>` prompt in the interactive terminal, also called the REPL.
+5. Type a message and press Enter. An agent response confirms that the model connection works.
+6. Press Ctrl+C to stop the daemon.
 
-# 5. Start the daemon
-bun run start
-```
+On first run, Constellation seeds core memory blocks from `persona.md`. This step requires a working embedding service.
 
-On first run, Constellation seeds core memory blocks from `persona.md` and drops you into a REPL. Type a message and press enter.
+## Developer setup
 
-## Configuration
+### Prerequisites
 
-Constellation reads `config.toml` at the project root. Environment variables override config values for secrets.
+- [Git](https://git-scm.com/) to clone the source.
+- [Bun](https://bun.sh) for dependency installation, execution, and tests. Development dependencies use Bun 1.3 type definitions.
+- [Deno](https://deno.land) on `PATH` for sandbox execution and Deno integration tests.
+- [Docker Compose](https://docs.docker.com/compose/) for the supplied PostgreSQL 17/pgvector service, or an existing PostgreSQL service with pgvector.
+- A model provider: Anthropic, an OpenAI-compatible endpoint, Ollama, or OpenRouter.
+- An embedding provider: Ollama or an OpenAI-compatible embedding API.
 
-### config.toml
+The manifest does not enforce minimum Bun or Deno versions. `bun install` installs TypeScript from the declared `^5.7.0` range.
 
-```toml
-[agent]
-max_tool_rounds = 20        # max LLM tool-use rounds per message
-context_budget = 0.8         # fraction of context window to use
+### Set up the source and services
 
-[model]
-provider = "anthropic"       # "anthropic" or "openai-compat"
-name = "claude-sonnet-4-5-20250514"
+1. Copy this repository's clone URL from its hosting page.
+2. Clone it with `git clone` followed by that URL.
+3. Enter the cloned folder:
 
-[embedding]
-provider = "ollama"          # "openai" or "ollama"
-model = "nomic-embed-text"
-endpoint = "http://localhost:11434"
-dimensions = 768
+   ```bash
+   cd constellation
+   ```
 
-[database]
-url = "postgresql://constellation:constellation@localhost:5432/constellation"
+4. Install dependencies:
 
-[runtime]
-working_dir = "./workspace"
-allowed_hosts = ["api.anthropic.com"]
-```
+   ```bash
+   bun install
+   ```
 
-### Environment Variables
+5. Create the local configuration:
 
-| Variable | Overrides | Required |
+   ```bash
+   cp config.toml.example config.toml
+   ```
+
+6. Edit `[model]` in `config.toml` with your provider and an available model name.
+7. Edit `[embedding]` with your service endpoint, installed model, and matching output dimensions. Replace the example's non-local endpoint.
+8. Set credentials through the environment variables in the table below. Bun also reads a local `.env` file.
+9. If you use the supplied database, start it:
+
+   ```bash
+   docker compose up -d --wait
+   ```
+
+10. If you use another database, set `DATABASE_URL` to its connection URL.
+11. Apply migrations to the configured database:
+
+    ```bash
+    bun run migrate
+    ```
+
+12. Create the default sandbox folder with `mkdir -p workspace`. If you changed `runtime.working_dir`, create that folder instead.
+13. Start the daemon with `bun run start`. Wait for the `>` prompt.
+
+Review `config.toml` before starting. Enabled integrations can contact external services and modify stored data.
+
+### Configuration
+
+Constellation reads `config.toml` at the project root. See [config.toml.example](config.toml.example) for available settings.
+
+| Variable | Overrides | When needed |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | `model.api_key` (Anthropic provider) | Yes, unless using openai-compat |
-| `OPENAI_COMPAT_API_KEY` | `model.api_key` (openai-compat provider) | Yes, if using openai-compat |
-| `EMBEDDING_API_KEY` | `embedding.api_key` | Only for OpenAI embeddings |
-| `DATABASE_URL` | `database.url` | No (defaults to local Docker) |
+| `ANTHROPIC_API_KEY` | `model.api_key` for Anthropic | When using Anthropic |
+| `OPENAI_COMPAT_API_KEY` | `model.api_key` for openai-compat | When the endpoint requires authentication |
+| `OPENROUTER_API_KEY` | `model.api_key` for OpenRouter | When using OpenRouter |
+| `EMBEDDING_API_KEY` | `embedding.api_key` | When the embedding endpoint requires authentication |
+| `DATABASE_URL` | `database.url` | When not using the example's local database settings |
 
-### Using a Different LLM Provider
+Environment variables override the corresponding TOML values. Ollama does not require a model API key.
 
-To use an OpenAI-compatible endpoint instead of Anthropic:
+Git ignores `.env` and `config.toml`. Keep credentials out of tracked files. On Unix-like systems, restrict local configuration permissions with `chmod 600 .env config.toml` after creating both files.
 
-```toml
-[model]
-provider = "openai-compat"
-name = "your-model-name"
-base_url = "https://your-endpoint/v1"
-```
+### Development checks
+
+`bun run build` runs `tsc --noEmit`. It checks Bun-side TypeScript but excludes `src/runtime/deno/`. The manifest has no lint command.
 
 ```bash
-export OPENAI_COMPAT_API_KEY="your-key"
+bun run build
+bun test src/memory/manager.test.ts
 ```
+
+`bun test` runs the full suite. `bun test src/integration/` runs tests in that directory, not every integration test.
+
+**Use an isolated disposable database for database tests.** Tests can create, truncate, and drop tables. Check each test's database configuration before running it. Deno integration tests require real Deno subprocesses.
+
+Planning documents live in [docs/design-plans](docs/design-plans/), [docs/implementation-plans](docs/implementation-plans/), and [docs/test-plans](docs/test-plans/). Plans describe intent, not proof of completed features.
 
 ## Architecture
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
 │    Model      │     │   Embedding   │     │  Persistence  │
-│  (Anthropic/  │     │  (OpenAI/     │     │  (PostgreSQL   │
-│   OAI-compat) │     │   Ollama)     │     │   + pgvector)  │
+│  (provider    │     │  (OpenAI/     │     │  (PostgreSQL   │
+│   adapters)   │     │   Ollama)     │     │   + pgvector)  │
 └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
        │                    │                    │
        └──────────┬─────────┴────────────────────┘
@@ -110,47 +136,33 @@ export OPENAI_COMPAT_API_KEY="your-key"
 
 Each module defines port interfaces in `types.ts` with swappable adapters. The composition root in `src/index.ts` wires everything together.
 
-### Memory Tiers
+### Memory tiers
 
 | Tier | Description | Behaviour |
 |---|---|---|
 | **Core** | Identity, persona, system instructions | Always in context. Familiar-permission blocks require user approval to modify. |
 | **Working** | Active conversation context | Swapped in/out as needed. The agent manages this tier. |
-| **Archival** | Long-term storage | Semantic search via pgvector embeddings. Unlimited capacity. |
+| **Archival** | Long-term storage | Semantic search via pgvector embeddings. Capacity depends on database resources. |
 
-### Sandboxed Code Execution
+### Sandboxed code execution
 
-The agent can write and execute TypeScript code in a Deno subprocess. The sandbox enforces:
+The agent can write and execute TypeScript code in a Deno subprocess. In restricted mode, configuration controls these permissions:
 
-- Network access restricted to `allowed_hosts` only
-- Filesystem limited to `working_dir`
-- No subprocess spawning, env access, or FFI
-- Execution timeout and output size limits
-- Tool calls bridged back to the host via JSON-line IPC
+- Network access through `allowed_hosts`.
+- File access through `working_dir`, `allowed_read_paths`, and `allowed_write_paths`.
+- Subprocess access through `allowed_run`.
 
-## Development
+`runtime.unrestricted` disables the Deno permission restrictions. Do not enable it for untrusted code.
 
-```bash
-# Type-check
-bun run build
+The executor applies timeout and output limits. Tool calls reach the host through JSON-line IPC.
 
-# Run all tests
-bun test
-
-# Run a specific test file
-bun test src/memory/manager.test.ts
-
-# Run integration tests (requires Docker Postgres running)
-bun test src/integration/
-```
-
-### Project Structure
+### Project structure
 
 ```
 src/
 ├── config/        # TOML config loading, Zod schemas
 ├── persistence/   # PostgreSQL adapter, migrations
-├── model/         # LLM provider port (Anthropic, OpenAI-compat)
+├── model/         # LLM providers (Anthropic, OpenAI-compat, Ollama, OpenRouter)
 ├── embedding/     # Embedding provider port (OpenAI, Ollama)
 ├── memory/        # Three-tier memory system
 ├── tool/          # Tool registry, built-in tools

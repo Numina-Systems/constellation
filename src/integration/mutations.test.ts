@@ -12,12 +12,12 @@ import { createPostgresProvider } from '../persistence/postgres';
 import { createPostgresMemoryStore } from '../memory/postgres-store';
 import { createMemoryManager } from '../memory/manager';
 import { createMockEmbeddingProvider } from './test-helpers';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
 
 let persistence: ReturnType<typeof createPostgresProvider>;
+let database: TestDatabase;
 let mockEmbedding: EmbeddingProvider;
 
 async function cleanupTables(): Promise<void> {
@@ -28,12 +28,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('Familiar Mutation Approval Flow', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
 
     mockEmbedding = createMockEmbeddingProvider();
@@ -44,7 +40,7 @@ describe('Familiar Mutation Approval Flow', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('AC1.9: Mutation queuing for Familiar blocks', () => {

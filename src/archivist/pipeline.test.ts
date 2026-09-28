@@ -6,25 +6,21 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { ModelProvider, ModelResponse } from '@/model/types.js';
 import type { PersistenceProvider } from '@/persistence/types.js';
-import { createPostgresProvider } from '@/persistence/postgres.js';
 import { createPostgresMemoryStore } from '@/memory/postgres-store.js';
 import { createMemoryManager } from '@/memory/manager.js';
 import { createMockEmbeddingProvider } from '@/integration/test-helpers.js';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 import { createArchivistPipeline } from './pipeline.js';
 
 const TEST_OWNER = `test-archivist-${Date.now()}`;
 const TEST_MODEL_NAME = 'claude-3-5-sonnet';
 
+let database: TestDatabase;
 let persistence: PersistenceProvider;
 
 beforeAll(async () => {
-  const dbUrl = process.env['DATABASE_URL'] || 'postgres://postgres:postgres@localhost:5432/constellation';
-  persistence = createPostgresProvider({
-    url: dbUrl,
-  });
-
-  await persistence.connect();
-  await persistence.runMigrations();
+  database = await createTestDatabase();
+  persistence = database.persistence;
 });
 
 afterAll(async () => {
@@ -32,15 +28,15 @@ afterAll(async () => {
   const store = createPostgresMemoryStore(persistence);
   const blocks = await store.getBlocksByTier(TEST_OWNER, 'working');
   for (const block of blocks) {
-    await store.deleteBlock(block.id);
+    await store.deleteForMaintenance(TEST_OWNER, block.id, {allowedTiers: ['working', 'archival'], requireUnpinned: true, requireReadwrite: true});
   }
 
   const archivalBlocks = await store.getBlocksByTier(TEST_OWNER, 'archival');
   for (const block of archivalBlocks) {
-    await store.deleteBlock(block.id);
+    await store.deleteForMaintenance(TEST_OWNER, block.id, {allowedTiers: ['working', 'archival'], requireUnpinned: true, requireReadwrite: true});
   }
 
-  await persistence.disconnect();
+  await teardownTestDatabase(database);
 });
 
 /**
@@ -79,7 +75,7 @@ async function cleanupTestBlocks(owner: string, store: ReturnType<typeof createP
   const blocks = await store.getBlocksByTier(owner, 'working');
   for (const block of blocks) {
     try {
-      await store.deleteBlock(block.id);
+      await store.deleteForMaintenance(owner, block.id, {allowedTiers: ['working', 'archival'], requireUnpinned: true, requireReadwrite: true});
     } catch {
       // Ignore errors during cleanup
     }

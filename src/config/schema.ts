@@ -40,6 +40,8 @@ const ModelConfigSchema = z.object({
   output_tokens_per_minute: z.number().int().positive().optional(),
   min_output_reserve: z.number().int().positive().optional(),
   openrouter: OpenRouterConfigSchema.optional(),
+  context_window: z.number().int().positive().optional(),
+  stream_usage: z.boolean().optional(),
 });
 
 const EmbeddingConfigSchema = z.object({
@@ -61,6 +63,9 @@ const RuntimeConfigSchema = z.object({
   allowed_read_paths: z.array(z.string()).default([]),
   allowed_write_paths: z.array(z.string()).default([]),
   allowed_run: z.array(z.string()).default([]),
+  max_stdout_bytes: z.number().int().positive().default(4_194_304),
+  max_stderr_bytes: z.number().int().positive().default(65_536),
+  max_ipc_frame_bytes: z.number().int().positive().default(1_048_576),
 });
 
 const BlueskyConfigSchema = z
@@ -126,6 +131,9 @@ const SummarizationConfigSchema = z.object({
   compaction_max_retries: z.number().int().nonnegative().default(2),
   max_chunk_tokens: z.number().int().positive().optional(),
   max_consecutive_failures: z.number().int().positive().default(3),
+  cooldown_ms: z.number().int().nonnegative().default(60000),
+  context_window: z.number().int().positive().optional(),
+  safety_margin: z.number().int().nonnegative().optional(),
 });
 
 const WebConfigSchema = z.object({
@@ -284,7 +292,9 @@ export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type OpenRouterConfig = z.infer<typeof OpenRouterConfigSchema>;
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
-export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+type ParsedRuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+export type RuntimeConfig = Omit<ParsedRuntimeConfig, 'max_stdout_bytes' | 'max_stderr_bytes' | 'max_ipc_frame_bytes'> &
+  Partial<Pick<ParsedRuntimeConfig, 'max_stdout_bytes' | 'max_stderr_bytes' | 'max_ipc_frame_bytes'>>;
 export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
 export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
 export type WebConfig = z.infer<typeof WebConfigSchema>;

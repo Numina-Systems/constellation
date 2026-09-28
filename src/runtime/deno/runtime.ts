@@ -2,198 +2,128 @@
 /// <reference lib="deno.window" />
 // pattern: Imperative Shell
 
-/**
- * Deno-side IPC bridge runtime for code execution.
- * This script runs inside the Deno sandbox and handles:
- * 1. Reading JSON-line IPC messages from stdin (host responses)
- * 2. Providing __callTool__ function to user code for tool invocations
- * 3. Capturing console.log and output() calls as IPC messages
- * 4. Evaluating and executing user code with access to the tool bridge
- *
- * The host concatenates: runtime.ts + tool stubs + user code into a single file.
- */
+/** Deno-side IPC bridge. Frames are counted as bytes before UTF-8 decoding. */
 
-import { TextLineStream } from "jsr:@std/streams";
-
-// Reusable text encoder instance for IPC messages
 const encoder = new TextEncoder();
+const decoder = new TextDecoder('utf-8', {fatal: true});
+const MAX_IPC_FRAME_BYTES = 1_048_576;
+const MAX_DIAGNOSTIC_BYTES = 2_000;
 
-// IPC Message Types (mirrors types.ts from host)
 type IpcToolCall = {
-  type: "__tool_call__";
+  type: '__tool_call__';
   name: string;
   params: Record<string, unknown>;
   call_id: string;
 };
+type IpcToolResult = {type: '__tool_result__'; call_id: string; result: {success: boolean; output: string; error?: string}};
+type IpcToolError = {type: '__tool_error__'; call_id: string; error: string};
+type IpcOutput = {type: '__output__'; data: string};
+type IpcDebug = {type: '__debug__'; message: string};
+type IpcMessage = IpcToolCall | IpcToolResult | IpcToolError | IpcOutput | IpcDebug;
 
-type IpcToolResult = {
-  type: "__tool_result__";
-  call_id: string;
-  result: {
-    success: boolean;
-    output: string;
-    error?: string;
-  };
+type PendingCall = {
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (error: Error) => void;
 };
 
-type IpcToolError = {
-  type: "__tool_error__";
-  call_id: string;
-  error: string;
-};
-
-type IpcOutput = {
-  type: "__output__";
-  data: string;
-};
-
-type IpcDebug = {
-  type: "__debug__";
-  message: string;
-};
-
-type IpcMessage =
-  | IpcToolCall
-  | IpcToolResult
-  | IpcToolError
-  | IpcOutput
-  | IpcDebug;
-
-// Global state for IPC communication
 let callIdCounter = 0;
-const pendingCalls = new Map<
-  string,
-  {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-  }
->();
+const pendingCalls = new Map<string, PendingCall>();
 
-// Helper to generate unique call IDs
 function generateCallId(): string {
-  return `call_${++callIdCounter}`;
+  callIdCounter += 1;
+  return `call_${callIdCounter}`;
 }
 
-// Helper to write IPC messages to stdout
 function writeMessage(message: IpcMessage): void {
-  const json = JSON.stringify(message);
-  Deno.stdout.writeSync(encoder.encode(json + "\n"));
+  const bytes = encoder.encode(`${JSON.stringify(message)}\n`);
+  if (bytes.byteLength > MAX_IPC_FRAME_BYTES) {
+    throw new Error(`IPC frame exceeds max size of ${MAX_IPC_FRAME_BYTES} bytes`);
+  }
+  Deno.stdout.writeSync(bytes);
 }
 
-// Global output and debug functions (available to user code)
-// Note: Deno's globalThis type is narrowly typed. We cast through unknown to Record<string, unknown>
-// to allow dynamic property assignment for user code globals, which is necessary for concatenated user code.
-(globalThis as unknown as Record<string, unknown>)["output"] = function (
-  data: string
-): void {
-  writeMessage({
-    type: "__output__",
-    data,
-  });
-};
+function writeDiagnostic(message: string): void {
+  try {
+    writeMessage({type: '__debug__', message: message.slice(0, MAX_DIAGNOSTIC_BYTES)});
+  } catch {
+    // The host may already have closed stdout; there is no safe recovery in the bridge.
+  }
+}
 
-(globalThis as unknown as Record<string, unknown>)["debug"] = function (
-  message: string
-): void {
-  writeMessage({
-    type: "__debug__",
-    message,
-  });
+(globalThis as unknown as Record<string, unknown>)['output'] = function (data: string): void {
+  writeMessage({type: '__output__', data});
 };
-
-// Bridge function: allows user code to call host-side tools
-// This is available as __callTool__ in the global scope
-// See note above about globalThis casting.
-(globalThis as unknown as Record<string, unknown>)["__callTool__"] = async function (
+(globalThis as unknown as Record<string, unknown>)['debug'] = function (message: string): void {
+  writeDiagnostic(message);
+};
+(globalThis as unknown as Record<string, unknown>)['__callTool__'] = async function (
   name: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown> = {},
 ): Promise<unknown> {
   const callId = generateCallId();
-
-  // Create a promise for this tool call
   const resultPromise = new Promise<unknown>((resolve, reject) => {
-    pendingCalls.set(callId, { resolve, reject });
+    pendingCalls.set(callId, {resolve, reject});
   });
-
-  // Send the tool call request to the host
-  writeMessage({
-    type: "__tool_call__",
-    name,
-    params,
-    call_id: callId,
-  });
-
-  // Wait for the host to respond with the result
+  writeMessage({type: '__tool_call__', name, params, call_id: callId});
   try {
-    const result = await resultPromise;
-    return result;
+    return await resultPromise;
   } finally {
     pendingCalls.delete(callId);
   }
 };
 
-// Capture console.log to send as __output__ messages
-// Note: Do NOT call the original console.log - stdout is reserved for IPC communication.
-// User code should use output() instead. For debugging, stderr is available.
 console.log = function (...args: unknown[]): void {
-  const message = args.map((arg) => String(arg)).join(" ");
-  writeMessage({
-    type: "__output__",
-    data: message,
-  });
+  writeMessage({type: '__output__', data: args.map((arg) => String(arg)).join(' ')});
 };
 
-// Set up stdin reader to receive IPC messages from host
+function isResponse(value: unknown): value is IpcToolResult | IpcToolError {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate['type'] === '__tool_error__') {
+    return typeof candidate['call_id'] === 'string' && typeof candidate['error'] === 'string';
+  }
+  return candidate['type'] === '__tool_result__' && typeof candidate['call_id'] === 'string' &&
+    typeof candidate['result'] === 'object' && candidate['result'] !== null;
+}
+
 async function startIpcListener(): Promise<void> {
-  const reader = Deno.stdin.readable
-    .pipeThrough(
-      new TransformStream({
-        transform(chunk: Uint8Array, controller) {
-          const text = new TextDecoder().decode(chunk);
-          controller.enqueue(text);
-        },
-      })
-    )
-    .pipeThrough(new TextLineStream());
-
-  for await (const line of reader) {
-    if (!line.trim()) continue;
-
-    try {
-      const message = JSON.parse(line) as IpcMessage;
-
-      if (message.type === "__tool_result__") {
-        const pending = pendingCalls.get(message.call_id);
-        if (pending) {
-          pending.resolve(message.result);
+  const reader = Deno.stdin.readable.getReader();
+  let pending = new Uint8Array(0);
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      const bytes = chunk.value ?? new Uint8Array(0);
+      const combined = new Uint8Array(pending.byteLength + bytes.byteLength);
+      combined.set(pending);
+      combined.set(bytes, pending.byteLength);
+      let start = 0;
+      for (let index = 0; index < combined.byteLength; index += 1) {
+        if (combined[index] !== 10) continue;
+        const line = combined.slice(start, index);
+        if (line.byteLength > MAX_IPC_FRAME_BYTES) throw new Error('IPC frame exceeds byte bound');
+        if (line.byteLength > 0) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(decoder.decode(line));
+          } catch (error) {
+            throw new Error(`malformed nonempty IPC frame: ${String(error)}`);
+          }
+          if (!isResponse(parsed)) throw new Error('malformed nonempty IPC frame');
+          if (parsed.type === '__tool_result__') pendingCalls.get(parsed.call_id)?.resolve(parsed.result);
+          else pendingCalls.get(parsed.call_id)?.reject(new Error(parsed.error));
         }
-      } else if (message.type === "__tool_error__") {
-        const pending = pendingCalls.get(message.call_id);
-        if (pending) {
-          pending.reject(new Error(message.error));
-        }
+        start = index + 1;
       }
-    } catch (error) {
-      writeMessage({
-        type: "__debug__",
-        message: `Failed to parse IPC message: ${String(error)}`,
-      });
+      pending = combined.slice(start);
+      if (pending.byteLength > MAX_IPC_FRAME_BYTES) throw new Error('unterminated IPC frame exceeds byte bound');
+      if (chunk.done) {
+        if (pending.byteLength > 0) throw new Error('unterminated nonempty IPC frame');
+        break;
+      }
     }
+  } finally {
+    reader.releaseLock();
   }
 }
 
-// Start the IPC listener in background
-startIpcListener().catch((error) => {
-  writeMessage({
-    type: "__debug__",
-    message: `IPC listener error: ${String(error)}`,
-  });
-});
-
-// User code is appended after this runtime bridge by the host executor.
-// The user code has access to:
-// - __callTool__(name, params) - async function to invoke host tools
-// - output(data) - function to send output to host
-// - debug(message) - function to send debug messages to host
-// - console.log - redirected to output()
-// All other Deno APIs are available subject to permission flags from the host.
+void startIpcListener().catch((error: unknown) => writeDiagnostic(`IPC listener error: ${String(error)}`));

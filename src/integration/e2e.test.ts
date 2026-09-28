@@ -19,11 +19,10 @@ import { createDenoExecutor } from '../runtime/executor';
 import { createAgent } from '../agent/agent';
 import { seedCoreMemory } from '../index';
 import { createMockEmbeddingProvider } from './test-helpers';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 const TEST_OWNER = 'test-user-' + Math.random().toString(36).substring(7);
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 let mockEmbedding: EmbeddingProvider;
 
@@ -97,12 +96,8 @@ function createMockModelProvider(
 
 describe('End-to-End Integration Tests', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
 
     mockEmbedding = createMockEmbeddingProvider();
@@ -113,7 +108,7 @@ describe('End-to-End Integration Tests', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('AC6.4: First-run seeding', () => {

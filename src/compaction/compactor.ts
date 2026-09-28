@@ -7,12 +7,15 @@
  * PersistenceProvider (message deletion), CompactionConfig (tuning parameters).
  */
 
-import { randomUUID } from 'crypto';
 import type { ConversationMessage } from '../agent/types.js';
 import type { ModelProvider, TextBlock, ModelRequest } from '../model/types.js';
 import { ModelError } from '../model/types.js';
 import type { MemoryManager } from '../memory/manager.js';
 import type { PersistenceProvider } from '../persistence/types.js';
+import type { ConversationHistoryStore } from '../persistence/conversation-history-store.js';
+import { createCompactionBreaker } from './breaker.js';
+import type { BreakerClock } from './breaker.js';
+import { runDurableCompaction } from './durable.js';
 import type {
   SummaryBatch,
   CompactionResult,
@@ -20,7 +23,7 @@ import type {
   Compactor,
   ImportanceScoringConfig,
 } from './types.js';
-import { DEFAULT_SCORING_CONFIG } from './types.js';
+import { CompactionDurabilityRequiredError, DEFAULT_SCORING_CONFIG } from './types.js';
 import { scoreMessage } from './scoring.js';
 import {
   buildSummarizationRequest,
@@ -33,8 +36,12 @@ export type CreateCompactorOptions = {
   readonly model: ModelProvider;
   readonly memory: MemoryManager;
   readonly persistence: PersistenceProvider;
+  readonly historyStore?: ConversationHistoryStore;
   readonly config: CompactionConfig;
   readonly modelName: string;
+  /** Optional deterministic clock/sleep hooks for deadline-aware callers and tests. */
+  readonly clock?: BreakerClock;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
 };
 
 /**
@@ -585,8 +592,9 @@ const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
 export function createCompactor(
   options: CreateCompactorOptions,
 ): Compactor {
-  const { model, memory, persistence, config, modelName } = options;
+  const { model, memory, config, modelName } = options;
   const maxConsecutiveFailures = config.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES;
+  const breaker = createCompactionBreaker({threshold: maxConsecutiveFailures, cooldownMs: config.cooldownMs, clock: options.clock});
   let consecutiveFailures = 0;
 
   async function summarizeChunk(
@@ -709,210 +717,35 @@ export function createCompactor(
     throw lastError;
   }
 
+  // Retained only for compatibility with the pure helper exports; durable compaction
+  // performs archive and retry orchestration in durable.ts.
+  void archiveBatch;
+  void summarizeChunkWithRetry;
+
   async function compress(
     history: ReadonlyArray<ConversationMessage>,
     conversationId: string,
+    preparation?: import('./types.js').CompactionPreparationOptions,
   ): Promise<CompactionResult> {
-    // Circuit breaker: skip compaction after too many consecutive failures
-    if (consecutiveFailures >= maxConsecutiveFailures) {
-      console.warn(
-        `compaction circuit breaker: skipping after ${consecutiveFailures} consecutive failures`,
-      );
-      const tokenEstimate = estimateTokens(
-        history.map((m) => m.content).join(''),
-      );
-      return {
-        history,
-        batchesCreated: 0,
-        messagesCompressed: 0,
-        tokensEstimateBefore: tokenEstimate,
-        tokensEstimateAfter: tokenEstimate,
-        failed: true,
-      };
+    if (options.historyStore) {
+      const result = await runDurableCompaction(history, conversationId, {model, historyStore: options.historyStore, config, modelName, breaker, clock: options.clock, sleep: options.sleep}, preparation);
+      consecutiveFailures = breaker.status().consecutiveFailures;
+      return result;
     }
+    // Dual-mode semantics: production must use the durable history boundary; the legacy
+    // no-store mode is retained only as a typed refusal for old callers, never as a delete path.
+    throw new CompactionDurabilityRequiredError();
 
-    try {
-      // 1. Split history
-      const { toCompress, toKeep, priorSummary } = splitHistory(
-        history,
-        config.keepRecent,
-        config.scoring,
-      );
-
-      // 2. Check if there's anything to compress
-      if (toCompress.length === 0) {
-        // No-op: return original history
-        const tokensBefore = estimateTokens(
-          history.map((m) => m.content).join(''),
-        );
-        return {
-          history,
-          batchesCreated: 0,
-          messagesCompressed: 0,
-          tokensEstimateBefore: tokensBefore,
-          tokensEstimateAfter: tokensBefore,
-        };
-      }
-
-      // 3. Get system prompt for summarization
-      const systemPrompt = config.prompt;
-
-      // 4. Chunk messages (prefer token-budget chunking when configured)
-      // Reserve headroom for summarization overhead (system prompt, directive, output tokens).
-      // Prior summary is only passed to the first chunk, so reserve maxSummaryTokens as worst case.
-      let effectiveBudget: number | undefined;
-      if (config.maxChunkTokens) {
-        const overhead = computeSummarizationOverhead(
-          systemPrompt,
-          priorSummary?.content ?? '',
-          config.maxSummaryTokens,
-        );
-        effectiveBudget = Math.max(100, config.maxChunkTokens - overhead);
-      }
-      const chunks = effectiveBudget
-        ? chunkMessagesByTokenBudget(toCompress, effectiveBudget)
-        : chunkMessages(toCompress, config.chunkSize);
-
-      // 5. Summarize each chunk independently (no fold-in).
-      // Prior summary context is passed to the first chunk only to maintain continuity
-      // with previous compaction cycles. Subsequent chunks are summarized in isolation
-      // so the accumulated summary never grows beyond maxSummaryTokens.
-      const batches: Array<SummaryBatch> = [];
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]!;
-        const existingSummary = i === 0 ? (priorSummary?.content || '') : '';
-
-        const summaryText = await summarizeChunkWithRetry(
-          chunk,
-          existingSummary,
-          systemPrompt,
-          config.chunkSize,
-        );
-
-        const firstChunkMsg = chunk[0];
-        const lastChunkMsg = chunk[chunk.length - 1];
-        if (firstChunkMsg && lastChunkMsg) {
-          const batch: SummaryBatch = {
-            content: summaryText,
-            depth: 0,
-            startTime: firstChunkMsg.created_at,
-            endTime: lastChunkMsg.created_at,
-            messageCount: chunk.length,
-          };
-
-          batches.push(batch);
-        }
-      }
-
-      // 6. Archive each batch
-      for (const batch of batches) {
-        await archiveBatch(batch, conversationId);
-      }
-
-      // 7. Check if re-summarization is needed and perform it
-      const allBatches = await getCompactionBatches(memory, conversationId);
-      if (shouldResummarize(allBatches.length, config)) {
-        await resummarizeBatches({
-          batches: allBatches,
-          conversationId,
-          memory,
-          model,
-          modelName,
-          config,
-          systemPrompt,
-        });
-      }
-
-      // 8. Rebuild batch list after potential re-summarization
-      const finalBatches = await getCompactionBatches(memory, conversationId);
-
-      // 9. Delete old messages from database (including prior clip-archive if present)
-      const idsToDelete = toCompress.map((m) => m.id);
-      if (priorSummary) {
-        idsToDelete.push(priorSummary.id);
-      }
-      await persistence.query(
-        'DELETE FROM messages WHERE id = ANY($1)',
-        [idsToDelete],
-      );
-
-      // 10. Build clip-archive content
-      const clipArchiveContent = buildClipArchive(
-        finalBatches.map((b) => b.batch),
-        config,
-        toCompress.length,
-      );
-
-      // 11. Insert clip-archive as a system message.
-      // Use a timestamp just before the first kept message so the clip-archive
-      // sorts before kept messages (and any in-flight tool call messages) on reload.
-      const clipArchiveId = randomUUID();
-      const firstKeptTime = toKeep[0]?.created_at ?? new Date();
-      const clipArchiveTime = new Date(firstKeptTime.getTime() - 1);
-      await persistence.query(
-        'INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [clipArchiveId, conversationId, 'system', clipArchiveContent, clipArchiveTime],
-      );
-
-      // 12. Build the clip-archive ConversationMessage object
-      const clipArchiveMessage: ConversationMessage = {
-        id: clipArchiveId,
-        conversation_id: conversationId,
-        role: 'system',
-        content: clipArchiveContent,
-        created_at: clipArchiveTime,
-      };
-
-      // 13. Calculate token estimates
-      const tokensBefore = estimateTokens(
-        history.map((m) => m.content).join(''),
-      );
-      const compressedHistory = [clipArchiveMessage, ...toKeep];
-      const tokensAfter = estimateTokens(
-        compressedHistory.map((m) => m.content).join(''),
-      );
-
-      // 14. Reset circuit breaker on success and return result
-      consecutiveFailures = 0;
-      return {
-        history: compressedHistory,
-        batchesCreated: batches.length,
-        messagesCompressed: toCompress.length,
-        tokensEstimateBefore: tokensBefore,
-        tokensEstimateAfter: tokensAfter,
-      };
-    } catch (error) {
-      consecutiveFailures++;
-      console.error('compaction pipeline failed', {
-        conversationId,
-        error: String(error),
-        consecutiveFailures,
-        maxConsecutiveFailures,
-      });
-      if (consecutiveFailures >= maxConsecutiveFailures) {
-        console.warn(
-          `compaction circuit breaker tripped after ${consecutiveFailures} consecutive failures — skipping future attempts`,
-        );
-      }
-      const tokenEstimate = estimateTokens(
-        history.map((m) => m.content).join(''),
-      );
-      return {
-        history,
-        batchesCreated: 0,
-        messagesCompressed: 0,
-        tokensEstimateBefore: tokenEstimate,
-        tokensEstimateAfter: tokenEstimate,
-        failed: true,
-      };
-    }
+    /* Compaction is durable-only. The legacy in-memory path was removed because
+     * transcript deletion and archive publication must be one history-store commit. */
   }
 
   return {
     compress,
     get consecutiveFailures() {
-      return consecutiveFailures;
+      return options.historyStore ? breaker.status().consecutiveFailures : consecutiveFailures;
     },
+    status: () => ({breaker: breaker.status(), consecutiveFailures: options.historyStore ? breaker.status().consecutiveFailures : consecutiveFailures}),
+    reset: () => { breaker.reset(); consecutiveFailures = 0; },
   };
 }

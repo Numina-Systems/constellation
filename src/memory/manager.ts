@@ -8,6 +8,8 @@
 
 import type { EmbeddingProvider } from '../embedding/types.ts';
 import type { MemoryStore } from './store.ts';
+import {MemoryError} from '@/errors/index.js';
+import {evaluatePublicMemoryDeletion} from './deletion-policy.ts';
 import type {
   MemoryBlock,
   MemorySearchResult,
@@ -15,6 +17,7 @@ import type {
   MemoryTier,
   MemoryWriteResult,
   PendingMutation,
+  WorkingMemoryReplacementBlock,
 } from './types.ts';
 
 export interface MemoryManager {
@@ -37,6 +40,8 @@ export interface MemoryManager {
   ): Promise<MemoryWriteResult>;
   list(tier?: MemoryTier): Promise<Array<MemoryBlock>>;
   deleteBlock(id: string): Promise<void>;
+  /** Phase 3 restore wiring will call this atomic working-memory capability. */
+  replaceWorkingMemory?(blocks: ReadonlyArray<WorkingMemoryReplacementBlock>): Promise<Array<MemoryBlock>>;
   moveBlock(id: string, targetTier: MemoryTier): Promise<MemoryBlock>;
   getStats(tier?: MemoryTier): Promise<MemoryStats>;
 
@@ -191,16 +196,32 @@ export function createMemoryManager(
   }
 
   async function deleteBlock(id: string): Promise<void> {
-    // Log the delete event before deletion so the FK is still valid.
-    // With ON DELETE SET NULL, the event's block_id becomes null after the block is removed.
-    await store.logEvent({
-      block_id: id,
-      event_type: 'delete',
-      old_content: null,
-      new_content: null,
-    });
+    if (!id.trim()) {
+      throw new MemoryError('BLOCK_NOT_FOUND', 'memory block not found', {blockId: id});
+    }
 
-    await store.deleteBlock(id);
+    const block = await store.getBlock(id);
+    const decision = evaluatePublicMemoryDeletion(owner, block);
+    if (!decision.allowed) {
+      throw new MemoryError('PERMISSION_DENIED', decision.message, {reason: decision.reason});
+    }
+
+    // The store repeats the owner and permission check under a row lock before
+    // publishing the delete event, closing the check/use race.
+    await store.deleteBlock(id, owner);
+  }
+
+  async function replaceWorkingMemory(
+    blocks: ReadonlyArray<WorkingMemoryReplacementBlock>,
+  ): Promise<Array<MemoryBlock>> {
+    if (blocks.some((block) => !block.label.trim())) {
+      throw new MemoryError('MUTATION_REJECTED', 'working memory labels must not be empty');
+    }
+    const replacement = store.replaceWorkingMemory;
+    if (!replacement) {
+      throw new MemoryError('MUTATION_REJECTED', 'working memory replacement is unavailable');
+    }
+    return replacement(owner, blocks);
   }
 
   async function moveBlock(
@@ -328,6 +349,7 @@ export function createMemoryManager(
     write,
     list,
     deleteBlock,
+    replaceWorkingMemory,
     moveBlock,
     getStats,
     getPendingMutations,

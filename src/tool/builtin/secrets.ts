@@ -5,6 +5,7 @@
  * These tools delegate to the SecretStore port interface.
  */
 
+import {isJavaScriptIdentifier, reservedRuntimeBindings} from '@/custom-tool/validation.js';
 import type { SecretStore } from '../../secrets/types.js';
 import type { Tool } from '../types.js';
 
@@ -14,7 +15,7 @@ import type { Tool } from '../types.js';
  * Can contain letters, digits, underscores, or dollar signs.
  */
 function isValidIdentifier(key: string): boolean {
-  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key);
+  return isJavaScriptIdentifier(key);
 }
 
 type SecretToolDeps = {
@@ -55,7 +56,14 @@ export function createSecretTools(deps: SecretToolDeps): ReadonlyArray<Tool> {
         return {
           success: false,
           output: '',
-          error: `invalid secret name "${key}": must be a valid identifier (letters, digits, underscores, starting with letter or underscore)`,
+          error: `invalid secret name "${key}": must be a valid non-reserved identifier`,
+        };
+      }
+      if (reservedRuntimeBindings().has(key)) {
+        return {
+          success: false,
+          output: '',
+          error: `invalid secret name "${key}": reserved by the execution environment`,
         };
       }
 

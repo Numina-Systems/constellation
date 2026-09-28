@@ -9,9 +9,12 @@ export type {
   MemorySearchResult,
   MemoryStats,
   MemoryWriteResult,
+  WorkingMemoryReplacementBlock,
 } from './types.ts';
 
-export type { MemoryStore } from './store.ts';
+export type {MemoryMaintenanceStore, MemoryStore, MemoryStoreWithMaintenance} from './store.ts';
+export {evaluateMaintenanceMemoryMutation, evaluatePublicMemoryDeletion} from './deletion-policy.ts';
+export type {MaintenanceMemoryConstraints, MemoryDeletionDecision, MemoryDeletionRejection, MaintenanceMemoryDecision} from './deletion-policy.ts';
 
 export type { MemoryManager } from './manager.ts';
 

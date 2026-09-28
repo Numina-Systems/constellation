@@ -5,6 +5,10 @@ max_output_size = 1048576
 code_timeout = 60000
 max_tool_calls_per_exec = 25
 context_budget = 0.8
+# Raw host/sandbox protocol limits (bytes; counted before decoding).
+# max_stdout_bytes = 4194304
+# max_stderr_bytes = 65536
+# max_ipc_frame_bytes = 1048576
 
 [model]
 provider = "anthropic"
@@ -13,6 +17,8 @@ name = "claude-sonnet-4-5-20250514"
 # input_tokens_per_minute = 40000
 # output_tokens_per_minute = 8000
 # min_output_reserve = 1024
+# context_window = 200000  # Set the provider's verified inference context window.
+# stream_usage = false    # Generic OpenAI-compatible endpoints require explicit opt-in.
 
 # Ollama (local models):
 # [model]
@@ -64,8 +70,11 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # # Context overflow guard settings
 # compaction_timeout = 120000       # Timeout in ms for summarisation LLM calls (default: 120000)
 # compaction_max_retries = 2        # Number of retries with halved chunk size on timeout (default: 2)
-# max_chunk_tokens = 100000         # Token budget per chunk (optional; when set, overrides chunk_size with token-based splitting)
-# max_consecutive_failures = 3      # Circuit breaker: skip compaction after N consecutive failures (default: 3)
+# max_chunk_tokens = 100000         # Soft payload cap per chunk; not a context window.
+# max_consecutive_failures = 3      # Circuit breaker transient threshold (default: 3)
+# cooldown_ms = 60000               # OPEN -> HALF_OPEN cooldown (default: 60000).
+# context_window = 200000           # Required for a separately configured summarizer.
+# safety_margin = 4000              # Optional fixed budget margin; default is max(256, ceil(window * .02)).
 
 # Ollama summarization (local models):
 # [summarization]
@@ -77,6 +86,8 @@ allowed_hosts = ["api.anthropic.com", "api.moonshot.ai", "bsky.social"]
 # max_summary_tokens = 1024
 # compaction_timeout = 120000
 # compaction_max_retries = 2
+# context_window = 200000           # Required unless this is the identical inference model.
+# cooldown_ms = 60000
 
 # Bluesky integration. Requires handle, app_password, and did when enabled.
 # For production, use environment variables: BLUESKY_HANDLE, BLUESKY_APP_PASSWORD

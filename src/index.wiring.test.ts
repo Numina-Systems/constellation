@@ -12,6 +12,9 @@
 
 import { describe, it, expect, mock } from 'bun:test';
 import { createShutdownHandler, processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
+import { createToolRegistry } from '@/tool/registry';
+import { connectMcpServers, createMcpToolProvider, publishMcpRegistrations } from '@/mcp';
+import type { McpClient, McpPromptResult, McpToolInfo } from '@/mcp';
 import { createPostgresScheduler } from '@/scheduler';
 import { createPredictionStore, createTraceRecorder, createPredictionTools, createIntrospectionTools, createPredictionContextProvider, shouldSkipReview } from '@/reflexion';
 import { createSchedulingTools } from '@/tool/builtin/scheduling';
@@ -22,7 +25,73 @@ import type { PersistenceProvider } from '@/persistence/types';
 import type { Interface as ReadlineInterface } from 'readline';
 import type { TraceStore, OperationTrace } from '@/reflexion';
 import type { DataSourceRegistry } from '@/extensions/data-source';
-import type { McpClient } from '@/mcp';
+
+// ============================================================================
+// MCP atomic startup/publication wiring
+// ============================================================================
+
+type McpWiringClientOptions = Readonly<{
+  readonly serverName: string;
+  readonly failConnect?: boolean;
+  readonly tools: ReadonlyArray<McpToolInfo>;
+  readonly disconnects?: Array<string>;
+}>;
+
+function createMcpWiringClient(options: McpWiringClientOptions): McpClient {
+  return {
+    serverName: options.serverName,
+    connect: async () => {
+      if (options.failConnect) throw new Error('injected connection failure');
+    },
+    disconnect: async () => {
+      options.disconnects?.push(options.serverName);
+    },
+    listTools: async () => [...options.tools],
+    callTool: async () => ({success: true, output: 'ok'}),
+    listPrompts: async () => [],
+    getPrompt: async (): Promise<McpPromptResult> => ({description: undefined, messages: []}),
+    getInstructions: async () => undefined,
+  };
+}
+
+function createMcpWiringTool(name: string): McpToolInfo {
+  return {name, description: name, inputSchema: {type: 'object'}};
+}
+
+describe('composition root wiring: atomic MCP startup/publication', () => {
+  it('publishes both healthy servers in one complete batch', async () => {
+    const registry = createToolRegistry();
+    const clients = [
+      createMcpWiringClient({serverName: 'first', tools: [createMcpWiringTool('one')]}),
+      createMcpWiringClient({serverName: 'second', tools: [createMcpWiringTool('two')]}),
+    ];
+    const startup = await connectMcpServers(clients);
+    const registrations = (await Promise.all(startup.connected.map(async (client) => createMcpToolProvider(client).discoverRegistrations()))).flat();
+
+    publishMcpRegistrations(registry, registrations);
+
+    expect(registry.getDefinitions().map((definition) => definition.name)).toEqual(['mcp_first_one', 'mcp_second_two']);
+    expect(startup.failed).toHaveLength(0);
+  });
+
+  it('reports the first failed server and publishes the second without failed-server state', async () => {
+    const disconnects: Array<string> = [];
+    const registry = createToolRegistry();
+    const clients = [
+      createMcpWiringClient({serverName: 'first', failConnect: true, tools: [createMcpWiringTool('never')], disconnects}),
+      createMcpWiringClient({serverName: 'second', tools: [createMcpWiringTool('published')]}),
+    ];
+    const startup = await connectMcpServers(clients);
+    const registrations = (await Promise.all(startup.connected.map(async (client) => createMcpToolProvider(client).discoverRegistrations()))).flat();
+
+    publishMcpRegistrations(registry, registrations);
+
+    expect(startup.summary).toContain('first');
+    expect(disconnects).toEqual(['first']);
+    expect(registry.getDefinitions().map((definition) => definition.name)).toEqual(['mcp_second_published']);
+    expect(registry.getDefinitions().some((definition) => definition.name.includes('never'))).toBe(false);
+  });
+});
 
 // ============================================================================
 // Helper factories for mocking
@@ -111,6 +180,28 @@ describe('composition root wiring: shutdown handler with scheduler', () => {
       const handler = createShutdownHandler(rl, persistence, null, scheduler);
       await handler();
       expect(scheduler.stop).toHaveBeenCalled();
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
+  it('agent-owned shutdown performs exactly one checkpoint capture', async () => {
+    const rl = createMockReadline();
+    const persistence = createMockPersistence();
+    const legacyCheckpoint = mock(async () => 'legacy-checkpoint');
+    const agentShutdown = mock(async () => undefined);
+    const originalExit = process.exit;
+    process.exit = mock(() => {}) as unknown as typeof process.exit;
+
+    try {
+      const handler = createShutdownHandler(
+        rl, persistence, null, null, null, undefined, undefined,
+        legacyCheckpoint, agentShutdown,
+      );
+      await handler();
+      await handler();
+      expect(agentShutdown).toHaveBeenCalledTimes(1);
+      expect(legacyCheckpoint).not.toHaveBeenCalled();
     } finally {
       process.exit = originalExit;
     }

@@ -4,10 +4,9 @@ import { createPostgresProvider } from '../persistence/postgres.ts';
 import { createActivityManager } from './postgres-activity-manager.ts';
 import type { ActivityStateRow, EventQueueRow } from './types.ts';
 import type { ScheduleConfig } from './schedule.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 const TEST_OWNER = 'test-activity-' + Math.random().toString(36).substring(7);
 
@@ -24,12 +23,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('Activity Manager - PostgreSQL Adapter', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
   });
 
@@ -38,7 +33,7 @@ describe('Activity Manager - PostgreSQL Adapter', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('sleep-cycle.AC1.1: Agent transitions to sleeping mode', () => {

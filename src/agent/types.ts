@@ -19,6 +19,10 @@ import type { RecallContextState } from '../recall/index.js';
 import type { SearchStore } from '../search/store.js';
 import type { CheckpointTrigger, CheckpointAgentState } from './checkpoint-types.ts';
 import type { LoopDetector } from '@/loop-detection/types.js';
+import type { ToolOutcome } from '@/contracts/outcomes.ts';
+import type { ConversationHistoryStore } from '@/persistence/conversation-history-store.ts';
+import type { ExecutionOptions } from '@/contracts/execution.ts';
+import type { IntegrityLifecycle } from './integrity-lifecycle.ts';
 
 export type AgentConfig = {
   max_tool_rounds: number;
@@ -47,6 +51,8 @@ export type ConversationMessage = {
   content: string;
   tool_calls?: unknown;
   tool_call_id?: string;
+  /** Typed result survives persistence/reload; absent means legacy_unknown. */
+  tool_outcome?: ToolOutcome;
   reasoning_content?: string | null;
   created_at: Date;
 };
@@ -62,6 +68,9 @@ export type CheckpointState = {
   readonly turnNumber: number;
   readonly toolRound: number;
   readonly messageIds: ReadonlyArray<string>;
+  readonly transcriptRevision?: number;
+  readonly activeArchiveIds?: ReadonlyArray<string>;
+  readonly provenanceRefs?: ReadonlyArray<string>;
   readonly compactionMeta: {
     readonly lastCompactedIndex: number;
     readonly summaryCount: number;
@@ -98,16 +107,26 @@ export type AgentDependencies = {
   searchStore?: SearchStore;
   summarizationModel?: ModelProvider;
   summarizationModelName?: string;
-  checkpointFn?: (trigger: CheckpointTrigger) => Promise<string | null>;
+  checkpointFn?: (trigger: CheckpointTrigger, state?: CheckpointAgentState) => Promise<string | null>;
   checkpointStateRef?: { current: CheckpointAgentState };
+  /** The sole production append/read boundary for active conversation history. */
+  historyStore?: ConversationHistoryStore;
+  /** Optional caller-owned cancellation for queued ingress. */
+  ingressOptions?: ExecutionOptions;
+  /** Durable tool-batch integrity state; absent only for legacy test callers. */
+  integrityLifecycle?: IntegrityLifecycle;
   loopDetector?: LoopDetector;
   diarySection?: string;
 };
 
 export type Agent = {
-  processMessage(userMessage: string): Promise<string>;
-  processEvent(event: ExternalEvent): Promise<string>;
+  processMessage(userMessage: string, options?: ExecutionOptions): Promise<string>;
+  processEvent(event: ExternalEvent, options?: ExecutionOptions): Promise<string>;
   getConversationHistory(): Promise<Array<ConversationMessage>>;
   getCheckpointState(): CheckpointState | null;
+  /** Drain queued turns and save a serial shutdown checkpoint when configured. */
+  shutdown?: () => Promise<void>;
+  getRecoveryState?: () => Promise<import('./integrity-lifecycle.ts').RecoveryState>;
+  recoverIntegrity?: (callIds: ReadonlyArray<string>, reason?: string) => Promise<void>;
   conversationId: string;
 };

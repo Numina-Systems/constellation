@@ -14,6 +14,8 @@ export type SearchParams = {
   readonly endTime: Date | null;
   readonly role: string | null;
   readonly tier: string | null;
+  /** Explicitly opt into retained non-active transcript rows. */
+  readonly history?: 'active' | 'historical' | 'all';
 };
 
 export type DomainSearchParams = SearchParams;
@@ -23,6 +25,7 @@ export type SearchResultMetadata = {
   readonly label: string | null;
   readonly role: string | null;
   readonly conversationId: string | null;
+  readonly historyStatus?: 'active' | 'historical' | 'superseded';
 };
 
 export type DomainSearchResult = {

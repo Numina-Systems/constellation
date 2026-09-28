@@ -57,3 +57,8 @@ export type MemoryWriteResult =
   | { applied: true; block: MemoryBlock }
   | { applied: false; mutation: PendingMutation }
   | { applied: false; error: string };
+
+export type WorkingMemoryReplacementBlock = {
+  readonly label: string;
+  readonly content: string;
+};

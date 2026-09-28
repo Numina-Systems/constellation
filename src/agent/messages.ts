@@ -44,25 +44,28 @@ export function buildUserMessage(
   text: string,
   snapshot: SnapshotResult | null,
 ): Message {
-  // No snapshot or no content: return plain string message
-  if (snapshot === null || snapshot.content === null) {
+  // No snapshot: return plain string message
+  if (snapshot === null) {
     return {
       role: 'user',
       content: text,
     };
   }
 
+  const removedContent = (snapshot.removedProviders ?? []).length > 0
+    ? `## Removed dynamic context sections\n\nThe following dynamic context sections are no longer available and must not be used:\n${(snapshot.removedProviders ?? []).map(name => `- ${name}`).join('\n')}`
+    : null;
+  const attachmentContent = [snapshot.content, removedContent].filter((content): content is string => content !== null).join('\n\n');
+
+  if (snapshot.mode === 'noop' || attachmentContent.length === 0) {
+    return {role: 'user', content: text};
+  }
+
   // Exhaustive switch over snapshot mode with compile-time guarantees
   switch (snapshot.mode) {
-    case 'noop':
-      return {
-        role: 'user',
-        content: text,
-      };
-
     case 'full':
     case 'delta':
-      const composedContent = `${formatAttachment(snapshot.content, snapshot.mode)}\n\n${text}`;
+      const composedContent = `${formatAttachment(attachmentContent, snapshot.mode)}\n\n${text}`;
       return {
         role: 'user',
         content: composedContent,

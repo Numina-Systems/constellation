@@ -220,7 +220,7 @@ describe('Additional edge cases', () => {
     expect(result2.changedProviders).toContain('p2');
   });
 
-  test('provider removed between calls', () => {
+  test('provider removed between calls produces an explicit removal signal', () => {
     const state = createSnapshotState();
 
     let providers = new Map([
@@ -231,11 +231,12 @@ describe('Additional edge cases', () => {
     const result1 = state.computeSnapshot(providers, false);
     expect(result1.mode).toBe('full');
 
-    // Remove p2
     providers = new Map([['p1', () => 'content1']]);
     const result2 = state.computeSnapshot(providers, false);
 
-    expect(result2.mode).toBe('noop');
+    expect(result2.mode).toBe('delta');
+    expect(result2.changedProviders).toEqual(['p2']);
+    expect(result2.removedProviders).toEqual(['p2']);
   });
 
   test('forceFullSnapshot flag triggers full mode', () => {

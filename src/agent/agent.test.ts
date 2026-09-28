@@ -2284,8 +2284,9 @@ describe('recall system prompt stability', () => {
     expect(buildSystemPromptCalls.count).toBe(1);
   });
 
-  it('cache-friendliness.AC2.1 (unit): system prompt is byte-identical across turns when skills are unchanged', async () => {
-    // Create a mock skill registry that returns the same skills both times
+  it('cache-friendliness.AC2.1 (unit): system prompt stays stable when skill sets change without cache warnings', async () => {
+    let skillLookupCount = 0;
+    // Create a mock skill registry that returns different skills on successive turns.
     const skillDefinition: SkillDefinition = {
       id: 'skill-1',
       metadata: {
@@ -2300,6 +2301,12 @@ describe('recall system prompt stability', () => {
       contentHash: 'abc123',
     };
 
+    const secondSkillDefinition: SkillDefinition = {
+      ...skillDefinition,
+      id: 'skill-2',
+      metadata: {...skillDefinition.metadata, name: 'Second Skill'},
+      contentHash: 'def456',
+    };
     const fakeSkillRegistry: SkillRegistry = {
       async load() {},
       getAll() {
@@ -2312,8 +2319,8 @@ describe('recall system prompt stability', () => {
         return [];
       },
       async getRelevant(_context: string, _limit?: number, _threshold?: number) {
-        // Return the same skill both times
-        return [skillDefinition];
+        skillLookupCount += 1;
+        return skillLookupCount === 1 ? [skillDefinition] : [secondSkillDefinition];
       },
       async createAgentSkill() {
         return skillDefinition;
@@ -2365,22 +2372,24 @@ describe('recall system prompt stability', () => {
     };
 
     const agent = createAgent(deps);
+    const warnings: Array<string> = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: Array<unknown>) => warnings.push(args.map(String).join(' '));
+    try {
+      await agent.processMessage('Hello');
+      const firstSystemPrompt = tracker.requests[0]?.system ?? '';
+      tracker.requests = [];
+      await agent.processMessage('Hello again');
+      const secondSystemPrompt = tracker.requests[0]?.system ?? '';
 
-    // First message
-    await agent.processMessage('Hello');
-    const firstSystemPrompt = tracker.requests[0]?.system ?? '';
-
-    // Reset tracker for second message
-    tracker.requests = [];
-
-    // Second message (skills unchanged)
-    await agent.processMessage('Hello again');
-    const secondSystemPrompt = tracker.requests[0]?.system ?? '';
-
-    // System prompt should be byte-identical (no skills section in system prompt)
-    expect(firstSystemPrompt).toBe(secondSystemPrompt);
-    // Verify skills section is NOT in system prompt
-    expect(firstSystemPrompt).not.toMatch(/## Active Skills/);
+      expect(firstSystemPrompt).toBe(secondSystemPrompt);
+      expect(firstSystemPrompt).not.toMatch(/## Active Skills/);
+      const secondUserMessage = tracker.requests[0]?.messages.at(-1);
+      expect(secondUserMessage?.content).toContain('[Dynamic Context — Updated Sections]');
+      expect(warnings.filter(message => message.includes('cache bust detected'))).toEqual([]);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it('cache-friendliness.AC2.2 (unit): skill content appears in dynamic context attachment', async () => {
@@ -2844,6 +2853,7 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
     expect(turn2LastMsg).toBeDefined();
     expect(typeof turn2LastMsg!.content).toBe('string');
     const turn2ContentStr = String(turn2LastMsg!.content);
+    expect(turn2ContentStr).toContain('[Dynamic Context — Updated Sections]');
     expect(turn2ContentStr).toContain('## working-memory');
     expect(turn2ContentStr).toContain('Updated state');
   });

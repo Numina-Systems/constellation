@@ -173,6 +173,7 @@ export function createAgent(
   let recoveryRequired = false;
   let recoveryReason: string | null = null;
   let previousToolsHash: bigint | null = null;
+  let previousSkillsHash: bigint | null = null;
   let lastCompactionMessageCount = 0;
   let lastCompactionSummaryCount = 0;
   // Durable and legacy modes share this checkpoint surface: durable compaction publishes
@@ -496,8 +497,7 @@ export function createAgent(
         typeof lastMessage.content === 'string'
       ) {
         snapshotComposed = true;
-        const isFirstRound = roundCount === 1;
-        const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, isFirstRound);
+        const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, false);
         const composedUserMessage = buildUserMessage(lastMessage.content, snapshotResult);
         if (composedUserMessage.content !== lastMessage.content) {
           finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
@@ -658,6 +658,13 @@ export function createAgent(
         const currentToolsHash = BigInt(Bun.hash(currentToolsSerialized));
         const toolsChangedThisTurn = previousToolsHash !== null && currentToolsHash !== previousToolsHash;
         previousToolsHash = currentToolsHash;
+        const skillsProvider = dynamicProviders.get('skills');
+        const currentSkillsHash = skillsProvider
+          ? BigInt(Bun.hash(skillsProvider() ?? ''))
+          : null;
+        const skillsChanged = currentSkillsHash !== null &&
+          previousSkillsHash !== null && currentSkillsHash !== previousSkillsHash;
+        previousSkillsHash = currentSkillsHash;
 
         const cacheBustEvents = cacheDiagnostics.checkForCacheBust({
           systemPrompt,
@@ -668,6 +675,7 @@ export function createAgent(
           flags: {
             compactionOccurred: compactionOccurredThisTurn,
             toolsChanged: toolsChangedThisTurn,
+            skillsChanged,
             isFirstTurn: turnNumber === 1 && roundCount === 1,
           },
         });

@@ -23,25 +23,9 @@ import type {
   ToolDefinition,
 } from "./types.js";
 import { ModelError } from "./types.js";
-import { callWithRetry } from "./retry.js";
+import { callWithRetry, isRetryableModelError } from "./retry.js";
 import { buildCancellationRequestOptions, composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import { normalizeAnthropicUsage } from "./usage.js";
-
-function isRetryableError(error: unknown): boolean {
-  if (error instanceof Anthropic.APIUserAbortError) {
-    return false;
-  }
-  if (error instanceof Anthropic.RateLimitError) {
-    return true;
-  }
-  if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    return true;
-  }
-  if (error instanceof Error && error.message.includes("timeout")) {
-    return true;
-  }
-  return false;
-}
 
 export function buildAnthropicSystemParam(
   requestSystem: string | undefined,
@@ -296,7 +280,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-      }, isRetryableError, undefined, { signal: cancellation.signal, deadline: request.deadline });
+      }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: request.deadline });
 
         return {
           content: normalizeContentBlocks(response.content),
@@ -368,7 +352,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
+        }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
         activeStream = stream;
 
       let messageStartUsage: ReturnType<typeof normalizeAnthropicUsage> = null;

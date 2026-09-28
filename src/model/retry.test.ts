@@ -105,31 +105,76 @@ describe("callWithRetry", () => {
 
   describe("backoff timing", () => {
     it("should increase backoff with exponential growth", async () => {
-      const timestamps: Array<number> = [];
+      const delays: Array<number> = [];
+      let calls = 0;
 
       try {
         await callWithRetry(
           async () => {
-            timestamps.push(Date.now());
+            calls += 1;
             throw new Error("retry");
           },
-          () => true
+          () => true,
+          undefined,
+          {random: () => 0.75, sleep: async ms => { delays.push(ms); }}
         );
       } catch {
         // expected to throw
       }
 
-      expect(timestamps.length).toBe(3);
+      expect(calls).toBe(3);
+      expect(delays).toEqual([750, 1_500]);
+    });
+  });
 
-      // Calculate intervals between attempts
-      const interval1 = timestamps[1]! - timestamps[0]!;
-      const interval2 = timestamps[2]! - timestamps[1]!;
+  describe("Retry-After and jitter", () => {
+    it("honors seconds and HTTP-date Retry-After headers with a 60-second cap", async () => {
+      const delays: Array<number> = [];
+      const retry = async (header: string): Promise<void> => {
+        let calls = 0;
+        await expect(callWithRetry(async () => {
+          calls += 1;
+          if (calls === 1) throw Object.assign(new Error("rate limited"), {status: 429, headers: new Headers({"retry-after": header})});
+          return "ok";
+        }, () => true, undefined, {sleep: async ms => { delays.push(ms); }, random: () => 0.5})).resolves.toBe("ok");
+      };
+      await retry("2");
+      await retry(new Date(Date.now() + 5_000).toUTCString());
+      await retry("3600");
+      expect(delays[0]).toBe(2_000);
+      expect(delays[1]).toBeGreaterThan(0);
+      expect(delays[1]).toBeLessThanOrEqual(5_000);
+      expect(delays[2]).toBe(60_000);
+    });
 
-      // First interval should be around 1000ms, second should be around 2000ms
-      // Allow 200ms tolerance for test timing variance
-      expect(interval1).toBeGreaterThan(800);
-      expect(interval2).toBeGreaterThan(1800);
-      expect(interval2).toBeGreaterThan(interval1);
+    it("applies bounded deterministic jitter and respects deadline", async () => {
+      const delays: Array<number> = [];
+      let calls = 0;
+      await expect(callWithRetry(async () => { calls += 1; throw new Error("retry"); }, () => true, undefined, {
+        random: () => 0.25,
+        sleep: async ms => { delays.push(ms); },
+        deadline: Date.now() + 10_000,
+      })).rejects.toThrow("retry");
+      expect(calls).toBe(3);
+      expect(delays).toEqual([250, 500]);
+    });
+  });
+
+  describe("shared retry classifier", () => {
+    it("preserves transient provider errors and rejects permanent errors", async () => {
+      const {isRetryableModelError} = await import("./retry.js");
+      const cases: Array<[unknown, boolean]> = [
+        [Object.assign(new Error("rate limit"), {status: 429}), true],
+        [Object.assign(new Error("server"), {status: 503}), true],
+        [new Error("API timeout"), true],
+        [new Error("connect ECONNREFUSED"), true],
+        [new Error("fetch failed: network error"), true],
+        [Object.assign(new Error("refused"), {code: "ECONNREFUSED"}), true],
+        [Object.assign(new Error("unauthorized"), {status: 401}), false],
+        [new Error("invalid input"), false],
+        [new Error("user abort"), false],
+      ];
+      for (const [error, expected] of cases) expect(isRetryableModelError(error)).toBe(expected);
     });
   });
 });

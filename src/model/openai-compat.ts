@@ -9,7 +9,7 @@ import type {
   StreamEvent,
 } from "./types.js";
 import { ModelError } from "./types.js";
-import { callWithRetry } from "./retry.js";
+import { callWithRetry, isRetryableModelError } from "./retry.js";
 import { buildCancellationRequestOptions, composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import {
   isOpenAIUserAbort,
@@ -19,23 +19,6 @@ import {
   normalizeUsage,
   normalizeMessages,
 } from "./openai-shared.js";
-
-function isRetryableError(error: unknown): boolean {
-  if (isOpenAIUserAbort(error)) return false;
-  if (error instanceof OpenAI.RateLimitError) {
-    return true;
-  }
-  if (error instanceof OpenAI.APIConnectionTimeoutError) {
-    return true;
-  }
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    if (message.includes("timeout") || message.includes("econnrefused")) {
-      return true;
-    }
-  }
-  return false;
-}
 
 export { normalizeMessages } from "./openai-shared.js";
 
@@ -65,7 +48,7 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
 
           messages.push(...normalizeMessages(request.messages));
 
-          return await client.chat.completions.create(
+          const response = await client.chat.completions.create(
             {
               model: request.model,
               max_tokens: request.max_tokens,
@@ -77,6 +60,11 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
               ? [buildCancellationRequestOptions(cancellation)]
               : []),
           );
+          if (!Array.isArray(response.choices) || response.choices.length === 0 || !response.choices[0]) {
+            const raw = JSON.stringify(response).slice(0, 500);
+            throw new ModelError("INVALID_RESPONSE", `no choices in response (model=${request.model}): ${raw}`, true, { provider: "openai-compat" });
+          }
+          return response;
         } catch (error) {
           if (isOpenAIUserAbort(error)) {
             const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
@@ -116,19 +104,9 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: request.deadline });
+        }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: request.deadline });
 
-      const choice = response.choices?.[0];
-      if (!choice) {
-        const raw = JSON.stringify(response).slice(0, 500);
-        throw new ModelError(
-          "INVALID_RESPONSE",
-          `no choices in response (model=${request.model}): ${raw}`,
-          true,
-          { provider: "openai-compat" }
-        );
-      }
-
+      const choice = response.choices[0]!;
       const usage = normalizeUsage(response.usage) ?? { input_tokens: 0, output_tokens: 0 };
       const reasoningContent = (choice.message as unknown as Record<string, unknown>)["reasoning_content"] as string | null | undefined;
 
@@ -216,12 +194,12 @@ export function createOpenAICompatAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
+        }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
         activeStream = stream;
 
       let messageId = "";
       let finalUsage = null as ReturnType<typeof normalizeUsage>;
-      let finalStopReason: ReturnType<typeof normalizeStopReason> = "end_turn";
+      let finalStopReason: ReturnType<typeof normalizeStopReason> = "incomplete";
       // TODO: toolCallMap is overloaded for text block tracking — introduce separate textBlockStarted flag (fix in both openrouter.ts and openai-compat.ts)
       const toolCallMap = new Map<number, { name: string; arguments: string }>();
 

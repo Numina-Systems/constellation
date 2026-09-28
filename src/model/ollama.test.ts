@@ -1,6 +1,7 @@
 // pattern: Functional Core
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { isRetryableModelError } from "./retry.js";
 import {
   normalizeToolDefinitions,
   normalizeMessages,
@@ -8,7 +9,7 @@ import {
   normalizeResponse,
   normalizeStopReason,
   classifyHttpError,
-  isRetryableOllamaError,
+
   createOllamaAdapter,
   parseNDJSON,
   mapChunksToStreamEvents,
@@ -958,47 +959,47 @@ describe("classifyHttpError - client errors", () => {
 });
 
 // ollama-adapter.AC5.4: Network errors are retryable
-describe("isRetryableOllamaError", () => {
+describe("shared retry classifier for Ollama errors", () => {
   it("should return true for ECONNREFUSED error", () => {
     const error = new Error("ECONNREFUSED");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return true for fetch failed error", () => {
     const error = new Error("fetch failed");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return true for network error", () => {
     const error = new Error("network error");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return true for timeout error", () => {
     const error = new Error("timeout");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return false for non-network error", () => {
     const error = new Error("some other error");
 
-    expect(isRetryableOllamaError(error)).toBe(false);
+    expect(isRetryableModelError(error)).toBe(false);
   });
 
   it("should return false for non-retryable ModelError", () => {
     const error = new ModelError("INVALID_RESPONSE", "not retryable", false);
 
-    expect(isRetryableOllamaError(error)).toBe(false);
+    expect(isRetryableModelError(error)).toBe(false);
   });
 
   it("should return true for retryable ModelError", () => {
     const error = new ModelError("RATE_LIMITED", "retryable", true);
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 });
 

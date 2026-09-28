@@ -14,7 +14,7 @@ import type {
   StopReason,
 } from "./types.js";
 import { ModelError, type StreamEvent } from "./types.js";
-import { callWithRetry } from "./retry.js";
+import { callWithRetry, isRetryableModelError } from "./retry.js";
 import { composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import { normalizeOllamaUsage } from "./usage.js";
 
@@ -262,24 +262,6 @@ export function classifyHttpError(status: number, body: string): ModelError {
   );
 }
 
-export function isRetryableOllamaError(error: unknown): boolean {
-  if (error instanceof ModelError) {
-    return error.retryable;
-  }
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    if (
-      message.includes("econnrefused") ||
-      message.includes("fetch failed") ||
-      message.includes("network") ||
-      message.includes("timeout")
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 export async function* parseNDJSON(
   body: ReadableStream<Uint8Array>
 ): AsyncGenerator<OllamaStreamChunk> {
@@ -506,7 +488,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             throw error;
           }
         },
-        isRetryableOllamaError,
+        isRetryableModelError,
         undefined,
         { signal: cancellation.signal, deadline: request.deadline }
       ).finally(() => cancellation.dispose());
@@ -552,7 +534,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             throw error;
           }
         },
-        isRetryableOllamaError,
+        isRetryableModelError,
         undefined,
         { signal: cancellation.signal, deadline: cancellation.deadline }
       );

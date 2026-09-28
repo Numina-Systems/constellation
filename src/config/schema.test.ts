@@ -186,9 +186,8 @@ describe("SummarizationConfigSchema", () => {
     expect(result.summarization!.name).toBe("test-model");
   });
 
-  it("should ignore removed importance-scoring keys in existing configs", () => {
-    // Importance scoring was removed (compaction is chronological); configs
-    // that still carry the old weight keys must keep loading.
+  it("preserves importance-scoring keys used by durable compaction", () => {
+    // Existing operator weights remain part of the durable group selector.
     const config = {
       agent: {},
       model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
@@ -208,7 +207,9 @@ describe("SummarizationConfigSchema", () => {
     const result = AppConfigSchema.parse(config);
 
     expect(result.summarization!.name).toBe("claude-3-sonnet");
-    expect(result.summarization).not.toHaveProperty("role_weight_system");
+    expect(result.summarization!.role_weight_system).toBe(15.0);
+    expect(result.summarization!.recency_decay).toBe(0.9);
+    expect(result.summarization!.important_keywords).toEqual(["critical", "urgent"]);
   });
 });
 

@@ -341,6 +341,18 @@ describe('decomposeMessage', () => {
       expect(request.system).toBeDefined();
     });
 
+    it('forwards caller signal and deadline to the decomposition request', async () => {
+      const model = createMockModel(JSON.stringify({queries: ['query'], entities: []}));
+      const signal = new AbortController().signal;
+      const deadline = Date.now() + 10_000;
+
+      await decomposeMessage('Message with execution bounds', model, 'test-model', {signal, deadline});
+
+      const request = ((model as any)._calls as Array<ModelRequest>)[0];
+      expect(request?.signal).toBe(signal);
+      expect(request?.deadline).toBe(deadline);
+    });
+
     it('handles model response with text content block', async () => {
       const model = createMockModel(
         JSON.stringify({

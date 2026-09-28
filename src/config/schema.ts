@@ -73,6 +73,8 @@ const ModelConfigSchema = z.object({
   output_tokens_per_minute: z.number().int().positive().optional(),
   min_output_reserve: z.number().int().positive().optional(),
   openrouter: OpenRouterConfigSchema.optional(),
+  context_window: z.number().int().positive().optional(),
+  stream_usage: z.boolean().optional(),
 }).superRefine(refineRateLimitFeasibility);
 
 const EmbeddingConfigSchema = z.object({
@@ -94,6 +96,9 @@ const RuntimeConfigSchema = z.object({
   allowed_read_paths: z.array(z.string()).default([]),
   allowed_write_paths: z.array(z.string()).default([]),
   allowed_run: z.array(z.string()).default([]),
+  max_stdout_bytes: z.number().int().positive().default(4_194_304),
+  max_stderr_bytes: z.number().int().positive().default(65_536),
+  max_ipc_frame_bytes: z.number().int().positive().default(1_048_576),
 });
 
 const BlueskyConfigSchema = z
@@ -135,10 +140,26 @@ const SummarizationConfigSchema = z.object({
   clip_first: z.number().int().nonnegative().default(2),
   clip_last: z.number().int().nonnegative().default(2),
   prompt: z.string().optional(),
+
+  // Importance scoring weights retained for the durable compaction selector.
+  role_weight_system: z.number().nonnegative().default(10.0),
+  role_weight_user: z.number().nonnegative().default(5.0),
+  role_weight_assistant: z.number().nonnegative().default(3.0),
+  recency_decay: z.number().min(0).max(1).default(0.95),
+  question_bonus: z.number().nonnegative().default(2.0),
+  tool_call_bonus: z.number().nonnegative().default(4.0),
+  keyword_bonus: z.number().nonnegative().default(1.5),
+  important_keywords: z.array(z.string()).default([
+    "error", "fail", "bug", "fix", "decision", "agreed", "constraint", "requirement",
+  ]),
+  content_length_weight: z.number().nonnegative().default(1.0),
   compaction_timeout: z.number().int().positive().default(120000),
   compaction_max_retries: z.number().int().nonnegative().default(2),
   max_chunk_tokens: z.number().int().positive().optional(),
   max_consecutive_failures: z.number().int().positive().default(3),
+  cooldown_ms: z.number().int().nonnegative().default(60000),
+  context_window: z.number().int().positive().optional(),
+  safety_margin: z.number().int().nonnegative().optional(),
 }).superRefine(refineRateLimitFeasibility);
 
 const WebConfigSchema = z.object({
@@ -297,7 +318,9 @@ export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type OpenRouterConfig = z.infer<typeof OpenRouterConfigSchema>;
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>;
-export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+type ParsedRuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+export type RuntimeConfig = Omit<ParsedRuntimeConfig, 'max_stdout_bytes' | 'max_stderr_bytes' | 'max_ipc_frame_bytes'> &
+  Partial<Pick<ParsedRuntimeConfig, 'max_stdout_bytes' | 'max_stderr_bytes' | 'max_ipc_frame_bytes'>>;
 export type BlueskyConfig = z.infer<typeof BlueskyConfigSchema>;
 export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
 export type WebConfig = z.infer<typeof WebConfigSchema>;

@@ -3,10 +3,9 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'bun:test';
 import { createPostgresSkillStore } from './postgres-store.ts';
 import { createPostgresProvider } from '../persistence/postgres.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let store: ReturnType<typeof createPostgresSkillStore>;
 let persistence: ReturnType<typeof createPostgresProvider>;
 
@@ -24,12 +23,8 @@ function createTestEmbedding(seed: number): Array<number> {
 
 describe('PostgreSQL Skill Store', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
 
     store = createPostgresSkillStore(persistence);
@@ -40,7 +35,7 @@ describe('PostgreSQL Skill Store', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('skills.AC2.1: upsertEmbedding inserts a new skill embedding record', () => {

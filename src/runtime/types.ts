@@ -6,7 +6,8 @@
  * for IPC communication between the host (Bun) and the Deno subprocess.
  */
 
-import type { ToolResult } from '../tool/types.ts';
+import type {ExecutionOptions} from '@/contracts/execution.ts';
+import type {ToolResult} from '../tool/types.ts';
 
 /**
  * Result of executing code in the Deno runtime.
@@ -17,13 +18,16 @@ export type ExecutionResult = {
   error: string | null;
   tool_calls_made: number;
   duration_ms: number;
+  outcome?: 'success' | 'error' | 'cancelled' | 'outcome_unknown';
+  unresolved_call_ids?: ReadonlyArray<string>;
+  unresolved_call_count?: number;
 };
 
 /**
  * Execution context for credential injection into sandbox code.
  * Contains optional Bluesky credentials and API secrets that are injected as constants.
  */
-export type ExecutionContext = {
+export type ExecutionContext = ExecutionOptions & {
   readonly bluesky?: {
     readonly service: string;
     readonly pdsUrl: string;

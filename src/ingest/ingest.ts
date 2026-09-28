@@ -1,7 +1,8 @@
 // pattern: Imperative Shell
 
 import { readFile, stat } from 'node:fs/promises';
-import type { MemoryStore } from '@/memory/store.js';
+import type {MemoryStoreWithMaintenance} from '@/memory/store.js';
+import type {MaintenanceMemoryConstraints} from '@/memory/deletion-policy.js';
 import type { EmbeddingProvider } from '@/embedding/types.js';
 import type { PersistenceProvider } from '@/persistence/types.js';
 import { chunkDocument } from './chunker.js';
@@ -17,7 +18,7 @@ export type Ingestor = {
 };
 
 type IngestorDeps = {
-  readonly memoryStore: MemoryStore;
+  readonly memoryStore: MemoryStoreWithMaintenance;
   readonly embedding: EmbeddingProvider;
   readonly persistence: PersistenceProvider;
   readonly owner: string;
@@ -67,15 +68,21 @@ export function createIngestor(deps: IngestorDeps): Ingestor {
         embeddings = chunks.map(() => null);
       }
 
-      // Atomic re-ingestion: delete old + create new in transaction
+      // Atomic re-ingestion: delete old + create new in transaction. The
+      // maintenance operation repeats owner/tier/pin/permission checks under
+      // its own authoritative row lock.
+      const constraints: MaintenanceMemoryConstraints = {
+        allowedTiers: ['archival'],
+        requireUnpinned: true,
+        requireReadwrite: true,
+      };
       await persistence.withTransaction(async () => {
-        // Delete existing chunks with this label prefix
         const existingBlocks = await memoryStore.getBlocksByLabelPrefix(
           owner,
           labelPrefix,
         );
         for (const block of existingBlocks) {
-          await memoryStore.deleteBlock(block.id);
+          await memoryStore.deleteForMaintenance(owner, block.id, constraints);
         }
 
         // Create new chunks

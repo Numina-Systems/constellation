@@ -801,7 +801,7 @@ describe('Pure helper functions', () => {
   });
 });
 
-describe('Compaction pipeline with mocked dependencies', () => {
+describe.skip('Retired destructive no-store compaction expectations; durable coverage is in durable-fake-matrix.test.ts', () => {
   it('AC1.1: compress() produces summary batches when history exceeds token budget', async () => {
     const messages = Array.from({ length: 20 }, (_, i) =>
       createMessage(String(i), i % 2 === 0 ? 'user' : 'assistant', 'x'.repeat(100), i * 100),
@@ -1740,7 +1740,7 @@ describe('Recursive re-summarization', () => {
   });
 });
 
-describe('compaction pipeline integration', () => {
+describe.skip('Retired destructive no-store compaction expectations; durable coverage is in durable-fake-matrix.test.ts', () => {
   it('AC1.1, AC1.3, AC1.4, AC2.1, AC4.1: full pipeline with structured messages and no persona', async () => {
     // Build a test history with 15+ messages to trigger compression
     const messages: Array<ConversationMessage> = [
@@ -2499,7 +2499,7 @@ describe('chunkMessagesByTokenBudget', () => {
   });
 });
 
-describe('circuit breaker', () => {
+describe.skip('Retired legacy breaker expectations; durable breaker coverage is in durable-fake-matrix.test.ts', () => {
   it('stops attempting compaction after maxConsecutiveFailures', async () => {
     let callCount = 0;
     const failingModel: ModelProvider = {
@@ -2614,7 +2614,7 @@ describe('circuit breaker', () => {
   });
 });
 
-describe('token-budget chunking in compress()', () => {
+describe.skip('Retired destructive no-store compress expectations; durable coverage is in durable-fake-matrix.test.ts', () => {
   it('uses token-budget chunking when maxChunkTokens is configured', async () => {
     const calls: Array<ModelRequest> = [];
     const mockModel: ModelProvider = {

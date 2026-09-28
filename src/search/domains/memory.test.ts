@@ -5,11 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { createPostgresProvider } from '../../persistence/postgres.ts';
 import { createMemorySearchDomain } from './memory.ts';
 import { createMockEmbeddingProvider } from '../../integration/test-helpers.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 const TEST_OWNER = 'test-search-' + Math.random().toString(36).substring(7);
-const DB_CONNECTION_STRING =
-  'postgresql://constellation:constellation@localhost:5432/constellation';
-
+let database: TestDatabase;
 let persistence: ReturnType<typeof createPostgresProvider>;
 
 async function cleanupTables(): Promise<void> {
@@ -18,12 +17,8 @@ async function cleanupTables(): Promise<void> {
 
 describe('Memory Search Domain', () => {
   beforeAll(async () => {
-    persistence = createPostgresProvider({
-      url: DB_CONNECTION_STRING,
-    });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
     await cleanupTables();
   });
 
@@ -32,7 +27,7 @@ describe('Memory Search Domain', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('GH-23.AC1.1: Hybrid mode returns both keyword and vector matches', () => {

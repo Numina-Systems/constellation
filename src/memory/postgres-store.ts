@@ -9,13 +9,15 @@ import { randomUUID } from 'node:crypto';
 import { toSql } from 'pgvector/utils';
 import type { PersistenceProvider } from '../persistence/types.ts';
 import { MemoryError } from '@/errors/index.js';
-import type { MemoryStore } from './store.ts';
+import type {MemoryStoreWithMaintenance} from './store.ts';
+import {evaluateMaintenanceMemoryMutation, evaluatePublicMemoryDeletion, type MaintenanceMemoryConstraints} from './deletion-policy.ts';
 import type {
   MemoryBlock,
   MemoryEvent,
+  MemorySearchResult,
   MemoryTier,
   PendingMutation,
-  MemorySearchResult,
+  WorkingMemoryReplacementBlock,
 } from './types.ts';
 
 type MemoryBlockRow = {
@@ -33,7 +35,7 @@ type MemoryBlockRow = {
 
 type MemoryEventRow = {
   id: string;
-  block_id: string;
+  block_id: string | null;
   event_type: string;
   old_content: string | null;
   new_content: string | null;
@@ -115,7 +117,7 @@ function parsePendingMutation(row: PendingMutationRow): PendingMutation {
 
 export function createPostgresMemoryStore(
   persistence: PersistenceProvider,
-): MemoryStore {
+): MemoryStoreWithMaintenance {
   async function getBlock(id: string): Promise<MemoryBlock | null> {
     const rows = await persistence.query<MemoryBlockRow>(
       'SELECT * FROM memory_blocks WHERE id = $1',
@@ -239,20 +241,166 @@ export function createPostgresMemoryStore(
     return parseMemoryBlock(rows[0]!);
   }
 
-  async function deleteBlock(id: string): Promise<void> {
-    const result = await persistence.query<MemoryBlockRow>(
-      'DELETE FROM memory_blocks WHERE id = $1 RETURNING id',
-      [id],
-    );
-
-    if (result.length === 0) {
+  async function deleteBlock(id: string, owner: string): Promise<void> {
+    if (!owner.trim()) {
       throw new MemoryError(
-        'BLOCK_NOT_FOUND',
-        `Block not found: ${id}`,
-        { blockId: id },
-        { suggestion: 'Verify the block ID exists before deleting' },
+        'PERMISSION_DENIED',
+        'memory deletion requires an owner-scoped authorization context',
       );
     }
+
+    await persistence.withTransaction(async (query) => {
+      const rows = await query<MemoryBlockRow>(
+        'SELECT * FROM memory_blocks WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      const block = rows.length > 0 ? parseMemoryBlock(rows[0]!) : null;
+      const decision = evaluatePublicMemoryDeletion(owner, block);
+      if (!decision.allowed) {
+        throw new MemoryError(
+          decision.reason === 'missing_or_foreign' ? 'BLOCK_NOT_FOUND' : 'PERMISSION_DENIED',
+          decision.message,
+        );
+      }
+
+      await insertDeleteEvent(query, block!);
+      const deleted = await query<MemoryBlockRow>(
+        'DELETE FROM memory_blocks WHERE id = $1 AND owner = $2 RETURNING id',
+        [id, owner],
+      );
+      if (deleted.length === 0) {
+        throw new MemoryError('BLOCK_NOT_FOUND', 'memory block not found');
+      }
+    });
+  }
+
+  async function insertDeleteEvent(
+    query: typeof persistence.query,
+    block: Readonly<MemoryBlock>,
+  ): Promise<void> {
+    await query<MemoryEventRow>(
+      `INSERT INTO memory_events (id, block_id, event_type, old_content, new_content)
+       VALUES ($1, $2, 'delete', NULL, NULL)`,
+      [randomUUID(), block.id],
+    );
+  }
+
+  async function deleteForMaintenance(
+    owner: string,
+    id: string,
+    constraints: Readonly<MaintenanceMemoryConstraints>,
+  ): Promise<void> {
+    if (!owner.trim()) throw new MemoryError('PERMISSION_DENIED', 'maintenance deletion requires an owner');
+    await persistence.withTransaction(async (query) => {
+      const rows = await query<MemoryBlockRow>(
+        'SELECT * FROM memory_blocks WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      const block = rows.length > 0 ? parseMemoryBlock(rows[0]!) : null;
+      const decision = evaluateMaintenanceMemoryMutation(owner, block, constraints);
+      if (!decision.allowed) {
+        throw new MemoryError(
+          decision.reason === 'missing_or_foreign' ? 'BLOCK_NOT_FOUND' : 'PERMISSION_DENIED',
+          decision.message,
+        );
+      }
+      await insertDeleteEvent(query, block!);
+      const deleted = await query<MemoryBlockRow>(
+        'DELETE FROM memory_blocks WHERE id = $1 AND owner = $2 RETURNING id',
+        [id, owner],
+      );
+      if (deleted.length === 0) throw new MemoryError('BLOCK_NOT_FOUND', 'memory block not found');
+    });
+  }
+
+  async function replaceWorkingMemory(
+    owner: string,
+    blocks: ReadonlyArray<WorkingMemoryReplacementBlock>,
+  ): Promise<Array<MemoryBlock>> {
+    if (!owner.trim()) throw new MemoryError('PERMISSION_DENIED', 'working memory replacement requires an owner');
+    return persistence.withTransaction(async (query) => {
+      const existingRows = await query<MemoryBlockRow>(
+        "SELECT * FROM memory_blocks WHERE owner = $1 AND tier = 'working' FOR UPDATE",
+        [owner],
+      );
+      const existingBlocks = existingRows.map(parseMemoryBlock);
+      for (const existing of existingBlocks) {
+        const decision = evaluatePublicMemoryDeletion(owner, existing);
+        if (!decision.allowed) {
+          throw new MemoryError('PERMISSION_DENIED', 'working memory contains a protected block');
+        }
+      }
+      for (const existing of existingBlocks) {
+        await insertDeleteEvent(query, existing);
+        await query<MemoryBlockRow>(
+          'DELETE FROM memory_blocks WHERE id = $1 AND owner = $2',
+          [existing.id, owner],
+        );
+      }
+      const replacement: Array<MemoryBlock> = [];
+      for (const block of blocks) {
+        const created = await createBlockWithQuery(query, {
+          id: randomUUID(), owner, tier: 'working', label: block.label,
+          content: block.content, embedding: null, permission: 'readwrite', pinned: false,
+        });
+        await query<MemoryEventRow>(
+          `INSERT INTO memory_events (id, block_id, event_type, old_content, new_content)
+           VALUES ($1, $2, 'create', NULL, $3)`,
+          [randomUUID(), created.id, created.content],
+        );
+        replacement.push(created);
+      }
+      return replacement;
+    });
+  }
+
+  async function createBlockWithQuery(
+    query: typeof persistence.query,
+    block: Omit<MemoryBlock, 'created_at' | 'updated_at'>,
+  ): Promise<MemoryBlock> {
+    const rows = await query<MemoryBlockRow>(
+      `INSERT INTO memory_blocks (id, owner, tier, label, content, embedding, permission, pinned)
+       VALUES ($1, $2, $3, $4, $5, NULL, $6, $7) RETURNING *`,
+      [block.id, block.owner, block.tier, block.label, block.content, block.permission, block.pinned],
+    );
+    return parseMemoryBlock(rows[0]!);
+  }
+
+  async function updateForMaintenance(
+    owner: string,
+    id: string,
+    content: string,
+    embedding: ReadonlyArray<number> | null,
+    constraints: Readonly<MaintenanceMemoryConstraints>,
+  ): Promise<MemoryBlock> {
+    if (!owner.trim()) throw new MemoryError('PERMISSION_DENIED', 'maintenance update requires an owner');
+    return persistence.withTransaction(async (query) => {
+      const rows = await query<MemoryBlockRow>(
+        'SELECT * FROM memory_blocks WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      const block = rows.length > 0 ? parseMemoryBlock(rows[0]!) : null;
+      const decision = evaluateMaintenanceMemoryMutation(owner, block, constraints);
+      if (!decision.allowed) {
+        throw new MemoryError(
+          decision.reason === 'missing_or_foreign' ? 'BLOCK_NOT_FOUND' : 'PERMISSION_DENIED',
+          decision.message,
+        );
+      }
+      const embeddingSql = embedding ? `'${toSql(embedding)}'::vector` : 'NULL';
+      const updatedRows = await query<MemoryBlockRow>(
+        `UPDATE memory_blocks SET content = $1, embedding = ${embeddingSql}, updated_at = NOW()
+         WHERE id = $2 AND owner = $3 RETURNING *`,
+        [content, id, owner],
+      );
+      if (updatedRows.length === 0) throw new MemoryError('BLOCK_NOT_FOUND', 'memory block not found');
+      await query<MemoryEventRow>(
+        `INSERT INTO memory_events (id, block_id, event_type, old_content, new_content)
+         VALUES ($1, $2, 'update', $3, $4)`,
+        [randomUUID(), id, block!.content, content],
+      );
+      return parseMemoryBlock(updatedRows[0]!);
+    });
   }
 
   async function searchByEmbedding(
@@ -320,19 +468,14 @@ export function createPostgresMemoryStore(
     return parsePendingMutation(rows[0]!);
   }
 
-  async function getPendingMutations(owner?: string): Promise<Array<PendingMutation>> {
-    let query =
+  async function getPendingMutations(owner: string): Promise<Array<PendingMutation>> {
+    if (!owner.trim()) throw new MemoryError('PERMISSION_DENIED', 'pending mutation lookup requires an owner');
+    const query =
       `SELECT pm.* FROM pending_mutations pm
        JOIN memory_blocks mb ON pm.block_id = mb.id
-       WHERE pm.status = 'pending'`;
-    const params: Array<string> = [];
-
-    if (owner) {
-      query += ' AND mb.owner = $1';
-      params.push(owner);
-    }
-
-    query += ' ORDER BY pm.created_at ASC';
+       WHERE pm.status = 'pending' AND mb.owner = $1
+       ORDER BY pm.created_at ASC`;
+    const params: Array<string> = [owner];
 
     const rows = await persistence.query<PendingMutationRow>(query, params);
     return rows.map(parsePendingMutation);
@@ -373,6 +516,9 @@ export function createPostgresMemoryStore(
     updateBlock,
     updateBlockTier,
     deleteBlock,
+    replaceWorkingMemory,
+    deleteForMaintenance,
+    updateForMaintenance,
     searchByEmbedding,
     logEvent,
     getEvents,

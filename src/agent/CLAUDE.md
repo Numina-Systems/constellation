@@ -1,63 +1,44 @@
 # Agent
 
-Last verified: 2026-07-03 (Phase 5: full-message-list cache diagnostics)
+Last verified: 2026-09-27
 
 ## Purpose
-Implements the core agent loop: receives user messages, builds context from memory, calls the LLM, dispatches tool use, and manages conversation history. Delegates context compression to an optional `Compactor` dependency, delivers relevant skills via the snapshot pipeline per turn via optional `SkillRegistry` dependency, optionally records operation traces for every tool dispatch via `TraceRecorder`, and supports session checkpointing for state persistence and restoration across restarts.
+
+Runs serialized conversation turns: persists input and outcomes, assembles provider context, dispatches tools, performs bounded compaction, and captures checkpoint state.
 
 ## Contracts
-- **Exposes**: `Agent` type (`processMessage(msg) -> string`, `processEvent(event) -> string`, `getConversationHistory()`, `conversationId`, `getCheckpointState()`), `ExternalEvent` type, `ContextProvider` type, `ProviderClassification` type (`'stable' | 'dynamic'`), `ClassifiedProvider` type, `SnapshotMode` type (`'full' | 'delta' | 'noop'`), `SnapshotResult` type, `SnapshotState` type, `CacheDiagnostics` type, `CacheDimension` type, `CacheBustEvent` type, `SuppressionFlags` type, `CheckForCacheBustOptions` type, `SessionCheckpoint` type, `CheckpointTrigger` type, `CheckpointAgentState` type, `CheckpointState` type, `SessionCheckpointSchema` (Zod), `CHECKPOINT_VERSION`, `serializeCheckpoint()`, `deserializeCheckpoint()`, `performCheckpoint()`, `restoreFromCheckpoint(checkpoint, deps)`, `createAgent(deps, conversationId?)`, `createSnapshotState()`, `createCacheDiagnostics()`, `buildUserMessage(text, snapshot)`, `createSchedulingContextProvider(scheduleDids, watchedDids)`, context utilities (`buildSystemPrompt`, `buildMessages(history)`, `estimateTokens`, `estimateOverheadTokens`, `shouldCompress`, `truncateOldest`). AgentConfig includes optional `recall_enabled`, `recall_token_budget`, `diary_enabled`, `diary_token_budget`, `diary_max_entries`, `cache_diagnostics`, `checkpoint_interval`, `checkpoint_retention`, `auto_resume`, and `resume_checkpoint` fields. AgentDependencies includes optional `recallContextState`, `searchStore`, `summarizationModel`, `summarizationModelName`, `classifiedProviders`, `checkpointFn`, `checkpointStateRef`, `loopDetector`, `diarySection`, `skills`, `skillsContextState`, `traceRecorder`, `embedding`, `owner`, `sourceInstructions`, and `workingMemoryContextState` fields.
+
+- **Exposes**: `createAgent`, `Agent`, `processMessage`, `processEvent`, checkpoint codecs/restore, context and snapshot helpers, and lifecycle composition types.
 - **Guarantees**:
-  - Each message round persists user input, assistant response (including `reasoning_content` for thinking-mode models), and tool results to the `messages` table; user and assistant messages include generated embeddings (null on provider absence/error)
-  - Tool dispatch loop runs up to `max_tool_rounds` before stopping
-  - `execute_code` tool calls route to the Deno runtime (with optional `ExecutionContext` for credential injection); `compact_context` routes to the `Compactor`; all other tools route through the registry
-  - `processEvent` formats external events as structured user messages (with expanded reply metadata and source-specific `[Instructions:]` blocks) and delegates to `processMessage`
-  - Context compression triggers automatically when estimated tokens (including overhead from system prompt, tools, and output reservation) exceed `context_budget * model_max_tokens` (requires `compactor` in deps)
-  - Pre-flight guard: after context building, if estimated total request tokens exceed the model's context window, `truncateOldest` drops oldest droppable messages while preserving leading system messages and the most recent user message
-  - Overflow recovery: when `model.complete` throws `ModelError` code `CONTEXT_OVERFLOW` (e.g. the rate limiter's input budget is below the compaction trigger threshold), the agent compacts history and retries the round once per turn (requires `compactor` in deps); the error propagates if compaction is absent or compresses nothing
-  - The agent can also be triggered to compact via the `compact_context` tool call
-  - Core memory blocks are always included in the system prompt
-  - Working memory blocks are delivered via the snapshot pipeline (Phase 3) — the agent refreshes the holder before composition each round, and updated blocks appear in the dynamic-context attachment
-  - System prompt is stable when tools and persona haven't changed (no dynamic context providers appended)
-  - Dynamic context providers are routed through snapshot state in user message attachments (Phase 4): snapshot composition happens at most once per turn, only when the last message is a plain-string user message. Composed attachments are persisted back onto the user-message row in the database and synchronized with the in-memory history entry, ensuring replay is byte-identical across turns. Provider state changes that occur during tool rounds (when the last message is an assistant response) are not consumed; they surface on the next turn's composition as a full snapshot.
-  - Relevant skills are delivered via the snapshot pipeline once per turn (requires `skills` AND `skillsContextState` in deps; uses `max_skills_per_turn` and `skill_threshold` config). Skill content is set in the holder and attached as dynamic context, not appended to the system prompt. Retrieval failure logs a warning and clears the section.
-  - If `traceRecorder` is present, every tool dispatch (including execute_code and compact_context) is traced fire-and-forget with timing, success/failure, and output summary
-  - When `cache_diagnostics` config is true (default), cache-bust detection runs before every `model.complete()` call, comparing content hashes across four dimensions (system_prompt, tool_definitions, message_prefix, beta_headers); the message_prefix dimension hashes the full message list and detects if the previous request's complete message list is not a byte-identical prefix of the current request's list (i.e., any message deletion, rewrite, or reordering is detected); unexpected changes emit console warnings and record traces; expected changes (compaction, tool mutation, first turn) are suppressed
-  - When `checkpointFn` is provided: a pre-compaction checkpoint fires before every context compression, and an interval checkpoint fires after turns divisible by `checkpoint_interval` (when > 0). Checkpoint state ref is updated at every turn exit point.
-  - `restoreFromCheckpoint` rehydrates working memory, pending predictions, active interests, recall cache, and compaction metadata from a stored `SessionCheckpoint`
-- **Expects**: All dependencies injected via `AgentDependencies` (optional `getExecutionContext` for credential injection into sandbox, optional `compactor` for compression, optional `contextProviders` for backward compat (deprecated), optional `classifiedProviders` for phase 4 snapshot routing, optional `skills` for per-turn skill retrieval, optional `skillsContextState` for skill delivery via snapshot pipeline, optional `workingMemoryContextState` for working-memory snapshot delivery (Phase 3), optional `traceRecorder` for operation tracing, optional `embedding` for message embedding generation, optional `owner` for trace identity, optional `sourceInstructions` map for per-source context injection, optional `recallContextState` and `searchStore` for reflexive recall, optional `summarizationModel` and `summarizationModelName` for recall summarization, optional `checkpointFn` for session checkpointing, optional `checkpointStateRef` for tracking checkpoint-relevant agent state). Database connected with migrations applied.
-  - **Recall guarantee**: The recall step fires once per turn (cached across tool rounds) when `recall_enabled` config is true AND `recallContextState` dependency is provided. Requires `searchStore` to be present; returns gracefully if missing. The result is cached across tool rounds so the user message is only searched once per turn. Recalled fragments reach the model via the snapshot pipeline (registered as a `dynamic` classified provider), not through system prompt rebuild.
-  - **Diary guarantee**: When `diarySection` is present in dependencies, it is appended to the system prompt once per round during the initial system prompt build. Content is session-static (identical string every round, computed once at init by the composition root).
+  - One FIFO ingress executor owns a complete turn, including persistence, tool batches, compaction, final response, and checkpoint capture. Queued cancellation is side-effect-free; reentrant acquisition fails with typed `REENTRANT_INGRESS`.
+  - Tool outcomes remain typed as `success`, `error`, `cancelled`, or `outcome_unknown` through persistence/reload and provider lowering. Legacy rows decode as `legacy_unknown` without substring classification.
+  - An interrupted batch records unstarted calls as `cancelled` and started/uncertain calls as `outcome_unknown` in both the lifecycle receipt and the retained transcript; if transcript backfill fails, the batch stays recovery-required. Any tool result carrying `runtime_outcome: outcome_unknown` (`execute_code` and custom tools alike) fails the turn closed behind a durable `unresolved-effect` recovery marker, while `cancelled` results are recorded without latching. Turn signal/deadline bound sandbox execution and are passed to cooperative tool handlers as dispatch options. Persistence failure marks the conversation recovery-required and blocks further provider/handler execution for it.
+  - Admission budgets the fully assembled request before each provider call. Irreducible mandatory context returns `context_unfittable` without a knowingly oversized call.
+  - `compact_context` is deferred until the correlated tool batch is complete; cache/snapshot reset publishes only after durable compaction commit.
+  - An ambiguous compaction outcome (`history_state_unknown` result or `history_state_unknown`/`committed_publication_failed` fault) fails the turn closed: the history is not adopted, recovery is latched durably through the lifecycle seam, and no further provider or tool execution runs for the conversation. Turn signal/deadline bound compaction like any provider call.
+  - Explicit restores allocate a fresh operation identity per request, so re-restoring a checkpoint after later appends re-runs membership replacement instead of replaying the earlier receipt. A recovery marker latches before any durable mutation and clears only after working-memory replacement succeeds, so a partially applied restore is never mistaken for a completed one. Typed markers (`restore`, `compaction`, `unresolved-effect`) are never cleared by generic recovery; clearing requires the marker's own completion path.
+  - Checkpoints use v2 with ordered active IDs, revision, archive IDs, and provenance. v1 decodes through an explicit migration marker. Unknown versions and missing native-v2 IDs fail before mutation.
+  - `auto_resume` reads durable active history and does not rewind later commits. Explicit restore replaces active membership transactionally, advances revision, and publishes working-memory restoration after durable success.
+  - Lifecycle batch receipts are addressed by primary key scoped to the owning conversation, and recovery scans filter unfinished/marker state in SQL (migration 018 adds a conversation-scoped receipt index). Recovery-required unfinished effects are never replayed automatically. Independent conversations can continue.
+  - Interval checkpoints fire only after successfully completed turns divisible by positive `checkpoint_interval`; shutdown capture is serialized and owned by the agent shutdown seam when supplied.
+- **Expects**: injected model, persistence/history store, memory, registry, optional runtime/compactor/skills/recall/checkpoint dependencies.
 
 ## Dependencies
-- **Uses**: `src/model/` (LLM calls), `src/memory/` (context building), `src/tool/` (tool definitions, dispatch), `src/runtime/` (code execution), `src/persistence/` (message persistence), `src/embedding/` (optional, message embedding generation), `src/compaction/` (optional, via `Compactor` interface), `src/skill/` (optional, skill retrieval and formatting), `src/reflexion/` (optional, via `TraceRecorder` interface), `src/recall/` (optional, reflexive recall pipeline and context provider)
-- **Used by**: `src/index.ts` (composition root)
-- **Boundary**: The agent is the primary caller of `ModelProvider.complete`. The compaction module also makes LLM calls for summarization via its own injected `ModelProvider`. The skill module provides semantic skill retrieval per turn.
 
-## Key Decisions
-- Conversation-per-agent: Each `createAgent` call gets (or resumes) a single conversation
-- Compression delegated to Compactor: Agent no longer contains summarization logic; it delegates to an injected `Compactor` (or skips compression if absent)
-- Token estimation heuristic (1 token ~ 4 chars): Good enough for budget checks without API calls
-- Pre-flight truncation as safety net: Even after compaction, the request may still exceed the model's context window (e.g., large tool definitions, long system prompt). `truncateOldest` provides a hard guard that never sends an over-budget request
-- Cache diagnostics as observability, not enforcement: Detects unexpected cache busts via content hashing but only warns/traces -- never blocks the request. Suppression flags prevent false positives from known-good mutations (compaction, tool changes, first turn)
-- Snapshot composition once per turn (Phase 4): A per-turn `snapshotComposed` flag ensures dynamic context attachments are composed and persisted at most once per turn, only when the last message is a plain-string user message. This guards against double-wrapping on overflow-recovery retries and ensures changes to provider state during tool rounds surface on the next turn. Composed attachments are persisted to the messages table and synchronized with in-memory history, guaranteeing byte-identical replay across conversation restarts.
-- Checkpoint as minimal state snapshot: Captures only the state needed to resume (turn/tool counters, message IDs, working memory, predictions, interests, compaction meta, recall cache). Conversation messages are already persisted; the checkpoint references them by ID rather than duplicating content
-- Checkpoint triggers are strategic: `pre_compaction` (before lossy compression), `interval` (periodic), `shutdown` (graceful exit), `explicit` (user-requested via tool). Pre-compaction is the most critical -- it preserves state before context is irreversibly compressed
+- **Uses**: model, memory, tool, runtime, persistence/history, compaction, skills, recall, and tracing ports.
+- **Used by**: `src/index.ts` composition root and external/scheduled/REPL ingress.
+- **Boundary**: the agent is the primary caller of inference providers; compaction owns summary-provider calls.
 
-## Invariants
-- `processMessage` always persists at least the user message and final assistant response (with `reasoning_content` when present)
-- Tool dispatch never exceeds `max_tool_rounds`
-- Compressed messages are archived to memory before deletion
+## Key decisions
 
-## Key Files
-- `types.ts` -- `Agent`, `AgentConfig` (includes `max_skills_per_turn`, `skill_threshold`, optional `recall_enabled`, `recall_token_budget`, `diary_enabled`, `diary_token_budget`, `diary_max_entries`, `cache_diagnostics`, `checkpoint_interval`, `checkpoint_retention`, `auto_resume`, `resume_checkpoint`), `AgentDependencies` (includes optional `compactor`, `getExecutionContext`, `traceRecorder`, `embedding`, `owner`, `contextProviders`, `classifiedProviders`, `skills`, `skillsContextState`, `sourceInstructions`, `recallContextState`, `searchStore`, `summarizationModel`, `summarizationModelName`, `checkpointFn`, `checkpointStateRef`, `diarySection`), `ConversationMessage`, `ExternalEvent`, `ContextProvider`, `ProviderClassification`, `ClassifiedProvider`
-- `agent.ts` -- Agent loop implementation (message processing, tool dispatch, compression, skill injection, trace recording, external event formatting with per-source instructions)
-- `context.ts` -- System prompt building (memory only, no dynamic providers), message conversion (`buildMessages(history)` — note signature changed in Phase 3, memory param removed), token estimation, overhead estimation, pre-flight truncation (`truncateOldest`)
-- `snapshot.ts` -- Batch-anchored snapshot state (`createSnapshotState`): per-provider content hashing via `Bun.hash()`, snapshot mode detection (full/delta/noop), tracks hash changes across calls
-- `messages.ts` -- User message composition (`buildUserMessage`): builds Anthropic-compatible user messages with optional dynamic context attachment composed as a single-string message body from snapshot results (Phase 4). Attachments are composed at most once per turn and persisted for byte-identical replay across turns.
-- `cache-diagnostics.ts` -- Cache-bust detection (Functional Core): per-dimension content hashing via `Bun.hash()`, suppression logic for expected changes, `createCacheDiagnostics()` factory
-- `scheduling-context.ts` -- Scheduling context provider (DID authority injection into system prompt)
-- `checkpoint-types.ts` -- `SessionCheckpoint`, `CheckpointTrigger`, `CheckpointAgentState`, `AgentCheckpointState`, `SessionCheckpointSchema`, `CHECKPOINT_VERSION`
-- `checkpoint-serializer.ts` -- `serializeCheckpoint()`, `deserializeCheckpoint()` (Zod-validated)
-- `checkpoint-create.ts` -- `performCheckpoint()` (collects subsystem state, serializes, persists, prunes)
-- `checkpoint-restore.ts` -- `restoreFromCheckpoint()` (atomic three-tier restoration with pre-flight validation, message integrity check, subsystem replay)
+- `CHECKPOINT_VERSION` is `2`.
+- Estimates use serialized provider-shaped values and a four-characters-per-token heuristic; they are not tokenizer guarantees.
+- Durable history is authoritative for automatic continuation; checkpoints are recovery metadata, not a rewind command.
+
+## Key files
+
+- `agent.ts` -- queued turn runner, tool batches, admission, and checkpoint triggers.
+- `integrity-lifecycle.ts` -- durable batch/counter/recovery state.
+- `checkpoint-types.ts`, `checkpoint-serializer.ts`, `checkpoint-create.ts`, `checkpoint-restore.ts` -- versioned checkpoint lifecycle.
+- `context.ts`, `snapshot.ts`, `messages.ts` -- context and dynamic attachment shaping.
+- `index.ts` -- public exports.

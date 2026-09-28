@@ -537,150 +537,54 @@ describe('Agent loop', () => {
     expect(typeof response).toBe('string');
   });
 
-  it('AC3.1: agent never sends oversized request to model', async () => {
-    // Integration test verifying the pre-flight guard prevents oversized requests
-    // Create agent with existing large history, then process new message
-
+  it('AC3.1: agent never sends an unfittable request to model', async () => {
     const capturedRequests: Array<ModelRequest> = [];
-
     const mockModel: ModelProvider = {
       async complete(request: ModelRequest): Promise<ModelResponse> {
         capturedRequests.push(request);
-        return {
-          content: [{ type: 'text', text: 'Response' }],
-          stop_reason: 'end_turn',
-          usage: { input_tokens: 100, output_tokens: 50 },
-        };
+        return {content: [{type: 'text', text: 'Response'}], stop_reason: 'end_turn', usage: {input_tokens: 100, output_tokens: 50}};
       },
-      async *stream() {
-        yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-      },
+      async *stream() { yield {type: 'message_start' as const, message: {id: 'msg', usage: {input_tokens: 0, output_tokens: 0}}}; },
     } as unknown as ModelProvider;
-
-    // Create a persistence provider and pre-populate it with large messages
     const mockPersistence = createMockPersistenceProvider();
     const convId = 'test-conv-ac3-1';
-
-    // Pre-insert large messages into the mock persistence
-    const largeText = 'x'.repeat(20000); // ~5000 tokens
-    await mockPersistence.query(
-      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-      [convId, 'user', largeText],
-    );
-    await mockPersistence.query(
-      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-      [convId, 'assistant', largeText],
-    );
-    await mockPersistence.query(
-      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-      [convId, 'user', largeText],
-    );
-
-    const configWithSmallBudget = {
-      ...config,
-      model_max_tokens: 2000, // Small budget to force pre-flight guard
-      max_tokens: 100,
-      context_budget: 0.8,
-    };
-
-    const deps: AgentDependencies = {
-      model: mockModel,
-      memory: mockMemory,
-      registry: mockRegistry,
-      runtime: mockRuntime,
-      persistence: mockPersistence,
-      config: configWithSmallBudget,
-    };
-
+    const largeText = 'x'.repeat(20000);
+    for (const role of ['user', 'assistant', 'user'] as const) {
+      await mockPersistence.query(
+        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+        [convId, role, largeText],
+      );
+    }
+    const configWithSmallBudget = {...config, model_max_tokens: 2000, max_tokens: 100, context_budget: 0.8};
+    const deps: AgentDependencies = {model: mockModel, memory: mockMemory, registry: mockRegistry, runtime: mockRuntime, persistence: mockPersistence, config: configWithSmallBudget};
     const agent = createAgent(deps, convId);
-    await agent.processMessage('New message');
-
-    // Verify request was sent to model
-    expect(capturedRequests.length).toBeGreaterThan(0);
-
-    // Verify the request passed to model never exceeds the budget
-    const request = capturedRequests[0]!;
-    const estimatedTokens = request.messages.reduce(
-      (sum, m) => sum + Math.ceil((typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).length / 4),
-      0,
-    );
-
-    const overheadTokens = (request.system ? Math.ceil(request.system.length / 4) : 0) +
-      (request.tools ? Math.ceil(JSON.stringify(request.tools).length / 4) : 0) +
-      (configWithSmallBudget.max_tokens ?? 100);
-
-    const totalTokens = estimatedTokens + overheadTokens;
-    expect(totalTokens).toBeLessThanOrEqual(configWithSmallBudget.model_max_tokens ?? 200000);
+    await expect(agent.processMessage('New message')).rejects.toMatchObject({code: 'CONTEXT_UNFITTABLE'});
+    expect(capturedRequests).toHaveLength(0);
   });
 
-  it('AC3.5: warning logged when pre-flight guard fires', async () => {
-    // Integration test verifying console.warn is called when pre-flight guard truncates
-    const capturedWarnings: string[] = [];
-    const originalWarn = console.warn;
-
-    console.warn = (...args: unknown[]) => {
-      capturedWarnings.push(String(args[0]));
-    };
-
-    try {
-      const largeText = 'x'.repeat(20000); // ~5000 tokens
-      const mockModel: ModelProvider = {
-        async complete(): Promise<ModelResponse> {
-          return {
-            content: [{ type: 'text', text: 'Response' }],
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 100, output_tokens: 50 },
-          };
-        },
-        async *stream() {
-          yield { type: 'message_start' as const, message: { id: 'msg', usage: { input_tokens: 0, output_tokens: 0 } } };
-        },
-      } as unknown as ModelProvider;
-
-      // Create persistence with pre-populated large messages
-      const mockPersistence = createMockPersistenceProvider();
-      const convId = 'test-conv-ac3-5';
-
-      // Pre-insert large messages
+  it('AC3.5: typed admission failure replaces pre-flight warning truncation', async () => {
+    let providerCalls = 0;
+    const mockModel: ModelProvider = {
+      async complete(): Promise<ModelResponse> {
+        providerCalls += 1;
+        return {content: [{type: 'text', text: 'Response'}], stop_reason: 'end_turn', usage: {input_tokens: 100, output_tokens: 50}};
+      },
+      async *stream() { yield {type: 'message_start' as const, message: {id: 'msg', usage: {input_tokens: 0, output_tokens: 0}}}; },
+    } as unknown as ModelProvider;
+    const mockPersistence = createMockPersistenceProvider();
+    const convId = 'test-conv-ac3-5';
+    const largeText = 'x'.repeat(20000);
+    for (const role of ['user', 'assistant', 'user'] as const) {
       await mockPersistence.query(
         `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-        [convId, 'user', largeText],
+        [convId, role, largeText],
       );
-      await mockPersistence.query(
-        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-        [convId, 'assistant', largeText],
-      );
-      await mockPersistence.query(
-        `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
-        [convId, 'user', largeText],
-      );
-
-      const configWithSmallBudget = {
-        ...config,
-        model_max_tokens: 2000,
-        max_tokens: 100,
-        context_budget: 0.8,
-      };
-
-      const deps: AgentDependencies = {
-        model: mockModel,
-        memory: mockMemory,
-        registry: mockRegistry,
-        runtime: mockRuntime,
-        persistence: mockPersistence,
-        config: configWithSmallBudget,
-      };
-
-      const agent = createAgent(deps, convId);
-      await agent.processMessage('New message');
-
-      // Verify that console.warn was called with a message containing "pre-flight guard"
-      const guardWarnings = capturedWarnings.filter((msg) => msg.includes('pre-flight guard'));
-      expect(guardWarnings.length).toBeGreaterThan(0);
-      expect(guardWarnings[0]!).toMatch(/pre-flight guard/);
-    } finally {
-      console.warn = originalWarn;
     }
+    const configWithSmallBudget = {...config, model_max_tokens: 2000, max_tokens: 100, context_budget: 0.8};
+    const deps: AgentDependencies = {model: mockModel, memory: mockMemory, registry: mockRegistry, runtime: mockRuntime, persistence: mockPersistence, config: configWithSmallBudget};
+    const agent = createAgent(deps, convId);
+    await expect(agent.processMessage('New message')).rejects.toMatchObject({code: 'CONTEXT_UNFITTABLE'});
+    expect(providerCalls).toBe(0);
   });
 
   it('handles multi-round tool calling', async () => {
@@ -915,18 +819,14 @@ describe('Agent loop', () => {
       expect(toolResultMessage).toBeDefined();
       expect(toolResultMessage?.content).toBeDefined();
 
-      // Parse the JSON tool result and verify compression stats
+      // Deferred compaction reports acceptance; compression stats are produced only at the boundary.
       const toolResult = JSON.parse(toolResultMessage?.content || '{}') as {
-        messagesCompressed?: number;
-        batchesCreated?: number;
-        tokensEstimateBefore?: number;
-        tokensEstimateAfter?: number;
+        accepted?: boolean;
+        deferred?: boolean;
       };
 
-      expect(toolResult.messagesCompressed).toBe(10);
-      expect(toolResult.batchesCreated).toBe(2);
-      expect(toolResult.tokensEstimateBefore).toBe(5000);
-      expect(toolResult.tokensEstimateAfter).toBe(2000);
+      expect(toolResult.accepted).toBe(true);
+      expect(toolResult.deferred).toBe(true);
     });
 
     it('AC5.3: history is replaced with compressed version for subsequent tool calls', async () => {
@@ -1099,18 +999,14 @@ describe('Agent loop', () => {
       expect(toolResultMessage).toBeDefined();
       expect(toolResultMessage?.content).toBeDefined();
 
-      // Parse the JSON tool result and verify zero-compression stats
+      // Deferred compaction reports acceptance even when the boundary later has nothing to compress.
       const toolResult = JSON.parse(toolResultMessage?.content || '{}') as {
-        messagesCompressed?: number;
-        batchesCreated?: number;
-        tokensEstimateBefore?: number;
-        tokensEstimateAfter?: number;
+        accepted?: boolean;
+        deferred?: boolean;
       };
 
-      expect(toolResult.messagesCompressed).toBe(0);
-      expect(toolResult.batchesCreated).toBe(0);
-      expect(toolResult.tokensEstimateBefore).toBe(100);
-      expect(toolResult.tokensEstimateAfter).toBe(100);
+      expect(toolResult.accepted).toBe(true);
+      expect(toolResult.deferred).toBe(true);
     });
   });
 });
@@ -2384,12 +2280,8 @@ describe('recall system prompt stability', () => {
     const agent = createAgent(deps);
     await agent.processMessage('Hello');
 
-    // On recall-enabled turns with one round, buildSystemPrompt should be called exactly twice:
-    // - Once at line 203 (preliminary build for overhead calculation)
-    // - Once at line 244 (inside the round loop, sent to the model)
-    // - NOT again after recall is set (lines 278-283 dead code removed)
-    // This verifies there's no post-recall rebuild that would add a 3rd call.
-    expect(buildSystemPromptCalls.count).toBe(2);
+    // The stable system prompt is built once and is not rebuilt after recall.
+    expect(buildSystemPromptCalls.count).toBe(1);
   });
 
   it('cache-friendliness.AC2.1 (unit): system prompt is byte-identical across turns when skills are unchanged', async () => {
@@ -3320,12 +3212,3 @@ describe('cache-friendliness.AC4: Persist composed user messages', () => {
   });
 });
 
-// Integration test (requires real Postgres)
-if (process.env['DATABASE_URL']) {
-  describe('Agent loop (integration with Postgres)', () => {
-    it.skip('AC1.2 (integration): persists to real database and loads history', async () => {
-      // Integration test skipped for now - requires real database setup
-      // Would test: create agent -> send message -> persist -> restart -> load history
-    });
-  });
-}

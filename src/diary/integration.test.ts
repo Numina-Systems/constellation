@@ -20,7 +20,7 @@ async function cleanupDiaryBlocks(): Promise<void> {
   const memoryStore = createPostgresMemoryStore(persistence);
   const blocks = await memoryStore.getBlocksByLabelPrefix(AGENT_OWNER, 'diary:', 'working');
   for (const block of blocks) {
-    await memoryStore.deleteBlock(block.id);
+    await memoryStore.deleteBlock(block.id, AGENT_OWNER);
   }
 }
 

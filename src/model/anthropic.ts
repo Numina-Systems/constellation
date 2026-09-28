@@ -21,12 +21,16 @@ import type {
   StreamEvent,
   TextBlock,
   ToolDefinition,
-  UsageStats,
 } from "./types.js";
 import { ModelError } from "./types.js";
 import { callWithRetry } from "./retry.js";
+import { buildCancellationRequestOptions, composeCancellation, isTimeoutCancellation } from "./cancellation.js";
+import { normalizeAnthropicUsage } from "./usage.js";
 
 function isRetryableError(error: unknown): boolean {
+  if (error instanceof Anthropic.APIUserAbortError) {
+    return false;
+  }
   if (error instanceof Anthropic.RateLimitError) {
     return true;
   }
@@ -157,15 +161,6 @@ function normalizeContentBlocks(
   });
 }
 
-function normalizeUsage(usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null }): UsageStats {
-  return {
-    input_tokens: usage.input_tokens,
-    output_tokens: usage.output_tokens,
-    cache_creation_input_tokens: usage.cache_creation_input_tokens ?? null,
-    cache_read_input_tokens: usage.cache_read_input_tokens ?? null,
-  };
-}
-
 function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" {
   switch (reason) {
     case "end_turn":
@@ -242,7 +237,9 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
 
   return {
     async complete(request: ModelRequest): Promise<ModelResponse> {
-      const response = await callWithRetry(async () => {
+      const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
+      try {
+        const response = await callWithRetry(async () => {
         try {
           const params = buildRequestParams(request);
 
@@ -255,10 +252,16 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
               temperature: params.temperature,
               messages: params.messages,
             },
-            ...(params.timeout != null ? [{ timeout: params.timeout }] : []),
+            ...(request.timeout != null || request.signal != null || request.deadline != null
+              ? [buildCancellationRequestOptions(cancellation)]
+              : []),
           );
           return await stream.finalMessage();
         } catch (error) {
+          if (error instanceof Anthropic.APIUserAbortError) {
+            const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
+            throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "anthropic" });
+          }
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(
               "PROVIDER_UNAVAILABLE",
@@ -293,17 +296,23 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-      }, isRetryableError);
+      }, isRetryableError, undefined, { signal: cancellation.signal, deadline: request.deadline });
 
-      return {
-        content: normalizeContentBlocks(response.content),
-        stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "end_turn"),
-        usage: normalizeUsage(response.usage),
-      };
+        return {
+          content: normalizeContentBlocks(response.content),
+          stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "end_turn"),
+          usage: normalizeAnthropicUsage(response.usage) ?? { input_tokens: 0, output_tokens: 0 },
+        };
+      } finally {
+        cancellation.dispose();
+      }
     },
 
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
-      const stream = await callWithRetry(async () => {
+      const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
+      let activeStream: { readonly abort: () => void } | null = null;
+      try {
+        const stream = await callWithRetry(async () => {
         try {
           const params = buildRequestParams(request);
 
@@ -316,9 +325,15 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
               temperature: params.temperature,
               messages: params.messages,
             },
-            ...(params.timeout != null ? [{ timeout: params.timeout }] : []),
+            ...(request.timeout != null || request.signal != null || request.deadline != null
+              ? [buildCancellationRequestOptions(cancellation)]
+              : []),
           );
         } catch (error) {
+          if (error instanceof Anthropic.APIUserAbortError) {
+            const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
+            throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "anthropic" });
+          }
           if (error instanceof Anthropic.AuthenticationError) {
             throw new ModelError(
               "PROVIDER_UNAVAILABLE",
@@ -353,15 +368,19 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-      }, isRetryableError);
+        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
+        activeStream = stream;
+
+      let messageStartUsage: ReturnType<typeof normalizeAnthropicUsage> = null;
 
       for await (const event of stream) {
         if (event.type === "message_start") {
+          messageStartUsage = normalizeAnthropicUsage(event.message.usage);
           yield {
             type: "message_start",
             message: {
               id: event.message.id,
-              usage: normalizeUsage(event.message.usage),
+              ...(messageStartUsage ? { usage: messageStartUsage } : {}),
             },
           };
         } else if (event.type === "content_block_start") {
@@ -394,14 +413,42 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             },
           };
         } else if (event.type === "message_delta") {
+          const messageDeltaUsage = normalizeAnthropicUsage(event.usage);
+          const finalUsage = messageDeltaUsage || messageStartUsage
+            ? {
+                input_tokens: messageStartUsage?.input_tokens ?? messageDeltaUsage?.input_tokens ?? 0,
+                output_tokens: messageDeltaUsage?.output_tokens ?? messageStartUsage?.output_tokens ?? 0,
+                ...(messageStartUsage?.cache_creation_input_tokens != null || messageDeltaUsage?.cache_creation_input_tokens != null
+                  ? { cache_creation_input_tokens: messageStartUsage?.cache_creation_input_tokens ?? messageDeltaUsage?.cache_creation_input_tokens ?? 0 }
+                  : {}),
+                ...(messageStartUsage?.cache_read_input_tokens != null || messageDeltaUsage?.cache_read_input_tokens != null
+                  ? { cache_read_input_tokens: messageStartUsage?.cache_read_input_tokens ?? messageDeltaUsage?.cache_read_input_tokens ?? 0 }
+                  : {}),
+              }
+            : null;
           yield {
             type: "message_stop",
             message: {
               // SDK types stop_reason as string; we map to normalized StopReason type via function
               stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "end_turn"),
+              ...(finalUsage ? { usage: finalUsage } : {}),
             },
           };
         }
+      }
+      if (cancellation.signal.aborted) {
+        const timedOut = isTimeoutCancellation(cancellation.signal, cancellation.deadline);
+        throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "anthropic" });
+      }
+      } catch (error) {
+        if (cancellation.signal.aborted || error instanceof Anthropic.APIUserAbortError) {
+          const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
+          throw new ModelError(timedOut ? "TIMEOUT" : "CANCELLED", timedOut ? "request timed out" : "request cancelled", timedOut, { provider: "anthropic" });
+        }
+        throw error;
+      } finally {
+        activeStream?.abort();
+        cancellation.dispose();
       }
     },
   };

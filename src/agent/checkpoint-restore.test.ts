@@ -15,6 +15,7 @@ import type { RestorationDependencies } from './checkpoint-restore.ts';
 import type { MemoryManager } from '@/memory/manager.ts';
 import type { PredictionStore } from '@/reflexion/types.ts';
 import type { InterestRegistry } from '@/subconscious/types.ts';
+import {createTestDatabase, teardownTestDatabase, type TestDatabase} from '@/testing/test-database.ts';
 
 describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
   let persistence: ReturnType<typeof createPostgresProvider>;
@@ -23,16 +24,14 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
   let predictionStore: PredictionStore;
   let traceRecorder: ReturnType<typeof createTraceRecorder>;
   let interestRegistry: InterestRegistry;
+  let database: TestDatabase;
 
   const AGENT_OWNER = 'test-agent';
   const TEST_CONVERSATION_ID = 'conv-test-123';
 
   beforeAll(async () => {
-    const databaseUrl = process.env['DATABASE_URL'] || 'postgresql://constellation:constellation@localhost:5432/constellation';
-    persistence = createPostgresProvider({ url: databaseUrl });
-
-    await persistence.connect();
-    await persistence.runMigrations();
+    database = await createTestDatabase();
+    persistence = database.persistence as ReturnType<typeof createPostgresProvider>;
 
     const memoryStore = createPostgresMemoryStore(persistence);
     const embedder = createEmbeddingProvider({
@@ -58,7 +57,7 @@ describe('arch-hardening.AC1: Atomic checkpoint restore', () => {
   });
 
   afterAll(async () => {
-    await persistence.disconnect();
+    await teardownTestDatabase(database);
   });
 
   describe('arch-hardening.AC1.1: Success - full restore completes', () => {

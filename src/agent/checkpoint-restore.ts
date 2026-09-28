@@ -6,6 +6,7 @@
  * Integrated into the composition root startup sequence, before the agent loop begins.
  */
 
+import {randomUUID} from 'node:crypto';
 import type {SessionCheckpoint} from './checkpoint-types.ts';
 import type {PersistenceProvider} from '@/persistence/types.ts';
 import type {MemoryManager} from '@/memory/manager.ts';
@@ -13,51 +14,35 @@ import type {PredictionStore, TraceRecorder} from '@/reflexion/types.ts';
 import type {InterestRegistry} from '@/subconscious/types.ts';
 import type {RecallContextState} from '@/recall/context.ts';
 import type {MessageStore} from '@/persistence/message-store.ts';
+import type {ConversationHistoryStore} from '@/persistence/conversation-history-store.ts';
+import type {IntegrityLifecycle} from './integrity-lifecycle.ts';
 import { AgentError } from '@/errors/agent.ts';
 import { traceError } from '@/errors/trace.ts';
-
-// ── Memory Constraint Constants ──
-const MAX_WORKING_BLOCKS = 20;
-const MAX_BLOCK_CONTENT_LENGTH = 10000;
-const LABEL_PATTERN = /^[a-z][a-z0-9_-]*$/;
 
 // ── Pre-flight Validation (Tier 0) ──
 type PreflightResult =
   | { readonly valid: true }
   | { readonly valid: false; readonly reason: string };
 
-function validateMemoryConstraints(
+/** Shared checkpoint validation deliberately avoids legacy live-memory limits. */
+function validateWorkingMemory(
   workingMemory: ReadonlyArray<{ readonly label: string; readonly content: string }>,
 ): PreflightResult {
-  if (workingMemory.length > MAX_WORKING_BLOCKS) {
-    return {
-      valid: false,
-      reason: `working memory block count ${workingMemory.length} exceeds limit of ${MAX_WORKING_BLOCKS}`,
-    };
-  }
-
   for (const block of workingMemory) {
-    if (!LABEL_PATTERN.test(block.label)) {
-      return {
-        valid: false,
-        reason: `invalid memory block label "${block.label}": must match pattern ${LABEL_PATTERN.source}`,
-      };
-    }
-    if (block.content.length > MAX_BLOCK_CONTENT_LENGTH) {
-      return {
-        valid: false,
-        reason: `memory block "${block.label}" content length ${block.content.length} exceeds limit of ${MAX_BLOCK_CONTENT_LENGTH}`,
-      };
-    }
+    if (!block.label.trim()) return {valid: false, reason: 'working memory labels must not be empty'};
+    if (typeof block.content !== 'string') return {valid: false, reason: 'working memory content must be text'};
   }
-
-  return { valid: true };
+  return {valid: true};
 }
 
 export type RestorationDependencies = {
   readonly persistence: PersistenceProvider;
   readonly memory: MemoryManager;
   readonly messageStore: MessageStore;
+  /** Exact restore boundary; required for production checkpoint restoration. */
+  readonly historyStore?: ConversationHistoryStore;
+  /** Durable recovery-marking seam; required for latched production restores. */
+  readonly integrityLifecycle?: IntegrityLifecycle;
   readonly predictionStore?: PredictionStore;
   readonly interestRegistry?: InterestRegistry;
   readonly recallContextState?: RecallContextState;
@@ -77,6 +62,36 @@ export type RestorationResult = {
   readonly messageCount: number;
 };
 
+/**
+ * Restores for one conversation serialize in-process: history commit, working-memory
+ * publication, and marker completion form one logical critical section. Marker
+ * supersession may therefore only retire markers from operations that have fully
+ * finished, never from a restore that is still mid-flight.
+ */
+const restoreGates = new Map<string, Promise<unknown>>();
+
+function runSerializedRestore<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = restoreGates.get(conversationId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(
+    (): Promise<void> => gate,
+    (): Promise<void> => gate,
+  );
+  restoreGates.set(conversationId, tail);
+  return (async () => {
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (restoreGates.get(conversationId) === tail) restoreGates.delete(conversationId);
+    }
+  })();
+}
+
 export async function restoreFromCheckpoint(
   checkpoint: SessionCheckpoint,
   deps: RestorationDependencies,
@@ -84,18 +99,91 @@ export async function restoreFromCheckpoint(
   const log = deps.log ?? console.log;
 
   // ── Tier 0: Pre-flight Validation ──
-  const preflight = validateMemoryConstraints(checkpoint.workingMemory);
+  const preflight = validateWorkingMemory(checkpoint.workingMemory);
   if (!preflight.valid) {
-    const error = new AgentError(
-      'CHECKPOINT_FAILED',
-      `pre-flight validation failed: ${preflight.reason}`,
-      { conversationId: checkpoint.conversationId, checkpointId: checkpoint.id },
-    );
+    const error = new AgentError('CHECKPOINT_FAILED', `pre-flight validation failed: ${preflight.reason}`, {
+      conversationId: checkpoint.conversationId, checkpointId: checkpoint.id,
+    });
     traceError(error, deps.traceRecorder, deps.owner, checkpoint.conversationId);
     throw error;
   }
 
-  // ── Tier 1 + Tier 2: DB writes then memory writes, all inside transaction ──
+  // Production restoration is durable-first: active membership and its receipt commit before any in-memory publication.
+  if (deps.historyStore) {
+    const historyStore = deps.historyStore;
+    return runSerializedRestore(checkpoint.conversationId, async () => {
+    const isNativeV2 = checkpoint.version === 2 && checkpoint.migratedFromVersion !== 1;
+    if (isNativeV2 && checkpoint.messageIds.length === 0) {
+      throw new AgentError('CHECKPOINT_FAILED', 'cannot restore checkpoint: v2 active history is empty', {conversationId: checkpoint.conversationId, checkpointId: checkpoint.id});
+    }
+    if (!isNativeV2) log('checkpoint restore: v1 provenance gap; archive selection cannot be resolved from legacy metadata');
+    const current = await historyStore.readActive(checkpoint.conversationId);
+    // Latch before any durable mutation: if the process dies between the history
+    // commit and working-memory replacement, restart must observe recovery-required
+    // state instead of silently resuming with history and memory out of step.
+    let recoveryMarkerId: string | null = null;
+    if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
+      recoveryMarkerId = await deps.integrityLifecycle.markConversationRecoveryRequired(`checkpoint restore ${checkpoint.id} is in progress for conversation ${checkpoint.conversationId}`, 'restore');
+    }
+    const restored = await historyStore.restoreExactHistory({
+      // Each restore request owns a distinct operation identity so a repeat restore
+      // after new appends re-runs membership replacement instead of short-circuiting
+      // on this checkpoint's earlier committed receipt. The identity is reconciled
+      // internally for retries of this single request.
+      operationId: `checkpoint-restore-${checkpoint.id}-${randomUUID()}`,
+      conversationId: checkpoint.conversationId,
+      expectedRevision: current.revision,
+      messageIds: checkpoint.messageIds,
+      checkpointId: checkpoint.id,
+      sourceArchiveIds: isNativeV2 ? checkpoint.activeArchiveIds : [],
+      provenanceRefs: isNativeV2 ? checkpoint.provenanceRefs : [],
+    });
+    try {
+      if (deps.memory.replaceWorkingMemory) {
+        await deps.memory.replaceWorkingMemory(checkpoint.workingMemory);
+      } else {
+        throw new AgentError('CHECKPOINT_FAILED', 'working memory replacement is unavailable', {conversationId: checkpoint.conversationId, checkpointId: checkpoint.id});
+      }
+    } catch (error) {
+      // The marker stays set: durable history may be restored while working memory is
+      // not, and only trusted recovery may clear that state. Typed pre-mutation and
+      // ambiguity faults keep their original identity.
+      if (error instanceof AgentError || (typeof error === 'object' && error !== null && 'code' in error)) {
+        throw error;
+      }
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new AgentError('CHECKPOINT_FAILED', `checkpoint restore failed after durable mutation: ${reason}`, {
+        conversationId: checkpoint.conversationId,
+        checkpointId: checkpoint.id,
+        recoveryMarkerId,
+      }, {cause: error instanceof Error ? error : undefined});
+    }
+    if (recoveryMarkerId !== null && deps.integrityLifecycle?.completeRecoveryMarker) {
+      try {
+        await deps.integrityLifecycle.completeRecoveryMarker(recoveryMarkerId);
+      } catch (error) {
+        // Fail closed: an incompletely cleared marker keeps the conversation blocked
+        // on trusted recovery even though the restore itself fully applied.
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new AgentError('INTEGRITY_FAILED', `failed to clear checkpoint restore marker: ${reason}`, {
+          conversationId: checkpoint.conversationId,
+          checkpointId: checkpoint.id,
+          recoveryMarkerId,
+        }, {cause: error instanceof Error ? error : undefined});
+      }
+    }
+    if (deps.recallContextState) deps.recallContextState.setResult(null);
+    return {
+      conversationId: checkpoint.conversationId,
+      turnNumber: checkpoint.turnNumber,
+      toolRound: checkpoint.toolRound,
+      compactionMeta: checkpoint.compactionMeta,
+      messageCount: restored.history.messages.length,
+    };
+    });
+  }
+
+  // ── Legacy compatibility path for callers without the history-store boundary ──
   return await deps.persistence.withTransaction(async () => {
     // Tier 1: DB operations (rolled back on any failure)
 
@@ -115,8 +203,17 @@ export async function restoreFromCheckpoint(
     const existingIds = await deps.messageStore.listIds(checkpoint.conversationId);
     const existingIdSet = new Set(existingIds);
     const missingMessages = checkpoint.messageIds.filter(id => !existingIdSet.has(id));
+    if (missingMessages.length > 0 && checkpoint.version === 2 && checkpoint.migratedFromVersion !== 1) {
+      const error = new AgentError(
+        'CHECKPOINT_FAILED',
+        `cannot restore checkpoint: missing retained message IDs (${missingMessages.join(', ')})`,
+        { conversationId: checkpoint.conversationId, checkpointId: checkpoint.id },
+      );
+      traceError(error, deps.traceRecorder, deps.owner, checkpoint.conversationId);
+      throw error;
+    }
     if (missingMessages.length > 0) {
-      log(`checkpoint restore: ${missingMessages.length} messages no longer in conversation (likely compacted)`);
+      log(`checkpoint restore: ${missingMessages.length} legacy v1 messages no longer in conversation (provenance unavailable)`);
     }
 
     // Verify predictions (read-only check, no writes)

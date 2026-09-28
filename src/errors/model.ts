@@ -7,7 +7,8 @@ export type ModelErrorCode =
   | 'RATE_LIMITED'
   | 'CONTEXT_OVERFLOW'
   | 'INVALID_RESPONSE'
-  | 'TIMEOUT';
+  | 'TIMEOUT'
+  | 'CANCELLED';
 
 export class ModelError extends ConstellationError {
   readonly retryable: boolean;

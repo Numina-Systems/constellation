@@ -135,6 +135,23 @@ describe('generateSecretConstants', () => {
   });
 
   describe('security: defense against code injection via key names', () => {
+    test('skips runtime binding collisions while retaining valid secrets', () => {
+      const context: ExecutionContext = {
+        secrets: {Deno: 'bad', output: 'bad', console: 'bad', __callTool__: 'bad', VALID_KEY: 'good'},
+      };
+      const warnings: Array<string> = [];
+      const originalWarn = console.warn;
+      console.warn = (message: string): void => { warnings.push(message); };
+      try {
+        const result = generateSecretConstants(context);
+        expect(result).toBe('const VALID_KEY = "good";');
+      } finally {
+        console.warn = originalWarn;
+      }
+      expect(warnings).toHaveLength(4);
+      expect(warnings.every((warning) => warning.includes('reserved by execution environment'))).toBe(true);
+    });
+
     test('skips keys with invalid identifiers (injection attempt: semicolon and statement)', () => {
       const context: ExecutionContext = {
         secrets: {

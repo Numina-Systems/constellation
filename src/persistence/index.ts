@@ -7,3 +7,16 @@ export type { CheckpointStore } from './checkpoint-store.ts';
 export { createCheckpointStore } from './checkpoint-store.ts';
 export type { MessageStore } from './message-store.ts';
 export { createMessageStore } from './message-store.ts';
+export type {
+  ActiveHistory,
+  ArchiveBlockInput,
+  ConversationHistoryStore,
+  HistoryMessageInput,
+  HistoryReceipt,
+  HistoricalMessage,
+  HistoryStateUnknownError,
+  PreparedCompactionPlan,
+  PreparedExactRestorePlan,
+  ExactRestoreReceipt,
+} from './conversation-history-store.ts';
+export { createConversationHistoryStore } from './conversation-history-store.ts';

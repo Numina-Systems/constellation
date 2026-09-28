@@ -282,12 +282,34 @@ describe('session-checkpointing.AC5: Storage and Migration', () => {
   });
 
   describe('AC5.3: Zod validation on deserialization', () => {
+    test('migrates a v1 checkpoint to v2 with explicit provenance gaps', () => {
+      const legacy = {
+        ...testOptions,
+        state: undefined,
+        version: 1,
+        turnNumber: 5,
+        toolRound: 2,
+        messageIds: ['msg-1'],
+        workingMemory: [],
+        pendingPredictions: [],
+        activeInterests: [],
+        compactionMeta: {lastCompactedIndex: 0, summaryCount: 0},
+        recallCache: null,
+      };
+      const migrated = deserializeCheckpoint(legacy);
+      expect(migrated.version).toBe(2);
+      expect(migrated.messageIds).toEqual(['msg-1']);
+      expect(migrated.transcriptRevision).toBe(0);
+      expect(migrated.activeArchiveIds).toEqual([]);
+      expect(migrated.provenanceRefs).toEqual([]);
+    });
+
     test('validates well-formed JSONB data', () => {
       const checkpoint = serializeCheckpoint(testOptions);
       const jsonbCycle = JSON.parse(JSON.stringify(checkpoint));
       const deserialized = deserializeCheckpoint(jsonbCycle);
 
-      expect(deserialized.version).toBe(1);
+      expect(deserialized.version).toBe(2);
       expect(deserialized.id).toBe(testOptions.id);
       expect(deserialized.conversationId).toBe(testOptions.conversationId);
     });
@@ -447,7 +469,7 @@ describe('session-checkpointing.AC5: Storage and Migration', () => {
     test('serializeCheckpoint sets version, id, createdAt correctly', () => {
       const checkpoint = serializeCheckpoint(testOptions);
 
-      expect(checkpoint.version).toBe(1);
+      expect(checkpoint.version).toBe(2);
       expect(checkpoint.id).toBe(testOptions.id);
       expect(checkpoint.conversationId).toBe(testOptions.conversationId);
       expect(checkpoint.owner).toBe(testOptions.owner);
@@ -472,9 +494,9 @@ describe('session-checkpointing.AC5: Storage and Migration', () => {
       }
     });
 
-    test('rejects data with version 2', () => {
+    test('rejects data with unknown future version', () => {
       const corrupted = {
-        version: 2,
+        version: 99,
         id: '550e8400-e29b-41d4-a716-446655440000',
         conversationId: 'conv-123',
         owner: 'user-456',

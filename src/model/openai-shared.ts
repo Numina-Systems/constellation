@@ -69,7 +69,7 @@ export function normalizeContentBlocks(
 
 export function normalizeStopReason(
   finishReason: string | null
-): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" {
+): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "incomplete" {
   if (finishReason === "tool_calls") {
     return "tool_use";
   }
@@ -79,7 +79,7 @@ export function normalizeStopReason(
   if (finishReason === "stop") {
     return "end_turn";
   }
-  return "stop_sequence";
+  return "incomplete";
 }
 
 export function normalizeUsage(usage: OpenAI.Completions.CompletionUsage | null | undefined): UsageStats | null {

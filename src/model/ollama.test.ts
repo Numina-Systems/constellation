@@ -784,6 +784,16 @@ describe("normalizeStopReason", () => {
     expect(result).toBe("end_turn");
   });
 
+  it("does not report tool_use when a tool call is truncated by done_reason length", () => {
+    const response = {
+      model: "llama3.2",
+      message: {role: "assistant" as const, content: "", tool_calls: [{type: "function" as const, function: {name: "unfinished", arguments: {}}}]},
+      done: true,
+      done_reason: "length" as const,
+    };
+    expect(normalizeStopReason(response)).toBe("max_tokens");
+  });
+
   it("should return max_tokens when done_reason is length", () => {
     const response = {
       model: "llama3.2",

@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import {
   createAnthropicAdapter,
+  normalizeStopReasonAnthropicToCommon,
   buildAnthropicSystemParam,
   applyCacheControlToLastBlock,
   normalizeMessage,
@@ -11,6 +12,14 @@ import {
 import { ModelError } from "./types.js";
 import type { Message, ModelRequest } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
+
+describe("normalizeStopReasonAnthropicToCommon", () => {
+  it("maps recognized reasons and unknown future reasons safely", () => {
+    expect(normalizeStopReasonAnthropicToCommon("end_turn")).toBe("end_turn");
+    expect(normalizeStopReasonAnthropicToCommon("tool_use")).toBe("tool_use");
+    expect(normalizeStopReasonAnthropicToCommon("future_reason")).toBe("incomplete");
+  });
+});
 
 describe("createAnthropicAdapter", () => {
   describe("initialization", () => {

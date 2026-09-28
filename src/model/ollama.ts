@@ -195,11 +195,11 @@ export function buildOllamaRequest(
 export function normalizeStopReason(
   response: OllamaChatResponse
 ): StopReason {
-  if (response.message.tool_calls && response.message.tool_calls.length > 0) {
-    return "tool_use";
-  }
   if (response.done_reason === "length") {
     return "max_tokens";
+  }
+  if (response.message.tool_calls && response.message.tool_calls.length > 0) {
+    return "tool_use";
   }
   return "end_turn";
 }

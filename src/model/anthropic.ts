@@ -161,7 +161,7 @@ function normalizeContentBlocks(
   });
 }
 
-function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" {
+export function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "incomplete" {
   switch (reason) {
     case "end_turn":
       return "end_turn";
@@ -172,7 +172,7 @@ function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "too
     case "stop_sequence":
       return "stop_sequence";
     default:
-      return "end_turn";
+      return "incomplete";
   }
 }
 
@@ -300,7 +300,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
 
         return {
           content: normalizeContentBlocks(response.content),
-          stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "end_turn"),
+          stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "incomplete"),
           usage: normalizeAnthropicUsage(response.usage) ?? { input_tokens: 0, output_tokens: 0 },
         };
       } finally {
@@ -430,7 +430,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             type: "message_stop",
             message: {
               // SDK types stop_reason as string; we map to normalized StopReason type via function
-              stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "end_turn"),
+              stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "incomplete"),
               ...(finalUsage ? { usage: finalUsage } : {}),
             },
           };

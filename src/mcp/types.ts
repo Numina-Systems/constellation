@@ -31,7 +31,8 @@ export type McpDiscoveryCode =
   | 'mcp_discovery_duplicate_tool'
   | 'mcp_discovery_transport_error'
   | 'mcp_reconnect_exhausted'
-  | 'mcp_registration_collision';
+  | 'mcp_registration_collision'
+  | 'mcp_startup_timeout';
 
 export type McpDiscoveryDetails = Readonly<Record<string, string | number | boolean>>;
 

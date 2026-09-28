@@ -15,5 +15,5 @@ export type { McpPage, McpPageFetcher } from './discovery-bounds.ts';
 export { mapInputSchemaToParameters } from './schema-mapper.ts';
 export { createMcpToolProvider, namespaceTool } from './provider.ts';
 export { mcpPromptToSkill, mcpPromptsToSkills } from './skill-adapter.ts';
-export { createMcpInstructionsProvider, formatMcpStartupSummary, connectMcpServers, publishMcpRegistrations, createMcpToolDefinitions } from './startup.ts';
-export type { McpStartupFailure, McpStartupResult } from './startup.ts';
+export { createMcpInstructionsProvider, formatMcpStartupSummary, connectMcpServers, publishMcpRegistrations, createMcpToolDefinitions, MCP_SERVER_STARTUP_TIMEOUT_MS } from './startup.ts';
+export type { McpStartupFailure, McpStartupOptions, McpStartupResult } from './startup.ts';

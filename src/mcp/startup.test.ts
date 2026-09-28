@@ -1,7 +1,7 @@
 // pattern: Functional Core (tests for pure functions)
 
 import { describe, it, expect } from 'bun:test';
-import { createMcpInstructionsProvider, formatMcpStartupSummary } from './startup.ts';
+import { connectMcpServers, createMcpInstructionsProvider, formatMcpStartupSummary } from './startup.ts';
 import type { McpClient, McpToolInfo } from './types.ts';
 
 /**
@@ -34,6 +34,31 @@ function createMockMcpClient(options?: {
     getInstructions: async () => instructions,
   };
 }
+
+describe('connectMcpServers bounded startup', () => {
+  it('skips a hung server within the timeout, logs it, and continues to later servers', async () => {
+    const disconnected: Array<string> = [];
+    const errors: Array<ReadonlyArray<unknown>> = [];
+    const originalError = console.error;
+    console.error = (...values: Array<unknown>) => { errors.push(values); };
+    const hung = createMockMcpClient();
+    const clients = [
+      {...hung, serverName: 'hung-server', connect: async () => new Promise<void>(() => {}), disconnect: async () => { disconnected.push('hung-server'); }},
+      {...hung, serverName: 'ready-server'},
+    ];
+    const startedAt = Date.now();
+    try {
+      const result = await connectMcpServers(clients, {serverTimeoutMs: 15});
+      expect(Date.now() - startedAt).toBeLessThan(250);
+      expect(result.connected.map((client) => client.serverName)).toEqual(['ready-server']);
+      expect(result.failed).toMatchObject([{name: 'hung-server', error: expect.stringContaining('startup timed out')}]);
+      expect(errors.some((values) => values[0] === '[mcp] startup server skipped' && (values[1] as Record<string, unknown>)['code'] === 'mcp_startup_timeout')).toBe(true);
+      expect(disconnected).toEqual(['hung-server']);
+    } finally {
+      console.error = originalError;
+    }
+  });
+});
 
 describe('createMcpInstructionsProvider', () => {
   describe('AC7.1: Server instructions as context', () => {

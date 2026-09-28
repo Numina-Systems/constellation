@@ -1,6 +1,6 @@
 # Rate Limit
 
-Last verified: 2026-07-02
+Last verified: 2026-09-27
 
 ## Purpose
 Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-model throughput limits. Prevents 429 errors from API rate limit exhaustion by proactively throttling requests.
@@ -13,7 +13,7 @@ Client-side token bucket rate limiter that wraps `ModelProvider` to enforce per-
   - `recordConsumption` corrects buckets with actual usage, allowing negative balances
   - `RateLimitedProvider` serialises concurrent callers via mutex
   - Requests that can eventually fit the window are queued (never dropped) when rate limited
-  - Requests that can *never* fit the window (estimated input tokens above `inputTokensPerMinute`) fail fast with a non-retryable `ModelError` code `CONTEXT_OVERFLOW` instead of hanging; callers recover by shrinking the request (the compactor halves chunks, the agent loop compacts history)
+  - Requests that can *never* fit the window (estimated input tokens above `inputTokensPerMinute`) are rejected before cancellation resources are composed or queueing begins, with a non-retryable `ModelError` code `CONTEXT_OVERFLOW` instead of hanging; callers recover by shrinking the request (the compactor halves chunks, the agent loop compacts history)
   - `createRateLimitedProvider` throws `ModelError` code `CONTEXT_OVERFLOW` at construction when `minOutputReserve` (default `DEFAULT_MIN_OUTPUT_RESERVE`) exceeds `outputTokensPerMinute` — this misconfiguration is request-independent (config schema also rejects it at load time)
 - **Expects**: Valid `RateLimiterConfig` with positive values, `ModelProvider` interface for wrapping
 

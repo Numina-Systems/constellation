@@ -137,14 +137,6 @@ export function createRateLimitedProvider(
       : request.deadline === undefined
         ? Date.now() + request.timeout
         : Math.min(request.deadline, Date.now() + request.timeout);
-    const cancellation = composeCancellation({
-      signal: request.signal,
-      deadline: effectiveDeadline,
-    });
-    const cancellationOptions: CancellationOptions = {
-      signal: cancellation.signal,
-      deadline: effectiveDeadline,
-    };
     const estimatedInputTokens = estimateInputTokens(request);
 
     // A request that needs more input tokens than the bucket can ever hold
@@ -161,6 +153,15 @@ export function createRateLimitedProvider(
         { suggestion: 'raise input_tokens_per_minute or reduce the request size' },
       );
     }
+
+    const cancellation = composeCancellation({
+      signal: request.signal,
+      deadline: effectiveDeadline,
+    });
+    const cancellationOptions: CancellationOptions = {
+      signal: cancellation.signal,
+      deadline: effectiveDeadline,
+    };
 
     let enteredCriticalSection = false;
     queueDepth++;

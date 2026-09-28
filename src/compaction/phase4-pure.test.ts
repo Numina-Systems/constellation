@@ -50,6 +50,26 @@ describe('Phase 4 pure compaction regressions', () => {
     expect(selected.source.flatMap((group) => group.messages.map((item) => item.id))).toEqual(['u1', 'a1', 'r1']);
   });
 
+  it('current exchange and every later message remain outside compaction selection', () => {
+    const history = [
+      message('old-user', 'user', 'old request', 1),
+      message('old-assistant', 'assistant', 'old answer', 2),
+      message('current-user', 'user', 'current request with required snapshot', 3),
+      message('current-tool-call-1', 'assistant', 'first batch call', 4, {tool_calls: [{type: 'tool_use', id: 'batch-1', name: 'one', input: {}}]}),
+      message('current-tool-result-1', 'tool', 'first batch result', 5, {tool_call_id: 'batch-1'}),
+      message('current-tool-call-2', 'assistant', 'second batch call', 6, {tool_calls: [{type: 'tool_use', id: 'batch-2', name: 'two', input: {}}]}),
+      message('current-tool-result-2', 'tool', 'second batch result', 7, {tool_call_id: 'batch-2'}),
+    ];
+    const grouped = groupConversationExchanges(history, 'current-user');
+    expect(grouped.error).toBeNull();
+    const selected = selectCompactionGroups(grouped.groups, 2);
+
+    expect(selected.source.flatMap((group) => group.messages.map((item) => item.id))).toEqual(['old-user', 'old-assistant']);
+    expect(selected.keep.flatMap((group) => group.messages.map((item) => item.id))).toEqual([
+      'current-user', 'current-tool-call-1', 'current-tool-result-1', 'current-tool-call-2', 'current-tool-result-2',
+    ]);
+  });
+
   it('breaker_open_half_open_recovery', () => {
     let current = 0;
     const breaker = createCompactionBreaker({threshold: 1, cooldownMs: 60_000, clock: {now: () => current}});

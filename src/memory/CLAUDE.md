@@ -1,6 +1,6 @@
 # Memory
 
-Last verified: 2026-09-09
+Last verified: 2026-09-27
 
 ## Purpose
 
@@ -8,7 +8,7 @@ Implements owner-scoped core, working, and archival memory with permission-aware
 
 ## Contracts
 
-- **Exposes**: `MemoryManager` and `MemoryStore`, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, deletion policy and trusted maintenance operations.
+- **Exposes**: `MemoryManager` and `MemoryStore`, `createMemoryManager(store, embedding, owner)`, `createPostgresMemoryStore(persistence)`, deletion policy, trusted maintenance operations, and the working-memory snapshot context provider (`WorkingMemoryContextState`, `createWorkingMemoryContextProvider`, `formatWorkingMemorySection`).
 - **Guarantees**:
   - Public deletion requires an owner-scoped manager and rechecks the row under `FOR UPDATE` before event/deletion publication.
   - Missing or foreign IDs return not-found behavior without foreign metadata. Public deletion rejects `readonly`, `familiar`, `append`, pinned, and core blocks. Only owner-owned, unpinned, non-core `readwrite` blocks are eligible.
@@ -38,5 +38,6 @@ Implements owner-scoped core, working, and archival memory with permission-aware
 - `types.ts` -- memory tiers, permissions, blocks, events, and replacement inputs.
 - `deletion-policy.ts` -- pure public and maintenance authorization decisions.
 - `manager.ts` -- manager orchestration and owner injection.
+- `context.ts` -- working-memory section formatting and the dynamic context provider refreshed each round before snapshot composition.
 - `postgres-store.ts` -- locked authorization, atomic events/deletes, maintenance, and restore operations.
 - `store.ts` -- owner-scoped store port.

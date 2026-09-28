@@ -42,13 +42,13 @@ describe("provider_wire_contract_matrix", () => {
 
   afterAll(() => server?.stop());
 
-  it("keeps Anthropic request payload stable and introduces no cache_control", async () => {
+  it("adds Anthropic cache_control to the final user content block", async () => {
     captures = [];
     await consume(createAnthropicAdapter({provider: "anthropic", name: "wire-model", api_key: "fake", base_url: baseUrl}));
     const body = captures[0]?.body;
     expect(body?.["model"]).toBe("wire-model");
-    expect(body).not.toHaveProperty("cache_control");
-    expect(JSON.stringify(body)).not.toContain("cache_control");
+    const messages = body?.["messages"] as Array<{content: Array<{cache_control?: {type: string}}>}>;
+    expect(messages[0]?.content[0]?.cache_control).toEqual({type: "ephemeral"});
   });
 
   it("emits OpenAI stream usage only when explicitly enabled", async () => {

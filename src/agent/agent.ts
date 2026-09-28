@@ -547,6 +547,7 @@ export function createAgent(
             // provider inference; the compactor keeps its own timeout as the upper bound.
             const compactionResult = await deps.compactor.compress(history, id, {
               request: {signal: options?.signal, deadline: options?.deadline},
+              currentUserMessageId,
             });
             if (compactionResult.failed === true && compactionResult.failureCode === 'history_state_unknown') {
               // Commit truth is unknown or the durable replacement failed to publish.
@@ -715,25 +716,13 @@ export function createAgent(
         }
 
         overflowRecoveryAttempted = true;
-        console.warn('context overflow reported by model provider; compacting history and retrying');
+        console.warn('context overflow reported by model provider; scheduling durable compaction and retrying');
 
-        if (deps.checkpointFn) {
-          await deps.checkpointFn('pre_compaction');
-        }
-
-        const result = await compactor.compress(history, id);
-        if (result.messagesCompressed === 0) {
-          // Compaction could not shrink the request; surface the original error
-          throw error;
-        }
-
-        history = Array.from(result.history);
-        snapshotState.reset();
-        compactionOccurredThisTurn = true;
-        lastCompactionMessageCount = history.length;
-        lastCompactionSummaryCount = result.batchesCreated ?? 0;
-
-        // Retry this round with the compacted history without consuming a tool round
+        // Use the same admission path as requested/automatic compaction so overflow
+        // recovery gets its checkpoint, recovery latch, request lifetime, and durable
+        // archive/provenance publication semantics. No history is adopted here.
+        deferredCompactionPending = true;
+        compactionAdmittedAtBoundary = false;
         roundCount--;
         continue;
       }

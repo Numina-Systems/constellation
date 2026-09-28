@@ -1,6 +1,6 @@
 # Model
 
-Last verified: 2026-09-09
+Last verified: 2026-09-27
 
 ## Purpose
 
@@ -12,6 +12,7 @@ Provides provider-neutral model request/response ports and Anthropic, OpenAI-com
 - **Guarantees**:
   - Requests may carry caller `signal`, absolute `deadline`, timeout upper bound, and explicit stream-usage capability. Adapters and rate-limit waits honor the composed lifetime and classify deliberate cancellation separately from timeout.
   - Requests are shaped as complete assistant tool-call/result exchanges on the live agent path. Duplicate, orphan, or missing results are rejected as typed agent corruption; trusted recovery repairs crash-orphaned tool results before the next provider call. Irreducible mandatory context returns `context_unfittable` without provider invocation.
+  - Anthropic requests carry two ephemeral `cache_control` breakpoints: one on the system param's final block (caching tools + system together) and one on the last message's final content block (incremental conversation caching). Both are applied centrally by the shared `buildRequestParams` used by `complete()` and `stream()`; `buildAnthropicSystemParam`, `applyCacheControlToLastBlock`, and `buildRequestParams` are exported as test seams.
   - Budget estimates include serialized system/diary/recall/skills/snapshots/messages/tools, output reserve, and safety margin. Default margin is `max(256, ceil(context_window * 0.02))`; estimates remain heuristic.
   - Explicit `model.context_window` wins. Without it, `agent.max_context_tokens` is an operator-configured fallback with a warning. A separately configured summarizer requires `summarization.context_window`; an identical summarizer may inherit the inference window.
   - Usage is normalized as inclusive input plus separate cache-read/write subsets and reasoning output. OpenAI-family prompt tokens already include cached input; Anthropic cache creation/read are not added twice. Missing stream usage remains missing, not fabricated zero.

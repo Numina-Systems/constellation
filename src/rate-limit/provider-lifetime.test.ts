@@ -1,4 +1,5 @@
 import {describe, expect, it} from "bun:test";
+import {spyOn} from "bun:test";
 import {createRateLimitedProvider} from "./provider.js";
 import {ModelError} from "../model/types.js";
 import type {ModelProvider, ModelRequest, ModelResponse} from "../model/types.js";
@@ -45,6 +46,30 @@ function createConfig(overrides: Partial<RateLimiterConfig> = {}): RateLimiterCo
 }
 
 describe("rate_limit_provider_lifetime", () => {
+  it("rejects oversized requests before allocating cancellation listeners or timers", async () => {
+    const controller = new AbortController();
+    const addListener = spyOn(controller.signal, "addEventListener");
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    const provider: ModelProvider = {
+      complete: async (): Promise<ModelResponse> => response(),
+      async *stream() {},
+    };
+    const rateLimited = createRateLimitedProvider(provider, createConfig({inputTokensPerMinute: 1}));
+
+    try {
+      await expect(rateLimited.complete(request({
+        messages: [{role: "user", content: "far too much input"}],
+        signal: controller.signal,
+        deadline: Date.now() + 60_000,
+      }))).rejects.toMatchObject({code: "CONTEXT_OVERFLOW"});
+      expect(addListener).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+      expect(rateLimited.getStatus().queueDepth).toBe(0);
+    } finally {
+      addListener.mockRestore();
+      setTimeoutSpy.mockRestore();
+    }
+  });
   it("fails a deadline-expired rate-limit acquisition before provider invocation", async () => {
     let calls = 0;
     const provider: ModelProvider = {

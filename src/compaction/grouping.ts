@@ -104,13 +104,15 @@ export function selectCompactionGroups(
 ): Readonly<{source: ReadonlyArray<ExchangeGroup>; keep: ReadonlyArray<ExchangeGroup>}> {
   const protectedCount = Math.max(0, keepRecentMessages);
   let suffixCount = 0;
-  let split = groups.length;
-  while (split > 0 && suffixCount < protectedCount) {
-    const group = groups[split - 1];
+  let recentSplit = groups.length;
+  while (recentSplit > 0 && suffixCount < protectedCount) {
+    const group = groups[recentSplit - 1];
     if (!group) break;
     suffixCount += group.messages.length;
-    split -= 1;
+    recentSplit -= 1;
   }
+  const currentIndex = groups.findIndex((group) => group.isCurrent);
+  const split = currentIndex < 0 ? recentSplit : Math.min(recentSplit, currentIndex);
   return {source: groups.slice(0, split), keep: groups.slice(split)};
 }
 

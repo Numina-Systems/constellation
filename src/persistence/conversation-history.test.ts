@@ -46,6 +46,17 @@ async function seed(history: ReturnType<typeof createConversationHistoryStore>, 
 }
 
 describe('Package D retained history real-store fake contracts', () => {
+  it('message_content_updates_are_visible_in_active_and_retained_history', async () => {
+    const persistence = createInMemoryPersistence();
+    const history = createConversationHistoryStore(persistence);
+    await history.append(message('snapshot-user', 'snapshot-conversation', 'raw input'));
+
+    await persistence.query('UPDATE messages SET content = $1 WHERE id = $2', ['raw input\n\nsnapshot: retained state', 'snapshot-user']);
+
+    expect((await history.readActive('snapshot-conversation')).messages[0]?.content).toBe('raw input\n\nsnapshot: retained state');
+    expect((await history.readHistorical('snapshot-conversation', 10))[0]?.message.content).toBe('raw input\n\nsnapshot: retained state');
+  });
+
   it('append_publishes_active_message_and_revision', async () => {
     const persistence = createInMemoryPersistence();
     const history = createConversationHistoryStore(persistence);

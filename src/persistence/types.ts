@@ -29,8 +29,8 @@ export type PostgresTransactionFaults = {
   readonly beforeCommit?: () => Promise<void>;
   /** Test-only lost-ack seam: fail after the server has committed. */
   readonly afterCommit?: () => Promise<void>;
-  /** Test-only command-tag seam for protocol-level commit validation. */
-  readonly commitCommandTag?: 'COMMIT' | 'ROLLBACK';
+  /** Test-only command-tag seam for protocol-level commit validation. Any non-COMMIT tag other than ROLLBACK exercises the unexpected-tag reconciliation path. */
+  readonly commitCommandTag?: string;
   readonly beforeRollback?: () => Promise<void>;
   readonly afterRollback?: () => Promise<void>;
 };

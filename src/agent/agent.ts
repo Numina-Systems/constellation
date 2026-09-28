@@ -110,6 +110,12 @@ function unresolvedOutcomeDetails(result: {readonly unresolved_call_ids?: Readon
   return {unresolved_call_ids: ids.slice(0, 16).join(','), unresolved_call_count: ids.length};
 }
 
+/** Message of a typed tool outcome; success outcomes carry none, so a fallback is used. */
+function outcomeMessage(outcome: import('@/contracts/outcomes.ts').ToolOutcome | null, fallback: string | null): string {
+  if (outcome !== null && 'message' in outcome) return outcome.message;
+  return fallback ?? 'unresolved host tool effect';
+}
+
 function buildDynamicProviderMap(
   classified: ReadonlyArray<ClassifiedProvider> | undefined,
 ): ReadonlyMap<string, () => string | undefined> {
@@ -794,6 +800,42 @@ export function createAgent(
         let unresolvedEffectCallId: string | null = null;
         let unresolvedEffectOutcome: import('@/contracts/outcomes.ts').ToolOutcome | null = null;
         let unresolvedMarkerConfirmed = false;
+        const latchUnresolvedEffect = async (callId: string, outcome: import('@/contracts/outcomes.ts').ToolOutcome, reason: string, transcriptContent: string): Promise<never> => {
+          // Latch the uncertainty state BEFORE any fallible I/O: a persistence
+          // failure must never downgrade this effect to an ordinary dispatch
+          // error or allow later tools or provider calls to run.
+          unresolvedEffectReason = reason;
+          unresolvedEffectCallId = callId;
+          unresolvedEffectOutcome = outcome;
+          recoveryRequired = true;
+          recoveryReason = reason;
+          let markerConfirmed = false;
+          if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
+            try {
+              await deps.integrityLifecycle.markConversationRecoveryRequired(reason, 'unresolved-effect');
+              markerConfirmed = true;
+            } catch {
+              // Cleanup keeps the original receipt unfinished instead, so
+              // restart still observes recovery-required state.
+            }
+          }
+          unresolvedMarkerConfirmed = markerConfirmed;
+          // Best-effort transcript truth; the marker (or unfinished receipt)
+          // carries the fail-closed state when this write fails.
+          try {
+            await persistMessage({
+              conversation_id: id,
+              role: 'tool',
+              content: transcriptContent,
+              tool_call_id: callId,
+              tool_outcome: outcome,
+            });
+            transcriptPersistedCallIds.add(callId);
+          } catch {
+            recoveryRequired = true;
+          }
+          throw unresolvedEffectSignal;
+        };
         try {
           if (deps.integrityLifecycle) {
             try {
@@ -844,41 +886,9 @@ export function createAgent(
                   ? {kind: 'cancelled', code: 'cancelled', message, details: unresolvedOutcomeDetails(result)}
                   : {kind: 'outcome_unknown', code: 'runtime_outcome_unknown', message, details: unresolvedOutcomeDetails(result)};
                 if (result.outcome === 'outcome_unknown') {
-                  // Latch the uncertainty state BEFORE any fallible I/O: a persistence
-                  // failure must never downgrade this effect to an ordinary dispatch
-                  // error or allow later tools or provider calls to run.
-                  unresolvedEffectReason = `${message} (unresolved calls: ${(result.unresolved_call_ids ?? []).join(', ') || 'unreported'})`;
-                  unresolvedEffectCallId = toolUse.id;
-                  unresolvedEffectOutcome = runtimeOutcome;
-                  recoveryRequired = true;
-                  recoveryReason = unresolvedEffectReason;
-                  recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, unresolvedEffectReason);
-                  let markerConfirmed = false;
-                  if (deps.integrityLifecycle?.markConversationRecoveryRequired) {
-                    try {
-                      await deps.integrityLifecycle.markConversationRecoveryRequired(unresolvedEffectReason, 'unresolved-effect');
-                      markerConfirmed = true;
-                    } catch {
-                      // Cleanup keeps the original receipt unfinished instead, so
-                      // restart still observes recovery-required state.
-                    }
-                  }
-                  unresolvedMarkerConfirmed = markerConfirmed;
-                  // Best-effort transcript truth; the marker (or unfinished receipt)
-                  // carries the fail-closed state when this write fails.
-                  try {
-                    await persistMessage({
-                      conversation_id: id,
-                      role: 'tool',
-                      content: toolResult,
-                      tool_call_id: toolUse.id,
-                      tool_outcome: runtimeOutcome,
-                    });
-                    transcriptPersistedCallIds.add(toolUse.id);
-                  } catch {
-                    recoveryRequired = true;
-                  }
-                  throw unresolvedEffectSignal;
+                  const reason = `${message} (unresolved calls: ${(result.unresolved_call_ids ?? []).join(', ') || 'unreported'})`;
+                  recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, reason);
+                  await latchUnresolvedEffect(toolUse.id, runtimeOutcome, reason, toolResult);
                 }
                 recordTrace('execute_code', toolUse.input, toolResult, Date.now() - startTime, false, message);
               } else {
@@ -903,9 +913,26 @@ export function createAgent(
               // Regular tool dispatch carries the turn signal/deadline so cooperative
               // handlers can stop promptly instead of running past a cancelled turn.
               const result = await ingressContext.run(true, () => deps.registry.dispatch(toolUse.name, toolUse.input, {signal: options?.signal, deadline: options?.deadline}));
-              toolResult = result.output;
-              toolOutcomeError = result.success ? null : (result.error ?? 'tool dispatch failed');
-              recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
+              if (result.runtime_outcome === 'cancelled' || result.runtime_outcome === 'outcome_unknown') {
+                // A nested runtime (custom tool) reported a typed outcome; it must
+                // reach the same durable handling as execute_code results.
+                const message = result.runtime_outcome === 'cancelled'
+                  ? `tool execution cancelled: ${result.error ?? 'turn cancelled during tool execution'}`
+                  : `tool execution outcome unknown: ${result.error ?? 'unresolved host tool calls'}`;
+                toolResult = `Error: ${message}`;
+                toolOutcomeError = null;
+                runtimeOutcome = result.runtime_outcome === 'cancelled'
+                  ? {kind: 'cancelled', code: 'cancelled', message, details: unresolvedOutcomeDetails(result)}
+                  : {kind: 'outcome_unknown', code: 'runtime_outcome_unknown', message, details: unresolvedOutcomeDetails(result)};
+                recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, false, message);
+                if (result.runtime_outcome === 'outcome_unknown') {
+                  await latchUnresolvedEffect(toolUse.id, runtimeOutcome, message, toolResult);
+                }
+              } else {
+                toolResult = result.output;
+                toolOutcomeError = result.success ? null : (result.error ?? 'tool dispatch failed');
+                recordTrace(toolUse.name, toolUse.input, toolResult, Date.now() - startTime, result.success, result.error ?? null);
+              }
             }
           } catch (error) {
             if (error === unresolvedEffectSignal) throw error;
@@ -998,7 +1025,7 @@ export function createAgent(
                   await persistMessage({
                     conversation_id: id,
                     role: 'tool',
-                    content: isUncertainCall ? (unresolvedEffectOutcome?.message ?? unresolvedEffectReason ?? 'unresolved host tool effect') : (unresolvedEffectReason ?? 'unresolved host tool effect'),
+                    content: isUncertainCall ? outcomeMessage(unresolvedEffectOutcome, unresolvedEffectReason) : (unresolvedEffectReason ?? 'unresolved host tool effect'),
                     tool_call_id: toolUse.id,
                     tool_outcome: isUncertainCall ? unresolvedEffectOutcome! : {kind: 'cancelled', code: 'cancelled', message: 'not dispatched after unresolved effect'},
                   });

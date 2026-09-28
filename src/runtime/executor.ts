@@ -133,9 +133,14 @@ function asIpcMessage(value: unknown): IpcMessage {
   throw new Error('malformed nonempty IPC frame');
 }
 
-function mergeOptions(context?: ExecutionContext): ExecutionOptions | undefined {
-  if (!context?.signal && context?.deadline === undefined && !context?.budget) return undefined;
-  return {signal: context.signal, deadline: context.deadline, budget: context.budget};
+/** Unresolved call IDs carried by a nested custom tool's tainted ToolResult. */
+function carriedUnknownCallIds(value: unknown): ReadonlyArray<string> | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Record<string, unknown>;
+  if (candidate['runtime_outcome'] !== 'outcome_unknown') return null;
+  const ids = candidate['unresolved_call_ids'];
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((id): id is string => typeof id === 'string');
 }
 
 function waitForClosure(lifecycle: ExecutionLifecycle, promise: Promise<void>): Promise<boolean> {
@@ -186,6 +191,15 @@ export function createDenoExecutor(
       }
 
       const lifecycle = createExecutionLifecycle();
+      // Execution-owned cancellation: every terminal closure (timeout, overflow,
+      // protocol fault, process failure, caller cancellation) also aborts host
+      // tool work already started by dispatch, not just the subprocess.
+      const executionAbort = new AbortController();
+      const dispatchOptions: ExecutionOptions = {
+        signal: executionAbort.signal,
+        ...(context?.deadline !== undefined ? {deadline: context.deadline} : {}),
+        ...(context?.budget !== undefined ? {budget: context.budget} : {}),
+      };
       let process: RuntimeProcess | null = null;
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       let deadlineId: ReturnType<typeof setTimeout> | null = null;
@@ -212,7 +226,10 @@ export function createDenoExecutor(
       };
       const close = (reason: Parameters<ExecutionLifecycle['close']>[0], error?: string): void => {
         if (error && terminalError === null) terminalError = error;
-        if (lifecycle.close(reason)) closeProcess();
+        if (lifecycle.close(reason)) {
+          executionAbort.abort(new Error(`execution closed: ${reason}`));
+          closeProcess();
+        }
       };
 
       const pumpDispatch = async (): Promise<void> => {
@@ -225,7 +242,7 @@ export function createDenoExecutor(
             const message = item.message;
             if (!lifecycle.isOpen()) break;
             unresolved.add(message.call_id);
-            const dispatchPromise = registry.dispatch(message.name, message.params, mergeOptions(context));
+            const dispatchPromise = registry.dispatch(message.name, message.params, dispatchOptions);
             const completed = await Promise.race([
               dispatchPromise.then((value) => ({done: true as const, value}), (error: unknown) => ({done: true as const, error})),
               lifecycle.closed.then(() => ({done: false as const})),
@@ -234,8 +251,19 @@ export function createDenoExecutor(
               void dispatchPromise.then(() => undefined, () => undefined);
               continue;
             }
+            if (!lifecycle.isOpen()) {
+              // Terminal closure raced the dispatch: the call stays unresolved so
+              // the execution reports outcome_unknown instead of success.
+              continue;
+            }
             unresolved.delete(message.call_id);
-            if (!lifecycle.isOpen()) continue;
+            const carried = 'error' in completed ? null : carriedUnknownCallIds(completed.value);
+            if (carried !== null) {
+              // A nested custom tool returned while its own host effects remain
+              // unconfirmed; the outer call inherits that uncertainty.
+              for (const id of carried) unresolved.add(id);
+              unresolved.add(message.call_id);
+            }
             const response = 'error' in completed
               ? {type: '__tool_error__' as const, call_id: message.call_id, error: completed.error instanceof Error ? completed.error.message : String(completed.error)}
               : {type: '__tool_result__' as const, call_id: message.call_id, result: completed.value};

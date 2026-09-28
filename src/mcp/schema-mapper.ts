@@ -5,7 +5,7 @@ import { McpDiscoveryError } from './types.ts';
 
 type JsonObject = Readonly<Record<string, unknown>>;
 const JSON_SCHEMA_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
-const UNSUPPORTED_SCHEMA_KEYS = new Set(['$ref', '$dynamicRef', '$recursiveRef', 'pattern', 'format', 'minLength', 'maxLength', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'dependentRequired', 'dependentSchemas', 'allOf', 'patternProperties', 'prefixItems', 'dependencies']);
+const UNSUPPORTED_SCHEMA_KEYS = new Set(['$ref', '$dynamicRef', '$recursiveRef', 'pattern', 'format', 'minLength', 'maxLength', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'dependentRequired', 'dependentSchemas', 'allOf', 'patternProperties', 'prefixItems', 'dependencies', 'additionalProperties', 'contains', 'maxContains', 'minContains', 'propertyNames', 'not', 'if', 'then', 'else', 'unevaluatedProperties', 'unevaluatedItems']);
 
 /** Validates the complete MCP input schema and returns a lossless frozen copy. */
 export function validateMcpInputSchema(inputSchema: unknown, toolName: string): Readonly<Record<string, unknown>> {

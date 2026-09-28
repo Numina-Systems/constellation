@@ -15,6 +15,14 @@ export const RESERVED_RUNTIME_BINDINGS: ReadonlySet<string> = new Set([
   'PARAMS', 'output', 'debug', '__callTool__', 'console', 'Deno', 'globalThis',
 ]);
 const TOOL_TYPES = new Set<ToolParameterType>(['string', 'number', 'boolean', 'object', 'array']);
+/** Assertion keywords dispatch validation cannot enforce; publishing them fails closed. */
+const UNSUPPORTED_SCHEMA_KEYWORDS: ReadonlyArray<string> = [
+  '$ref', '$dynamicRef', '$recursiveRef', 'pattern', 'format', 'minLength', 'maxLength', 'minimum', 'maximum',
+  'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minItems', 'maxItems', 'uniqueItems', 'minProperties',
+  'maxProperties', 'dependentRequired', 'dependentSchemas', 'allOf', 'patternProperties', 'prefixItems',
+  'dependencies', 'additionalProperties', 'contains', 'maxContains', 'minContains', 'propertyNames', 'not',
+  'if', 'then', 'else', 'unevaluatedProperties', 'unevaluatedItems',
+];
 
 type ValidationOptions = Readonly<{
   readonly reservedBindings?: ReadonlySet<string>;
@@ -159,6 +167,10 @@ function validateSchema(raw: unknown, path: string, issues: Array<ValidationIssu
     }
   }
   if (raw['enum'] !== undefined && (!Array.isArray(raw['enum']) || raw['enum'].length === 0)) issues.push({path: `${path}.enum`, message: 'must be a non-empty array'});
+  if (raw['const'] !== undefined && !isJsonValue(raw['const'])) issues.push({path: `${path}.const`, message: 'must be a JSON value'});
+  for (const keyword of UNSUPPORTED_SCHEMA_KEYWORDS) {
+    if (raw[keyword] !== undefined) issues.push({path: `${path}.${keyword}`, message: 'keyword is not supported safely by dispatch validation'});
+  }
   if (raw['required'] !== undefined && (!Array.isArray(raw['required']) || raw['required'].some((value) => typeof value !== 'string') || new Set(raw['required']).size !== raw['required'].length)) issues.push({path: `${path}.required`, message: 'must be an array of unique strings'});
   if (raw['properties'] !== undefined) {
     if (!isRecord(raw['properties'])) issues.push({path: `${path}.properties`, message: 'must be an object'});
@@ -175,11 +187,17 @@ function validateSchema(raw: unknown, path: string, issues: Array<ValidationIssu
 
 function validateSchemaValue(value: unknown, schema: unknown, path: string): string | null {
   if (!isRecord(schema)) return `${path}: invalid schema`;
-  const alternatives = schema['anyOf'] ?? schema['oneOf'];
-  if (alternatives !== undefined && Array.isArray(alternatives)) {
-    const matches = alternatives.filter((candidate) => validateSchemaValue(value, candidate, path) === null).length;
-    if (schema['anyOf'] !== undefined && matches === 0) return `${path}: does not match any schema`;
-    if (schema['oneOf'] !== undefined && matches !== 1) return `${path}: must match exactly one schema`;
+  if (schema['const'] !== undefined && !jsonEquals(value, schema['const'])) return `${path}: value does not match const`;
+  // Combinators apply independently: a schema with both anyOf and oneOf must
+  // satisfy both constraints, not whichever is inspected first.
+  const anyOf = schema['anyOf'];
+  if (anyOf !== undefined && (!Array.isArray(anyOf) || !anyOf.some((candidate) => validateSchemaValue(value, candidate, path) === null))) {
+    return `${path}: does not match any schema`;
+  }
+  const oneOf = schema['oneOf'];
+  if (oneOf !== undefined) {
+    const matches = Array.isArray(oneOf) ? oneOf.filter((candidate) => validateSchemaValue(value, candidate, path) === null).length : 0;
+    if (matches !== 1) return `${path}: must match exactly one schema`;
   }
   const type = schema['type'];
   if (typeof type === 'string' && !matchesJsonType(value, type)) return `${path}: expected ${type}`;
@@ -187,8 +205,10 @@ function validateSchemaValue(value: unknown, schema: unknown, path: string): str
     return `${path}: expected one of ${type.map(String).join(', ')}`;
   }
   const enumValues = schema['enum'];
-  if (Array.isArray(enumValues) && !enumValues.some((candidate) => Object.is(candidate, value))) return `${path}: value is not in enum`;
-  if ((type === 'object' || (Array.isArray(type) && type.includes('object'))) && isRecord(value)) {
+  if (Array.isArray(enumValues) && !enumValues.some((candidate) => jsonEquals(candidate, value))) return `${path}: value is not in enum`;
+  // Object and array keywords apply by instance type, not by declared type
+  // syntax: {properties, required} without an explicit object type still binds.
+  if (isRecord(value)) {
     const required = schema['required'];
     if (Array.isArray(required)) for (const key of required) if (!Object.hasOwn(value, key as string)) return `${path}: missing required property ${String(key)}`;
     const properties = schema['properties'];
@@ -196,7 +216,7 @@ function validateSchemaValue(value: unknown, schema: unknown, path: string): str
       const error = validateSchemaValue(value[key], child, `${path}.${key}`); if (error !== null) return error;
     }
   }
-  if (type === 'array' && Array.isArray(value) && schema['items'] !== undefined) for (const [index, item] of value.entries()) {
+  if (Array.isArray(value) && schema['items'] !== undefined) for (const [index, item] of value.entries()) {
     const error = validateSchemaValue(item, schema['items'], `${path}[${index}]`); if (error !== null) return error;
   }
   return null;
@@ -219,4 +239,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function cloneJson(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown;
+}
+function jsonEquals(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((item, index) => jsonEquals(item, right[index]));
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    if (leftKeys.length !== Object.keys(right).length) return false;
+    return leftKeys.every((key) => Object.hasOwn(right, key) && jsonEquals(left[key], right[key]));
+  }
+  return false;
+}
+function isJsonValue(value: unknown): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (isRecord(value)) return Object.values(value).every(isJsonValue);
+  return false;
 }

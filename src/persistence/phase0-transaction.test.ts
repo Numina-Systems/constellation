@@ -68,4 +68,20 @@ describe('Phase0/AC21 transaction contracts', () => {
     expect(outcome.status).toBe('confirmed_commit');
     expect(stages).toEqual(['outer', 'reconcile']);
   });
+
+  it('reconciled commit runs registered publications', async () => {
+    const persistence = createInMemoryPersistence();
+    const error = new Error('commit acknowledgement lost');
+    persistence.failures.push({operation: 'commit', error});
+    const publications: Array<string> = [];
+    const outcome = await persistence.withTransactionOutcome(
+      async (scope) => {
+        scope.registerAfterCommit(() => { publications.push('published'); });
+        return 'value';
+      },
+      async () => ({truth: 'committed' as const, value: 'recovered'}),
+    );
+    expect(outcome.status).toBe('reconciled_commit');
+    expect(publications).toEqual(['published']);
+  });
 });

@@ -27,6 +27,14 @@ export type ToolResult = {
   success: boolean;
   output: string;
   error?: string;
+  /**
+   * Typed nested-runtime outcome carried through dispatch. Present when a tool
+   * ran a CodeRuntime execution that ended `cancelled` or with unresolved host
+   * effects; `outcome_unknown` is fail-closed uncertainty, never an ordinary error.
+   */
+  runtime_outcome?: 'cancelled' | 'outcome_unknown';
+  /** Host call IDs admitted by the nested runtime whose settlement is unconfirmed. */
+  unresolved_call_ids?: ReadonlyArray<string>;
 };
 
 import type {ExecutionOptions} from '@/contracts/execution.ts';

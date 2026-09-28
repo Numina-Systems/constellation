@@ -207,6 +207,24 @@ export function createPostgresProvider(
     let clientReleased = false;
     let clientIsBroken = false;
     let value: T;
+    const publishRegistered = async (outcome: TransactionOutcome<T>): Promise<TransactionOutcome<T>> => {
+      // Every confirmed or reconciled commit must deliver its registered
+      // publications, whichever commit path established the truth.
+      if (outcome.status !== 'confirmed_commit' && outcome.status !== 'reconciled_commit') return outcome;
+      for (const [index, publication] of publications.entries()) {
+        try {
+          await publication();
+        } catch (error) {
+          return {
+            status: 'committed_publication_failed',
+            value: outcome.value,
+            error,
+            details: {attempted: index + 1, skipped: publications.length - index - 1},
+          };
+        }
+      }
+      return outcome;
+    };
     try {
       await client.query('BEGIN');
       const context: TxContext = {client, depth: 0, publications};
@@ -256,7 +274,7 @@ export function createPostgresProvider(
           if (!reconcile) return unknown;
           try {
             const result = await reconcile(unknown, queryOnIndependentConnection);
-            return result ? applyReconciliation(unknown, result) : unknown;
+            return await publishRegistered(result ? applyReconciliation(unknown, result) : unknown);
           } catch (reconciliationError) {
             return {status: 'commit_unknown', error: combineReconciliationError(protocolError, reconciliationError), value};
           }
@@ -269,7 +287,7 @@ export function createPostgresProvider(
         if (!reconcile) return unknown;
         try {
           const result = await reconcile(unknown, queryOnIndependentConnection);
-          return result ? applyReconciliation(unknown, result) : unknown;
+          return await publishRegistered(result ? applyReconciliation(unknown, result) : unknown);
         } catch (reconciliationError) {
           return {status: 'commit_unknown', error: combineReconciliationError(error, reconciliationError), value};
         }
@@ -295,34 +313,20 @@ export function createPostgresProvider(
         client.release();
         clientReleased = true;
       }
-      if (outcome.status === 'confirmed_commit' || outcome.status === 'reconciled_commit') {
-        if (reconcile && outcome.status === 'confirmed_commit') {
-          try {
-            const reconciliation = await reconcile(outcome, queryOnIndependentConnection);
-            if (reconciliation?.truth === 'rolled_back') {
-              return {status: 'commit_unknown', error: new Error('post-commit reconciliation contradicted confirmed commit'), value: outcome.value};
-            }
-            if (reconciliation?.truth === 'unknown') {
-              return {status: 'commit_unknown', error: reconciliation.error, value: outcome.value};
-            }
-          } catch (error) {
-            return {status: 'commit_unknown', error, value: outcome.value};
+      if (reconcile && outcome.status === 'confirmed_commit') {
+        try {
+          const reconciliation = await reconcile(outcome, queryOnIndependentConnection);
+          if (reconciliation?.truth === 'rolled_back') {
+            return {status: 'commit_unknown', error: new Error('post-commit reconciliation contradicted confirmed commit'), value: outcome.value};
           }
-        }
-        for (const [index, publication] of publications.entries()) {
-          try {
-            await publication();
-          } catch (error) {
-            return {
-              status: 'committed_publication_failed',
-              value: outcome.value,
-              error,
-              details: {attempted: index + 1, skipped: publications.length - index - 1},
-            };
+          if (reconciliation?.truth === 'unknown') {
+            return {status: 'commit_unknown', error: reconciliation.error, value: outcome.value};
           }
+        } catch (error) {
+          return {status: 'commit_unknown', error, value: outcome.value};
         }
       }
-      return outcome;
+      return publishRegistered(outcome);
     } finally {
       if (!clientReleased) client.release(clientIsBroken);
     }

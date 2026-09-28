@@ -44,6 +44,19 @@ export function createCustomToolManager(deps: CustomToolManagerDeps): CustomTool
       const keys = await secretResolver.listKeys();
       const secrets = await secretResolver.resolve(keys);
       const result = await runtime.execute(wrappedCode, registry.generateStubs(), {secrets, ...options});
+      if (result.outcome === 'cancelled' || result.outcome === 'outcome_unknown') {
+        // Typed runtime outcomes must survive dispatch: an unresolved host effect
+        // behind a custom tool is fail-closed uncertainty, not an ordinary error.
+        return {
+          success: false,
+          output: '',
+          error: result.error ?? (result.outcome === 'cancelled' ? 'execution cancelled' : 'execution outcome unknown'),
+          runtime_outcome: result.outcome,
+          ...(result.unresolved_call_ids !== undefined && result.unresolved_call_ids.length > 0
+            ? {unresolved_call_ids: [...result.unresolved_call_ids]}
+            : {}),
+        };
+      }
       return result.success
         ? {success: true, output: result.output}
         : {success: false, output: '', error: result.error ?? 'execution failed'};

@@ -254,13 +254,24 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
     return [];
   }
 
-  if (/^SELECT details FROM operation_receipts WHERE operation_type = 'agent_batch'/i.test(normalized)) {
+  if (/^SELECT\s+details\s+FROM\s+operation_receipts\s+WHERE\s+operation_type\s*=\s*'agent_batch'/i.test(normalized)) {
     const conversationId = textParameter(params, 0);
+    // Mirrors the production predicates: optional marker-kind filter and the
+    // unfinished-only filter used by recovery scans.
+    const markerKindParam = /\(details->>'markerKind'\) = \$2/i.test(normalized) ? textParameter(params, 1) : null;
+    const excludesMarkers = /\(details->>'markerKind'\) IS NULL/i.test(normalized);
+    const unfinishedOnly = /IS DISTINCT FROM 'true'/i.test(normalized);
     return (rows.get('operation_receipts') ?? [])
       .filter((row) => row['operation_type'] === 'agent_batch')
       .filter((row) => {
         const details = row['details'];
-        return typeof details === 'object' && details !== null && (details as Record<string, unknown>)['conversationId'] === conversationId;
+        if (typeof details !== 'object' || details === null) return false;
+        const record = details as Record<string, unknown>;
+        if (record['conversationId'] !== conversationId) return false;
+        if (markerKindParam !== null && record['markerKind'] !== markerKindParam) return false;
+        if (excludesMarkers && record['markerKind'] !== undefined) return false;
+        if (unfinishedOnly && record['completed'] === true && record['recoveryRequired'] !== true) return false;
+        return true;
       })
       .map((row) => ({details: row['details']}));
   }
@@ -523,7 +534,7 @@ export function createInMemoryPersistence(): TestPersistence {
     frames.push(frame);
     const scope: TransactionScope = {
       query, depth: frames.length - 1, isOutermost, isProvisional: !isOutermost,
-      registerAfterCommit: (publication) => { if (!isOutermost) throw new Error('nested transaction scope cannot publish or reconcile'); frame.publications.push(publication); },
+      registerAfterCommit: (publication) => { if (!isOutermost) throw new Error('nested transaction scope cannot publish or reconcile'); frame.publications.push(publication); pendingPublications.push(publication); },
     };
     try {
       const value = await fn(scope);
@@ -544,16 +555,17 @@ export function createInMemoryPersistence(): TestPersistence {
     }
   }
   async function withTransactionOutcome<T>(fn: (scope: TransactionScope) => Promise<T>, reconcile?: (outcome: TransactionOutcome<T>, queryFn: QueryFunction) => Promise<void | TransactionReconciliation<T>>): Promise<TransactionOutcome<T>> {
-    const outcome = await runTransaction(fn);
+    let outcome = await runTransaction(fn);
     if (reconcile && (outcome.status === 'commit_unknown' || outcome.status === 'confirmed_commit')) {
       try {
         const result = await reconcile(outcome, query);
         if (result?.truth === 'committed' && outcome.status === 'commit_unknown') {
           if (result.value === undefined) return {status: 'commit_unknown', error: new Error('reconciliation confirmed commit without a durable value', {cause: outcome.error}), value: outcome.value};
-          return {status: 'reconciled_commit', value: result.value, error: outcome.error};
-        }
-        if (result?.truth === 'rolled_back') return outcome.status === 'confirmed_commit' ? {status: 'commit_unknown', error: new Error('post-commit reconciliation contradicted confirmed commit'), value: outcome.value} : {status: 'reconciled_rollback', error: result.error ?? outcome.error};
-        if (result?.truth === 'unknown') return {status: 'commit_unknown', error: outcome.status === 'commit_unknown' ? errorWithRoot(outcome.error, result.error) : result.error, value: outcome.value};
+          // Reconciled commits flow through the publication phase below like any
+          // other confirmed truth; only non-commit outcomes return early.
+          outcome = {status: 'reconciled_commit', value: result.value, error: outcome.error};
+        } else if (result?.truth === 'rolled_back') { return outcome.status === 'confirmed_commit' ? {status: 'commit_unknown', error: new Error('post-commit reconciliation contradicted confirmed commit'), value: outcome.value} : {status: 'reconciled_rollback', error: result.error ?? outcome.error};
+        } else if (result?.truth === 'unknown') { return {status: 'commit_unknown', error: outcome.status === 'commit_unknown' ? errorWithRoot(outcome.error, result.error) : result.error, value: outcome.value}; }
       } catch (error) { return {status: 'commit_unknown', error: outcome.status === 'commit_unknown' ? errorWithRoot(outcome.error, error) : error, value: outcome.value}; }
     }
     if (outcome.status === 'confirmed_commit' || outcome.status === 'reconciled_commit') {

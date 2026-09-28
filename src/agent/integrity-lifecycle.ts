@@ -86,10 +86,28 @@ export function createIntegrityLifecycle(
   conversationId: string,
   historyStore?: ConversationHistoryStore,
 ): IntegrityLifecycle {
-  async function readBatches(): Promise<Array<BatchDetails>> {
+  const UNFINISHED_BATCH_PREDICATE = `((details->>'completed') IS DISTINCT FROM 'true' OR (details->>'recoveryRequired') = 'true')`;
+
+  async function readBatchById(batchId: string): Promise<BatchDetails | null> {
+    // Receipts are addressed by primary key: hot paths never re-read history.
+    const rows = await persistence.query<{readonly operation_type: string; readonly details: unknown}>(
+      'SELECT operation_id, operation_type, status, details FROM operation_receipts WHERE operation_id = $1',
+      [batchId],
+    );
+    const row = rows[0];
+    if (row === undefined || row.operation_type !== 'agent_batch') return null;
+    return parseDetails(row.details);
+  }
+
+  async function readUnfinishedBatches(extraPredicate: string, extraParams: ReadonlyArray<unknown> = []): Promise<Array<BatchDetails>> {
     const rows = await persistence.query<{readonly details: unknown}>(
-      `SELECT details FROM operation_receipts WHERE operation_type = 'agent_batch' AND details->>'conversationId' = $1 ORDER BY created_at ASC`,
-      [conversationId],
+      `SELECT details FROM operation_receipts
+        WHERE operation_type = 'agent_batch'
+          AND details->>'conversationId' = $1
+          AND ${extraPredicate}
+          AND ${UNFINISHED_BATCH_PREDICATE}
+        ORDER BY created_at ASC, operation_id ASC`,
+      [conversationId, ...extraParams],
     );
     return rows.map((row) => parseDetails(row.details)).filter((batch): batch is BatchDetails => batch !== null);
   }
@@ -114,8 +132,7 @@ export function createIntegrityLifecycle(
   }
 
   async function recordOutcome(batchId: string, callId: string, outcome: ToolOutcome): Promise<void> {
-    const batches = await readBatches();
-    const batch = batches.find((candidate) => candidate.batchId === batchId);
+    const batch = await readBatchById(batchId);
     if (!batch || !batch.callIds.includes(callId)) {
       throw new AgentError('INTEGRITY_FAILED', `unknown agent batch call: ${callId}`, {
         conversationId,
@@ -127,8 +144,7 @@ export function createIntegrityLifecycle(
   }
 
   async function completeBatch(batchId: string): Promise<void> {
-    const batches = await readBatches();
-    const batch = batches.find((candidate) => candidate.batchId === batchId);
+    const batch = await readBatchById(batchId);
     if (!batch) {
       throw new AgentError('INTEGRITY_FAILED', `unknown agent batch: ${batchId}`, {
         conversationId,
@@ -147,8 +163,7 @@ export function createIntegrityLifecycle(
   }
 
   async function getRecoveryState(): Promise<RecoveryState> {
-    const batches = await readBatches();
-    const unfinished = batches.find((batch) => !batch.completed || batch.recoveryRequired);
+    const unfinished = (await readUnfinishedBatches('TRUE'))[0];
     if (!unfinished) return {required: false, reason: null, batchId: null, unresolvedCallIds: []};
     return {
       required: true,
@@ -159,8 +174,7 @@ export function createIntegrityLifecycle(
   }
 
   async function markRecoveryRequired(batchId: string, reason: string, markerKind?: RecoveryMarkerKind): Promise<void> {
-    const batches = await readBatches();
-    const batch = batches.find((candidate) => candidate.batchId === batchId);
+    const batch = await readBatchById(batchId);
     if (!batch) {
       throw new AgentError('INTEGRITY_FAILED', `unknown agent batch: ${batchId}`, {
         conversationId,
@@ -177,7 +191,7 @@ export function createIntegrityLifecycle(
     // schema: getRecoveryState treats any unfinished batch as recovery-required.
     // Typed markers are invisible to recover(), so generic tool backfill can never
     // clear a fault it does not actually reconcile.
-    const priorMarkers = (await readBatches()).filter((batch) => batch.markerKind === markerKind && (!batch.completed || batch.recoveryRequired));
+    const priorMarkers = await readUnfinishedBatches(`(details->>'markerKind') = $2`, [markerKind]);
     const batch: BatchDetails = {
       batchId: `recovery-marker-${randomUUID()}`,
       callIds: [],
@@ -197,8 +211,7 @@ export function createIntegrityLifecycle(
   }
 
   async function completeRecoveryMarker(batchId: string): Promise<void> {
-    const batches = await readBatches();
-    const marker = batches.find((candidate) => candidate.batchId === batchId);
+    const marker = await readBatchById(batchId);
     if (!marker) {
       throw new AgentError('INTEGRITY_FAILED', `unknown recovery marker: ${batchId}`, {
         conversationId,
@@ -293,11 +306,10 @@ export function createIntegrityLifecycle(
   }
 
   async function recover(callIds: ReadonlyArray<string>, reason = 'trusted maintenance backfill'): Promise<void> {
-    const batches = await readBatches();
     // Typed recovery markers record faults generic tool backfill cannot reconcile
     // (half-applied restores, ambiguous history, unresolved effects); only their own
     // completion paths or a deliberately typed procedure may clear them.
-    const unfinished = batches.filter((batch) => (!batch.completed || batch.recoveryRequired) && batch.markerKind === undefined);
+    const unfinished = await readUnfinishedBatches(`(details->>'markerKind') IS NULL`);
     const repairedCallIds = await repairOrphanedToolResults(reason);
     if (unfinished.length === 0) return;
     const requested = new Set([...callIds, ...repairedCallIds]);

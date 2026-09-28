@@ -34,6 +34,22 @@ describe('Phase 0 AC.21 real PostgreSQL transaction boundary', () => {
     }
   });
 
+  it('reconciled commit from an unexpected command tag still runs publications', async () => {
+    const publications: Array<string> = [];
+    const faulty = createPostgresProvider({url: database.url}, {transactionFaults: {commitCommandTag: 'SAVEPOINT'}});
+    const result = await faulty.withTransactionOutcome!(async (scope) => {
+      await scope.query('INSERT INTO phase0_ac21_markers (value) VALUES ($1)', ['reconciled-pub']);
+      scope.registerAfterCommit(() => { publications.push('published'); });
+      return 'value';
+    }, async (_outcome, queryFn) => {
+      const rows = await queryFn<{value: string}>('SELECT value FROM phase0_ac21_markers WHERE value = $1', ['reconciled-pub']);
+      return rows.length === 1 ? {truth: 'committed' as const, value: 'value'} : {truth: 'unknown' as const, error: new Error('reconciled row missing')};
+    });
+    expect(result.status).toBe('reconciled_commit');
+    expect(publications).toEqual(['published']);
+    expect(await provider.query('SELECT value FROM phase0_ac21_markers WHERE value = $1', ['reconciled-pub'])).toHaveLength(1);
+  });
+
   it('nested provisional work is not published after outer rollback', async () => {
     const publications: Array<string> = [];
     const result = await provider.withTransactionOutcome!(async (outer) => {

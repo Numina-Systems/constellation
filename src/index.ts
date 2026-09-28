@@ -35,7 +35,7 @@ import type { ServerRateLimitSync } from '@/rate-limit/types.js';
 import { createPostgresSkillStore } from '@/skill/postgres-store';
 import { createSkillRegistry } from '@/skill/registry';
 import { createSkillTools } from '@/skill/tools';
-import { createPredictionStore, createTraceRecorder, shouldSkipReview } from '@/reflexion';
+import { createPredictionStore, createTraceRecorder } from '@/reflexion';
 import { createPredictionTools, createIntrospectionTools } from '@/reflexion';
 import { createPredictionContextProvider } from '@/reflexion';
 import { createPostgresScheduler } from '@/scheduler';
@@ -53,26 +53,17 @@ import {
   createIntrospectionContextProvider,
   createContinuationBudget,
   createContinuationJudge,
-  runContinuationLoop,
 } from '@/subconscious';
 import { createSearchStore, createMemorySearchDomain, createConversationSearchDomain } from '@/search';
 import { createSearchTools } from '@/tool/builtin/search';
 import {
   createActivityManager,
   createActivityContextProvider,
-  createActivityDispatch,
-  createWakeHandler,
   currentMode,
   sleepTaskCron,
-  isSleepTask,
-  queuedEventToExternal,
-  buildCompactionEvent,
-  buildPredictionReviewEvent,
-  buildPatternAnalysisEvent,
-  buildArchivistEvent,
 } from '@/activity/index.ts';
 import type { ActivityManager, ScheduleConfig } from '@/activity/index.ts';
-import { createEventDrain, buildReviewEvent, buildAgentScheduledEvent } from '@/orchestration';
+import { createEventDrain, registerSchedulerHandlers } from '@/orchestration';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
@@ -151,8 +142,6 @@ export const COMPOSITION_SEAM = createCompositionSeam();
 
 /** Production agent construction is routed through the injected composition seam. */
 export const createProductionAgent = COMPOSITION_SEAM.createAgent;
-
-export const SUPPRESS_DURING_SLEEP = ['review-predictions', 'subconscious-impulse', 'subconscious-introspection'] as const;
 
 export type CompactionRecoveryAction = (command: string) => Promise<string | null>;
 
@@ -1512,276 +1501,29 @@ Report a brief summary of actions taken.`],
   // Create event queue and single-flight drain for scheduler events
   const schedulerDrain = createEventDrain({ capacity: 10, agent, sourceLabel: 'scheduler' });
 
-  // --- Scheduler onDue handlers ---
-  // Extract handler logic into named functions for reuse
-  function handleSystemSchedulerTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-    (async () => {
-      try {
-        const expiredCount = await predictionStore.expireStalePredictions(
-          AGENT_OWNER,
-          new Date(Date.now() - 24 * 3600_000),
-        );
-        if (expiredCount > 0) {
-          console.log(`review job: expired ${expiredCount} stale predictions`);
-        }
-      } catch (error) {
-        console.warn('review job: failed to expire stale predictions', error);
-      }
-
-      // Before building the review event, check if there's been any activity
-      if (task.name === 'review-predictions') {
-        const recentTraces = await traceRecorder.queryTraces({
-          owner: AGENT_OWNER,
-          lookbackSince: new Date(Date.now() - 2 * 3600_000),
-          limit: 1,
-        });
-
-        if (shouldSkipReview(recentTraces.length)) {
-          console.log('[review-gate] skipping review-predictions: no agent-initiated traces since last window');
-          return;
-        }
-
-        continuationBudget?.resetEvent();
-        const roundStart = new Date();
-        const event = await buildReviewEvent(task, traceRecorder, AGENT_OWNER);
-        const responseText = await agent.processEvent(event);
-
-        // Introspection continuation loop (shared budget with impulse — AC5.2)
-        if (continuationBudget && continuationJudge) {
-          await runContinuationLoop(
-            {
-              judge: continuationJudge,
-              budget: continuationBudget,
-              queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
-              queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
-              assembleEvent: () => buildReviewEvent(task, traceRecorder, AGENT_OWNER),
-              processEvent: (e) => agent.processEvent(e),
-              eventType: 'introspection',
-              // No onHousekeeping — engagement decay is impulse-specific
-            },
-            responseText,
-            roundStart,
-          );
-        }
-        return;
-      }
-
-      const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
-
-      schedulerDrain.queue.push(event);
-      schedulerDrain.drain().catch((error) => {
-        console.error('scheduler event processing error:', error);
-      });
-    })();
-  }
-
-  function handleAgentSchedulerTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-    (async () => {
-      try {
-        const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
-        schedulerDrain.queue.push(event);
-        schedulerDrain.drain().catch((error) => {
-          console.error('agent scheduler event processing error:', error);
-        });
-      } catch (error) {
-        console.error('agent scheduler onDue error:', error);
-      }
-    })();
-  }
-
-  if (activityManager) {
-    // Capture narrowed reference for use in closures (avoids activityManager! assertions)
-    const am = activityManager;
-
-    // Sleep task handler: routes sleep tasks to the correct event builder with flagged events
-    function handleSleepTask(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-      (async () => {
-        const flaggedEvents = await am.getFlaggedEvents();
-        let event;
-
-        switch (task.name) {
-          case 'sleep-compaction':
-            event = buildCompactionEvent(flaggedEvents, new Date());
-            break;
-          case 'sleep-prediction-review':
-            event = buildPredictionReviewEvent(flaggedEvents, new Date());
-            break;
-          case 'sleep-pattern-analysis':
-            event = buildPatternAnalysisEvent(flaggedEvents, new Date());
-            break;
-          case 'sleep-archivist':
-            event = buildArchivistEvent(flaggedEvents, new Date());
-            if (archivistAgent) {
-              // Route to archivist sub-agent
-              archivistAgent.processEvent(event).catch((error) => {
-                console.error('[archivist] full pipeline event error:', error);
-              });
-              return; // Don't queue to main agent
-            }
-            break;
-          default:
-            console.warn(`[activity] unknown sleep task: ${task.name}`);
-            return;
-        }
-
-        schedulerDrain.queue.push(event);
-        schedulerDrain.drain().catch((error) => {
-          console.error(`sleep task event processing error (${task.name}):`, error);
-        });
-      })().catch((error) => {
-        console.error(`[activity] sleep task error (${task.name}):`, error);
-      });
-    }
-
-    // Activity-aware system handler: routes sleep tasks to handleSleepTask,
-    // impulse tasks to subconscious agent, and other tasks to the original handler
-    async function runPostImpulseHousekeeping(): Promise<void> {
-      try {
-        const halfLife = config.subconscious?.engagement_half_life_days ?? 7;
-        const maxActive = config.subconscious?.max_active_interests ?? 10;
-
-        await interestRegistry.applyEngagementDecay(AGENT_OWNER, halfLife);
-
-        const dormanted = await interestRegistry.enforceActiveInterestCap(AGENT_OWNER, maxActive);
-
-        if (dormanted.length > 0) {
-          console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActive})`);
-        }
-      } catch (error) {
-        console.error('[subconscious] housekeeping error:', error);
-      }
-    }
-
-    function handleSystemSchedulerTaskWithActivity(task: { id: string; name: string; schedule: string; payload: Record<string, unknown> }): void {
-      if (isSleepTask(task.name)) {
-        handleSleepTask(task);
-      } else if (task.name === 'subconscious-impulse' && subconsciousAgent && impulseAssembler) {
-        (async () => {
-          try {
-            continuationBudget?.resetEvent();
-            const roundStart = new Date();
-            const event = await impulseAssembler.assembleImpulse();
-            const responseText = await subconsciousAgent.processEvent(event);
-            await runPostImpulseHousekeeping();
-
-            // Continuation loop (best-effort, errors don't break normal flow)
-            if (continuationBudget && continuationJudge) {
-              await runContinuationLoop(
-                {
-                  judge: continuationJudge,
-                  budget: continuationBudget,
-                  queryTraces: (since) => traceRecorder.queryTraces({ owner: AGENT_OWNER, lookbackSince: since, limit: 20 }),
-                  queryInterests: () => interestRegistry.listInterests(AGENT_OWNER, { status: 'active' }),
-                  assembleEvent: () => impulseAssembler.assembleImpulse(),
-                  processEvent: (e) => subconsciousAgent.processEvent(e),
-                  onHousekeeping: runPostImpulseHousekeeping,
-                  eventType: 'impulse',
-                },
-                responseText,
-                roundStart,
-              );
-            }
-          } catch (error) {
-            console.error('impulse event processing error:', error);
-          }
-        })().catch((error) => {
-          console.error('impulse task error:', error);
-        });
-      } else if (task.name === 'subconscious-introspection' && subconsciousAgent && introspectionAssembler) {
-        (async () => {
-          try {
-            const event = await introspectionAssembler.assembleIntrospection();
-            await subconsciousAgent.processEvent(event);
-          } catch (error) {
-            console.error('introspection event processing error:', error);
-          }
-        })().catch((error) => {
-          console.error('introspection task error:', error);
-        });
-      } else if (task.name === 'archivist-incremental' && archivistPipeline) {
-        (async () => {
-          try {
-            console.log('[archivist] running incremental pipeline');
-            const result = await archivistPipeline.runIncremental();
-            console.log(`[archivist] incremental complete: scanned=${result.scanned}, deduped=${result.deduped}, pruned=${result.pruned}`);
-          } catch (error) {
-            console.error('[archivist] incremental pipeline error:', error);
-          }
-        })().catch((error) => {
-          console.error('[archivist] incremental task error:', error);
-        });
-      } else {
-        handleSystemSchedulerTask(task);
-      }
-    }
-
-    // Activity-aware dispatch: wraps original handlers
-    const wakeHandler = createWakeHandler({
-      activityManager: am,
-      onEvent: async (event) => {
-        const externalEvent = queuedEventToExternal(event);
-        schedulerDrain.queue.push(externalEvent);
-        schedulerDrain.drain().catch((error) => {
-          console.error('wake drain event processing error:', error);
-        });
-      },
-      trickleDelayMs: 5000,
-    });
-
-    const handleTransition = (task: { name: string }): void => {
-      (async () => {
-        if (task.name === 'transition-to-sleep') {
-          // Dispatch wrap-up to subconscious before sleep
-          if (subconsciousAgent && impulseAssembler) {
-            try {
-              const wrapUpEvent = await impulseAssembler.assembleWrapUp();
-              await subconsciousAgent.processEvent(wrapUpEvent);
-              await runPostImpulseHousekeeping();
-            } catch (error) {
-              console.error('[subconscious] wrap-up error:', error);
-            }
-          }
-          await am.transitionTo('sleeping');
-          console.log('[activity] transitioned to sleeping mode');
-        } else if (task.name === 'transition-to-wake') {
-          // Reset continuation budget for new wake cycle
-          continuationBudget?.resetCycle();
-
-          // Dispatch morning agenda to subconscious before queue drain
-          if (subconsciousAgent && impulseAssembler) {
-            try {
-              const morningEvent = await impulseAssembler.assembleMorningAgenda();
-              await subconsciousAgent.processEvent(morningEvent);
-              await runPostImpulseHousekeeping();
-            } catch (error) {
-              console.error('[subconscious] morning agenda error:', error);
-            }
-          }
-          await wakeHandler();
-        }
-      })().catch((error) => {
-        console.error('[activity] transition error:', error);
-      });
-    };
-
-    // Register activity-aware handlers BEFORE scheduler.start()
-    systemScheduler.onDue(createActivityDispatch({
-      activityManager: am,
-      originalHandler: handleSystemSchedulerTaskWithActivity,
-      onTransition: handleTransition,
-      suppressDuringSleep: SUPPRESS_DURING_SLEEP,
-    }));
-
-    agentScheduler.onDue(createActivityDispatch({
-      activityManager: am,
-      originalHandler: handleAgentSchedulerTask,
-      onTransition: handleTransition,
-    }));
-  } else {
-    // No activity: register original handlers directly
-    systemScheduler.onDue(handleSystemSchedulerTask);
-    agentScheduler.onDue(handleAgentSchedulerTask);
-  }
+  // --- Scheduler onDue handlers and sleep/wake transitions ---
+  // Registration must complete before scheduler.start() below.
+  registerSchedulerHandlers({
+    systemScheduler,
+    agentScheduler,
+    owner: AGENT_OWNER,
+    agent,
+    subconsciousAgent,
+    archivistAgent,
+    archivistPipeline,
+    predictionStore,
+    traceStore: traceRecorder,
+    interestRegistry,
+    impulseAssembler,
+    introspectionAssembler,
+    continuationBudget,
+    continuationJudge,
+    activityManager,
+    schedulerSink: schedulerDrain,
+    engagementHalfLifeDays: config.subconscious?.engagement_half_life_days ?? 7,
+    maxActiveInterests: config.subconscious?.max_active_interests ?? 10,
+    trickleDelayMs: 5000,
+  });
 
   // Register hourly review job if not already scheduled
   const existingTasks = await persistence.query<{ id: string }>(

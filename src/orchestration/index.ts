@@ -1,5 +1,24 @@
 // pattern: Imperative Shell (barrel export)
 
-export type { EventDrain, EventDrainOptions } from './types.ts';
+export type {
+  EventDrain,
+  EventDrainOptions,
+  SchedulerTask,
+  SchedulerTaskHandler,
+  SchedulerHandlerDeps,
+  ActivityAwareSystemHandlerDeps,
+  TransitionHandlerDeps,
+  SchedulerRegistrationDeps,
+} from './types.ts';
 export { processEventQueue, createEventDrain } from './event-drain.ts';
 export { buildReviewEvent, buildAgentScheduledEvent } from './scheduled-event-builders.ts';
+export {
+  SUPPRESS_DURING_SLEEP,
+  createSystemTaskHandler,
+  createAgentTaskHandler,
+  createSleepTaskHandler,
+  createPostImpulseHousekeeping,
+  createActivityAwareSystemHandler,
+  createTransitionHandler,
+  registerSchedulerHandlers,
+} from './scheduler-handlers.ts';

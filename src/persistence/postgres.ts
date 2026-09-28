@@ -15,6 +15,7 @@ import type {
   TransactionScope,
 } from './types.ts';
 import type {TransactionOutcome, TransactionReconciliation} from '@/contracts/outcomes.ts';
+import {PersistenceError, sanitizeQuery} from '@/errors/index.js';
 
 type TxContext = {
   readonly client: PoolClient;
@@ -34,7 +35,7 @@ export function createPostgresProvider(
   config: DatabaseConfig,
   options?: Readonly<PersistenceProviderOptions>,
 ): PersistenceProvider {
-  const pool = new Pool({connectionString: config.url});
+  const pool = options?.poolFactory?.(config.url) ?? new Pool({connectionString: config.url});
   const txStorage = new AsyncLocalStorage<TxContext>();
   const faults: PostgresTransactionFaults = options?.transactionFaults ?? {};
 
@@ -94,10 +95,21 @@ export function createPostgresProvider(
     params?: ReadonlyArray<unknown>,
   ): Promise<Array<T>> {
     const context = txStorage.getStore();
-    const result = context
-      ? await context.client.query<QueryResultRow>(sql, params as Array<unknown>)
-      : await pool.query<QueryResultRow>(sql, params as Array<unknown>);
-    return result.rows as Array<T>;
+    try {
+      const result = context
+        ? await context.client.query<QueryResultRow>(sql, params as Array<unknown>)
+        : await pool.query<QueryResultRow>(sql, params as Array<unknown>);
+      return result.rows as Array<T>;
+    } catch (error) {
+      if (error instanceof PersistenceError) throw error;
+      const cause = error instanceof Error ? error : new Error(String(error));
+      throw new PersistenceError(
+        'QUERY_FAILED',
+        'database query failed',
+        {query: sanitizeQuery(sql)},
+        {cause, suggestion: 'check database availability and query schema'},
+      );
+    }
   }
 
   async function queryOnIndependentConnection<T extends Record<string, unknown>>(

@@ -2,7 +2,7 @@
 
 import type { ContextProvider } from '@/agent/types.ts';
 import type { Tool, ToolDefinition, ToolRegistry } from '@/tool/types.ts';
-import type { McpClient, McpDiscoveryOptions, McpToolRegistration } from './types.ts';
+import {McpDiscoveryError, type McpClient, type McpDiscoveryOptions, type McpToolRegistration} from './types.ts';
 
 export type McpStartupFailure = Readonly<{readonly name: string; readonly error: string}>;
 export type McpStartupResult = Readonly<{
@@ -46,7 +46,7 @@ export function publishMcpRegistrations(registry: ToolRegistry, registrations: R
   const existingNames = new Set(registry.getDefinitions().map((definition) => definition.name));
   for (const registration of registrations) {
     const name = registration.definition.name;
-    if (names.has(name) || existingNames.has(name)) throw new Error(`MCP registration collision before publication: ${name}`);
+    if (names.has(name) || existingNames.has(name)) throw new McpDiscoveryError('mcp_registration_collision', `MCP registration collision before publication: ${name}`, {name}, {suggestion: 'use unique MCP tool names'});
     names.add(name);
   }
   const reserved: Array<string> = [];

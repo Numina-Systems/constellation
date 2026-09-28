@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { createMockMcpTransport, type MockMcpTransport } from '@/testing/mcp-transport.ts';
 import { mapToolResult, createMcpClient, buildTransportOptions } from './client.ts';
+import {ConstellationError} from '@/errors/index.js';
 import type { McpServerConfig } from './schema.ts';
 
 async function respondToRequest(transport: MockMcpTransport, method: string, result: Record<string, unknown>): Promise<void> {
@@ -210,7 +211,9 @@ describe('createMcpClient reconnection', () => {
       const result = await client.callTool('hello', {});
       expect(result.success).toBe(false);
       expect(result.error).toContain('mcp_reconnect_exhausted');
+      expect(new (await import('./types.ts')).McpDiscoveryError('mcp_reconnect_exhausted', 'offline')).toBeInstanceOf(ConstellationError);
       expect(delays).toEqual([5, 10]);
+      expect(errors.some((values) => values[0] === '[mcp] transport closed' && (values[1] as Record<string, unknown>)['code'] === 'mcp_discovery_transport_error' && (values[1] as Record<string, unknown>)['success'] === false)).toBe(true);
       expect(errors.some((values) => values[0] === '[mcp] reconnect exhausted' && (values[1] as Record<string, unknown>)['code'] === 'mcp_reconnect_exhausted')).toBe(true);
       expect(clientsCreated).toBe(3);
     } finally {

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { PersistenceProvider } from '../persistence/types.ts';
 import type { Scheduler, ScheduledTask } from '../extensions/scheduler.ts';
 import type { SchedulerRow } from './types.ts';
+import {ConstellationError} from '@/errors/index.js';
 
 export type PostgresScheduler = Scheduler & {
   start(): void;
@@ -82,12 +83,22 @@ export function createPostgresScheduler(
       try {
         nextRun = new Cron(task.schedule).nextRun();
       } catch (error) {
-        throw new Error(`Invalid cron expression: ${task.schedule}`);
+        throw new ConstellationError(
+          'invalid cron expression',
+          'INVALID_CRON_EXPRESSION',
+          'scheduler',
+          {schedule: task.schedule},
+          {cause: error instanceof Error ? error : undefined, suggestion: 'provide a valid cron expression'},
+        );
       }
 
       if (nextRun === null) {
-        throw new Error(
-          `Invalid cron expression or no future occurrence: ${task.schedule}`,
+        throw new ConstellationError(
+          'cron expression has no future occurrence',
+          'INVALID_CRON_EXPRESSION',
+          'scheduler',
+          {schedule: task.schedule},
+          {suggestion: 'provide a cron expression with a future occurrence'},
         );
       }
 

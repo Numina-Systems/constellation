@@ -119,14 +119,14 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
       if (sdkClient !== client || intentionallyDisconnected) return;
       connected = false;
       sdkClient = null;
-      console.error('[mcp] transport error', {server: serverName, event: 'transport_error', message: safeErrorMessage(error)});
+      console.error('[mcp] transport error', {server: serverName, event: 'transport_error', code: 'mcp_discovery_transport_error', subsystem: 'mcp', context: {event: 'onerror'}, message: safeErrorMessage(error), success: false});
       scheduleReconnect();
     };
     client.onclose = () => {
       if (sdkClient !== client || intentionallyDisconnected) return;
       connected = false;
       sdkClient = null;
-      console.error('[mcp] transport closed', {server: serverName, event: 'transport_closed'});
+      console.error('[mcp] transport closed', {server: serverName, event: 'transport_closed', code: 'mcp_discovery_transport_error', subsystem: 'mcp', context: {event: 'onclose'}, success: false});
       scheduleReconnect();
     };
     try {

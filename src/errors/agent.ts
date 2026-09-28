@@ -12,7 +12,8 @@ export type AgentErrorCode =
   | 'TURN_CANCELLED'
   | 'INTEGRITY_FAILED'
   | 'REENTRANT_INGRESS'
-  | 'EXCHANGE_CORRUPT';
+  | 'EXCHANGE_CORRUPT'
+  | 'MODEL_ERROR';
 
 export class AgentError extends ConstellationError {
   constructor(

@@ -791,7 +791,11 @@ export function createAgent(
       }
 
       // Step 6: Handle response based on stop_reason
-      if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {
+      if (
+        response.stop_reason === 'end_turn' ||
+        response.stop_reason === 'max_tokens' ||
+        response.stop_reason === 'stop_sequence'
+      ) {
         // Extract text content and return
         const textContent = response.content.find((block) => block.type === 'text') as TextBlock | undefined;
         const text = textContent?.text || '';
@@ -1192,8 +1196,10 @@ export function createAgent(
         continue;
       }
 
-      // Unknown stop reason - return empty string
-      return '';
+      throw new AgentError('MODEL_ERROR', `unsupported model stop reason: ${String(response.stop_reason)}`, {
+        conversationId: id,
+        stopReason: String(response.stop_reason),
+      }, {suggestion: 'verify that the configured model provider returns a supported stop reason'});
     }
 
     // Max rounds exceeded

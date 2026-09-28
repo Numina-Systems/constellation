@@ -283,6 +283,28 @@ describe('Agent loop', () => {
     };
   });
 
+  it('rejects an unsupported model stop reason instead of silently succeeding', async () => {
+    let providerCalls = 0;
+    const unsupportedResponse = {
+      content: [{type: 'text' as const, text: 'not terminal'}],
+      stop_reason: 'unrecognized_reason' as ModelResponse['stop_reason'],
+      usage: {input_tokens: 100, output_tokens: 10},
+    };
+    const model: ModelProvider = {
+      async complete() {
+        providerCalls += 1;
+        return unsupportedResponse;
+      },
+      async *stream() {
+        yield {type: 'message_start' as const, message: {id: 'msg', usage: {input_tokens: 0, output_tokens: 0}}};
+      },
+    };
+    const agent = createAgent(createAgentDependencies({model}));
+
+    await expect(agent.processMessage('Hello')).rejects.toThrow(/unsupported model stop reason/);
+    expect(providerCalls).toBe(1);
+  });
+
   it('AC1.1: processes a message and returns response text', async () => {
     const modelResponse: ModelResponse = {
       content: [{ type: 'text', text: 'Hello, this is the assistant response' }],

@@ -53,8 +53,7 @@ export async function connectMcpServers(
       ]);
       connected.push(client);
     } catch (error) {
-      // Do not await disconnect: a hung connect may also leave transport cleanup pending.
-      void Promise.resolve().then(() => client.disconnect()).catch(() => undefined);
+      await client.disconnect().catch(() => undefined);
       const failure = safeFailure(error);
       failed.push({name: client.serverName, error: failure});
       console.error('[mcp] startup server skipped', {

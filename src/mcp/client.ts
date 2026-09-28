@@ -147,6 +147,8 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
     try {
       await client.connect(transport, getRequestOptions(options));
       if (intentionallyDisconnected) {
+        if (sdkClient === client) sdkClient = null;
+        connected = false;
         await client.close().catch(() => undefined);
         return;
       }
@@ -196,6 +198,8 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
     },
     async disconnect(): Promise<void> {
       intentionallyDisconnected = true;
+      const pendingReconnect = reconnectTask;
+      if (pendingReconnect !== null) await pendingReconnect;
       const client = sdkClient;
       sdkClient = null;
       connected = false;

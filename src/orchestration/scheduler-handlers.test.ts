@@ -368,6 +368,23 @@ describe('createSystemTaskHandler', () => {
     );
   });
 
+  it('triggers the scheduler sink drain itself after queueing', async () => {
+    const harness = createHarness();
+    const realDrain = harness.schedulerSink.drain.bind(harness.schedulerSink);
+    let drainCalls = 0;
+    harness.schedulerSink.drain = async (): Promise<void> => {
+      drainCalls += 1;
+      return realDrain();
+    };
+    const handler = createSystemTaskHandler(harness.deps);
+
+    handler(task('custom-agent-task', { prompt: 'do a thing' }));
+    await flush();
+
+    // Pins the production wiring: the handler (not the test) drains the sink.
+    expect(drainCalls).toBeGreaterThanOrEqual(1);
+  });
+
   it('AC.7: catches async failures and logs them instead of an unhandled rejection', async () => {
     const harness = createHarness();
     const traceStore = createMockTraceStore();
@@ -398,6 +415,23 @@ describe('createAgentTaskHandler', () => {
     expect(harness.agent.processEvent).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'agent-scheduled' }),
     );
+  });
+
+  it('triggers the scheduler sink drain itself after queueing', async () => {
+    const harness = createHarness();
+    const realDrain = harness.schedulerSink.drain.bind(harness.schedulerSink);
+    let drainCalls = 0;
+    harness.schedulerSink.drain = async (): Promise<void> => {
+      drainCalls += 1;
+      return realDrain();
+    };
+    const handler = createAgentTaskHandler(harness.deps);
+
+    handler(task('agent-task', { prompt: 'hello' }));
+    await flush();
+
+    // Pins the production wiring: the handler (not the test) drains the sink.
+    expect(drainCalls).toBeGreaterThanOrEqual(1);
   });
 
   it('logs and swallows trace store failures', async () => {

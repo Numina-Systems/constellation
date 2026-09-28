@@ -24,7 +24,7 @@ import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createPostgresSecretStore, createSecretResolver } from '@/secrets';
 import { createSecretTools } from '@/tool/builtin/secrets';
 import { createDenoExecutor } from '@/runtime/executor';
-import { createBlueskySource, seedBlueskyTemplates, createEventQueue } from '@/extensions/bluesky';
+import { createBlueskySource, seedBlueskyTemplates } from '@/extensions/bluesky';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
@@ -73,13 +73,13 @@ import {
   buildArchivistEvent,
 } from '@/activity/index.ts';
 import type { ActivityManager, ScheduleConfig } from '@/activity/index.ts';
+import { createEventDrain } from '@/orchestration';
 import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
 import type { BlueskyDataSource } from '@/extensions/bluesky';
 import type { ExecutionContext } from '@/runtime/types';
-import type { EventQueue } from '@/extensions/bluesky';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
 import type { EmbeddingProvider } from '@/embedding/types';
@@ -413,33 +413,6 @@ function promptForLine(rl: readline.Interface, prompt: string): Promise<string> 
       resolve(answer.trim());
     });
   });
-}
-
-/**
- * Process events from a queue, catching errors so one failed event doesn't crash the loop.
- * Extracted for testability (AC6.5: processEvent errors don't crash listener).
- * Caller provides the event queue and agent; this function drains the queue
- * and ensures errors are logged but don't prevent subsequent events from processing.
- */
-export async function processEventQueue(
-  eventQueue: EventQueue,
-  agent: Agent,
-  sourceLabel: string = 'bluesky',
-): Promise<void> {
-  let event = eventQueue.shift();
-  while (event) {
-    try {
-      const result = await agent.processEvent(event);
-      if (result) {
-        console.log(`[${sourceLabel}] agent response: ${result}`);
-      }
-    } catch (error) {
-      // AC6.5: Log error but don't crash
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`${sourceLabel} processEvent error: ${errorMsg}`);
-    }
-    event = eventQueue.shift();
-  }
 }
 
 /**
@@ -1597,26 +1570,15 @@ Report a brief summary of actions taken.`],
       })
     : undefined;
 
-  // Step 3: Create shared external event queue and processing loop (for all DataSource events)
-  const externalEventQueue = createEventQueue(50);
-  let externalProcessing = false;
-
-  async function processExternalEvent(): Promise<void> {
-    if (externalProcessing) return;
-    externalProcessing = true;
-    try {
-      await processEventQueue(externalEventQueue, agent, 'external');
-    } finally {
-      externalProcessing = false;
-    }
-  }
+  // Step 3: Create shared external event queue and single-flight drain (for all DataSource events)
+  const externalDrain = createEventDrain({ capacity: 50, agent, sourceLabel: 'external' });
 
   // Step 4: Build and create DataSource registry
   const dataSourceRegistry: DataSourceRegistry | null = registrations.length > 0
     ? createDataSourceRegistry({
         registrations,
-        eventSink: externalEventQueue,
-        processEvents: processExternalEvent,
+        eventSink: externalDrain.queue,
+        processEvents: () => externalDrain.drain(),
         activityManager: activityManager ?? undefined,
       })
     : null;
@@ -1648,19 +1610,8 @@ Report a brief summary of actions taken.`],
     registry.register(tool);
   }
 
-  // Create event queue and processing function for scheduler events
-  const schedulerEventQueue = createEventQueue(10);
-  let schedulerProcessing = false;
-
-  async function processSchedulerEvent(): Promise<void> {
-    if (schedulerProcessing) return;
-    schedulerProcessing = true;
-    try {
-      await processEventQueue(schedulerEventQueue, agent, 'scheduler');
-    } finally {
-      schedulerProcessing = false;
-    }
-  }
+  // Create event queue and single-flight drain for scheduler events
+  const schedulerDrain = createEventDrain({ capacity: 10, agent, sourceLabel: 'scheduler' });
 
   // --- Scheduler onDue handlers ---
   // Extract handler logic into named functions for reuse
@@ -1718,8 +1669,8 @@ Report a brief summary of actions taken.`],
 
       const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
 
-      schedulerEventQueue.push(event);
-      processSchedulerEvent().catch((error) => {
+      schedulerDrain.queue.push(event);
+      schedulerDrain.drain().catch((error) => {
         console.error('scheduler event processing error:', error);
       });
     })();
@@ -1729,8 +1680,8 @@ Report a brief summary of actions taken.`],
     (async () => {
       try {
         const event = await buildAgentScheduledEvent(task, traceRecorder, AGENT_OWNER);
-        schedulerEventQueue.push(event);
-        processSchedulerEvent().catch((error) => {
+        schedulerDrain.queue.push(event);
+        schedulerDrain.drain().catch((error) => {
           console.error('agent scheduler event processing error:', error);
         });
       } catch (error) {
@@ -1774,8 +1725,8 @@ Report a brief summary of actions taken.`],
             return;
         }
 
-        schedulerEventQueue.push(event);
-        processSchedulerEvent().catch((error) => {
+        schedulerDrain.queue.push(event);
+        schedulerDrain.drain().catch((error) => {
           console.error(`sleep task event processing error (${task.name}):`, error);
         });
       })().catch((error) => {
@@ -1870,8 +1821,8 @@ Report a brief summary of actions taken.`],
       activityManager: am,
       onEvent: async (event) => {
         const externalEvent = queuedEventToExternal(event);
-        schedulerEventQueue.push(externalEvent);
-        processSchedulerEvent().catch((error) => {
+        schedulerDrain.queue.push(externalEvent);
+        schedulerDrain.drain().catch((error) => {
           console.error('wake drain event processing error:', error);
         });
       },

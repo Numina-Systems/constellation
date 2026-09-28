@@ -58,6 +58,18 @@ describe('connectMcpServers bounded startup', () => {
       console.error = originalError;
     }
   });
+
+  it('does not let a hanging disconnect stall startup beyond the settle bound', async () => {
+    const base = createMockMcpClient();
+    const clients = [
+      {...base, serverName: 'hung-close', connect: async () => new Promise<void>(() => {}), disconnect: () => new Promise<void>(() => {})},
+    ];
+    const startedAt = Date.now();
+    const result = await connectMcpServers(clients, {serverTimeoutMs: 15, disconnectSettleTimeoutMs: 20});
+    expect(Date.now() - startedAt).toBeLessThan(250);
+    expect(result.connected).toEqual([]);
+    expect(result.failed).toMatchObject([{name: 'hung-close', error: expect.stringContaining('startup timed out')}]);
+  });
 });
 
 describe('createMcpInstructionsProvider', () => {

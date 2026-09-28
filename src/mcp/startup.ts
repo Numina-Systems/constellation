@@ -5,6 +5,7 @@ import type { Tool, ToolDefinition, ToolRegistry } from '@/tool/types.ts';
 import {McpDiscoveryError, type McpClient, type McpDiscoveryOptions, type McpToolRegistration} from './types.ts';
 
 export const MCP_SERVER_STARTUP_TIMEOUT_MS = 15_000;
+export const MCP_DISCONNECT_SETTLE_TIMEOUT_MS = 3_000;
 
 export type McpStartupFailure = Readonly<{readonly name: string; readonly error: string}>;
 export type McpStartupResult = Readonly<{
@@ -27,6 +28,7 @@ export function formatMcpStartupSummary(connected: ReadonlyArray<string>, failed
 export type McpStartupOptions = Readonly<{
   readonly discovery?: McpDiscoveryOptions;
   readonly serverTimeoutMs?: number;
+  readonly disconnectSettleTimeoutMs?: number;
 }>;
 
 export async function connectMcpServers(
@@ -35,6 +37,7 @@ export async function connectMcpServers(
 ): Promise<McpStartupResult> {
   const options = startupOptions.discovery;
   const startupTimeoutMs = startupOptions.serverTimeoutMs ?? MCP_SERVER_STARTUP_TIMEOUT_MS;
+  const disconnectSettleMs = startupOptions.disconnectSettleTimeoutMs ?? MCP_DISCONNECT_SETTLE_TIMEOUT_MS;
   const connected: Array<McpClient> = [];
   const failed: Array<McpStartupFailure> = [];
   for (const client of clients) {
@@ -53,7 +56,15 @@ export async function connectMcpServers(
       ]);
       connected.push(client);
     } catch (error) {
-      await client.disconnect().catch(() => undefined);
+      // Bounded settle: a transport whose close() hangs must not stall the
+      // sequential startup loop; the disconnect continues in the background.
+      await new Promise<void>((resolve) => {
+        const settleTimer = setTimeout(resolve, Math.max(1, disconnectSettleMs));
+        client.disconnect().catch(() => undefined).finally(() => {
+          clearTimeout(settleTimer);
+          resolve();
+        });
+      });
       const failure = safeFailure(error);
       failed.push({name: client.serverName, error: failure});
       console.error('[mcp] startup server skipped', {

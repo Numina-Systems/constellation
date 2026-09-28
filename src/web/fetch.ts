@@ -103,10 +103,15 @@ export function createFetcher(config: FetcherConfig): (url: string, offset?: num
     try {
       let currentUrl = url;
       let response: Response | null = null;
+      // One absolute budget across every redirect hop so a redirect chain
+      // cannot multiply the per-request timeout.
+      const fetchDeadline = Date.now() + config.fetch_timeout;
       for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
         const parsedUrl = await validateUrl(currentUrl, config.resolveHost ?? resolvePublicHost);
+        const remainingMs = fetchDeadline - Date.now();
+        if (remainingMs <= 0) throw new WebFetchError("Fetch deadline exceeded while following redirects");
         response = await (config.fetchFn ?? fetch)(parsedUrl, {
-          signal: AbortSignal.timeout(config.fetch_timeout),
+          signal: AbortSignal.timeout(remainingMs),
           redirect: "manual",
         });
         if (response.status < 300 || response.status >= 400) break;

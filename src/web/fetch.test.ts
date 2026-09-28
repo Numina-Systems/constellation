@@ -509,6 +509,32 @@ describe("web-tools.AC2: Fetch pipeline", () => {
       expect(requested).toEqual(["https://public.example/"]);
     });
 
+    it("bounds the total time across redirect hops to a single fetch_timeout budget", async () => {
+      const requested: Array<string> = [];
+      const startedAt = Date.now();
+      const fetcher = createFetcherWithPorts({
+        fetch_timeout: 50, max_fetch_size: 1000, cache_ttl: 1000,
+        fetchFn: (async (input: string | URL, init?: RequestInit) => {
+          const target = String(input);
+          requested.push(target);
+          if (target.includes("start")) {
+            return new Response(null, {status: 302, headers: {location: "https://second.example/"}});
+          }
+          return new Promise<Response>((resolve, reject) => {
+            const timer = setTimeout(() => resolve(new Response("<html><body>late</body></html>", {headers: {"content-type": "text/html"}})), 5_000);
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(new Error("aborted"));
+            });
+          });
+        }) as unknown as typeof fetch,
+        resolveHost: async () => [{address: "93.184.216.34", family: 4}],
+      });
+      await expect(fetcher("https://start.example/")).rejects.toThrow();
+      expect(requested).toEqual(["https://start.example/", "https://second.example/"]);
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+    });
+
     it("validates each hostname in a multi-hop chain and blocks a private final host", async () => {
       const requested: Array<string> = [];
       const resolved: Array<string> = [];

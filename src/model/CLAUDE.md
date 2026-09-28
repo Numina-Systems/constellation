@@ -1,6 +1,6 @@
 # Model
 
-Last verified: 2026-09-27
+Last verified: 2026-09-28
 
 ## Purpose
 
@@ -16,7 +16,9 @@ Provides provider-neutral model request/response ports and Anthropic, OpenAI-com
   - Budget estimates include serialized system/diary/recall/skills/snapshots/messages/tools, output reserve, and safety margin. Default margin is `max(256, ceil(context_window * 0.02))`; estimates remain heuristic.
   - Explicit `model.context_window` wins. Without it, `agent.max_context_tokens` is an operator-configured fallback with a warning. A separately configured summarizer requires `summarization.context_window`; an identical summarizer may inherit the inference window.
   - Usage is normalized as inclusive input plus separate cache-read/write subsets and reasoning output. OpenAI-family prompt tokens already include cached input; Anthropic cache creation/read are not added twice. Missing stream usage remains missing, not fabricated zero.
-  - OpenRouter requests stream usage by default; generic OpenAI-compatible endpoints require explicit opt-in. Empty-choice usage chunks are still consumed.
+  - Terminal responses normalize into the `StopReason` union (`end_turn`, `tool_use`, `max_tokens`, `stop_sequence`, `incomplete`). Anthropic requests missing a stop reason and OpenAI-family null/unrecognized finish reasons (including `content_filter`) map to `incomplete` rather than a clean stop; Ollama classifies `done_reason === "length"` as `max_tokens` before tool-call detection.
+  - Transient failures retry through `callWithRetry` using one shared `isRetryableModelError` classifier across all four adapters. Backoff scales the exponential delay by an injected random source (`options.random`, default `Math.random`), and a `Retry-After` header (seconds or HTTP-date) takes precedence, capped at 60 seconds and the remaining deadline. Empty-choices responses raise a retryable `INVALID_RESPONSE` inside the retried operation on the OpenAI-compatible and OpenRouter adapters, so they participate in retry.
+  - OpenRouter requests stream usage by default; generic OpenAI-compatible endpoints require explicit opt-in. Empty-choice usage chunks are still consumed. Each OpenRouter call builds its own SDK client and captures response headers against a per-call id, so headers, cost, and rate-limit data attribute to the correct request under concurrency.
   - Ollama uses native `/api/chat` and preserves terminal usage/tool behavior.
 - **Expects**: provider-valid model names and API keys where required. Deterministic loopback tests use fake keys/transports; live APIs are opt-in.
 

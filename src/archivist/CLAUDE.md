@@ -7,7 +7,7 @@ Maintains memory health through a six-stage pipeline that deduplicates, consolid
 
 ## Contracts
 - **Exposes**: `ArchivistPipeline` interface (`runIncremental()`, `runFull()`), `createArchivistPipeline(deps)`, `ArchivistPipelineDeps` type, all stage result types (`ScanResult`, `DedupResult`, `ConsolidateResult`, `CrossrefResult`, `PruneResult`, `ReflectResult`, `PipelineResult`, `PipelineMode`)
-- **Guarantees**: Incremental mode (scan, dedup, prune) uses no LLM calls. Full mode runs all six stages with a configurable token budget. Pipeline short-circuits when no blocks have changed since last run (state tracked via `archivist:state` memory block). Each stage catches its own errors and continues (graceful degradation). Consolidation actions are transactional. Reflection is written to `archivist:reflection` working memory block.
+- **Guarantees**: Incremental mode (scan, dedup, prune) uses no LLM calls. Full mode runs all six stages with a configurable token budget. Pipeline short-circuits when no blocks have changed since last run (state tracked via `archivist:state` memory block). Each stage catches its own errors and continues (graceful degradation). Consolidation actions are transactional. Incremental prune deletions and the matching `archivist:state` snapshot commit in one transaction (all-or-nothing); full-mode prune deletions run as one atomic batch, with the stage-level catch continuing the run without pruning on failure — an incremental transaction failure is logged and rethrown to the caller. Reflection is written to `archivist:reflection` working memory block.
 - **Expects**: `MemoryStore`, `MemoryManager`, `PersistenceProvider`. Optional `EmbeddingProvider` (dedup/crossref skip without it). Optional `ModelProvider` (consolidate/reflect skip without it). Owner string and model name for LLM calls. Configurable thresholds: `dedupThreshold` (cosine similarity), `crossrefThreshold`, `tokenBudget`.
 
 ## Dependencies
@@ -33,6 +33,7 @@ Maintains memory health through a six-stage pipeline that deduplicates, consolid
 - Pipeline never modifies core-tier or pinned memory blocks (scan filters them out)
 - Token budget is respected across consolidate + reflect stages
 - Consolidation is transactional (merged block created + duplicates deleted atomically)
+- Incremental prune deletions and the `archivist:state` snapshot are atomic (all-or-nothing); full-mode prune deletions are a single atomic batch
 - State snapshot updated at end of every run (incremental or full)
 
 ## Key Files

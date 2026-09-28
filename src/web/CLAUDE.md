@@ -1,6 +1,6 @@
 # Web
 
-Last verified: 2026-03-01
+Last verified: 2026-09-28
 
 ## Purpose
 
@@ -8,8 +8,8 @@ Provides web search and URL fetching capabilities via a port/adapter architectur
 
 ## Contracts
 
-- **Exposes**: `SearchProvider` port interface, `createSearchChain(config)`, `createFetcher(config)`, `createBraveAdapter`, `createTavilyAdapter`, `createSearXNGAdapter`, `createDuckDuckGoAdapter`, all domain types (`SearchResult`, `SearchResponse`, `FetchResult`, `FetchCacheEntry`)
-- **Guarantees**: Search chain tries providers in configured order, returns first success, aggregates errors on all-fail. Fetcher converts HTML to markdown preserving headings, links, lists, tables. Content cached for configurable TTL. Large content paginated by character offset. Non-HTML content types rejected with error.
+- **Exposes**: `SearchProvider` port interface, `createSearchChain(config)`, `createFetcher(config)`, `createBraveAdapter`, `createTavilyAdapter`, `createSearXNGAdapter`, `createDuckDuckGoAdapter`, `WebFetchError`, all domain types (`SearchResult`, `SearchResponse`, `FetchResult`, `FetchCacheEntry`)
+- **Guarantees**: Search chain tries providers in configured order, returns first success, aggregates errors on all-fail. Fetcher converts HTML to markdown preserving headings, links, lists, tables. Content cached for configurable TTL. Large content paginated by character offset. Non-HTML content types rejected with error. Fetching accepts only `http:`/`https:` URLs; before connecting, the hostname (or literal IP) is resolved and every resolved address is checked, with private/reserved ranges rejected — so a DNS name cannot launder a blocked address. The response body is streamed and abandoned once it exceeds the configured size cap. URL/scheme/address/size violations reject the fetch with typed `WebFetchError`, which the tool layer captures into `ToolResult.error`.
 - **Expects**: At least one search provider configured (API key or endpoint). DuckDuckGo always available as no-credential fallback.
 
 ## Dependencies

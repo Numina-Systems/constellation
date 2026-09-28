@@ -6,13 +6,13 @@ Last verified: 2026-09-28
 Implements the `Scheduler` extension interface with PostgreSQL-backed cron scheduling. Polls for due tasks on a 60-second interval and dispatches them via a registered handler.
 
 ## Contracts
-- **Exposes**: `PostgresScheduler` (Scheduler + start/stop lifecycle), `createPostgresScheduler(persistence, owner)`
+- **Exposes**: `PostgresScheduler` (Scheduler + start/stop lifecycle), `createPostgresScheduler(persistence, owner, options?)` with `PostgresSchedulerOptions` (`pollOffsetMs`, default 0; `pollIntervalMs`, default 60000)
 - **Guarantees**:
-  - Tasks are polled every 60 seconds when started
+  - Tasks are polled every 60 seconds by default when started; the first poll can be delayed via `pollOffsetMs` and the cadence via `pollIntervalMs`
   - `schedule()` returns `{ id, nextRunAt }` for caller confirmation
-  - Cron expressions are validated on schedule; invalid expressions throw
-  - After a task fires, `next_run_at` is advanced to the next occurrence (or task is cancelled if no future occurrence exists)
-  - Per-task errors are caught and logged; one failing task does not block others
+  - Cron expressions are validated on schedule; invalid expressions (or ones with no future occurrence) throw typed `ConstellationError` with code `INVALID_CRON_EXPRESSION` (subsystem `scheduler`)
+  - The registered handler is awaited before `last_run_at`/`next_run_at` advance (or the task is cancelled if no future occurrence exists), so a crash mid-handler leaves the task eligible to re-fire. An in-flight guard skips a task still executing from a previous poll, preventing duplicate execution on overlapping ticks
+  - Per-task errors are caught and logged (typed-error aware: code, subsystem, context) and never kill the tick; one failing task does not block others
 - **Expects**: `PersistenceProvider` with migrations 004+005 applied (`scheduled_tasks` table with owner isolation). Owner string for multi-agent isolation.
 
 ## Dependencies
@@ -22,7 +22,7 @@ Implements the `Scheduler` extension interface with PostgreSQL-backed cron sched
 
 ## Key Decisions
 - Polling over pg_notify: Simpler, no persistent connection requirement. 60-second granularity is sufficient for cron tasks
-- Owner-scoped: Each scheduler instance only sees tasks for its owner. Composition root runs two instances (`agent` + `system`) for isolation -- agent scheduling tools cannot see or modify system jobs
+- Owner-scoped: Each scheduler instance only sees tasks for its owner. Composition root runs two instances (`agent` + `system`) for isolation -- agent scheduling tools cannot see or modify system jobs. The composition root staggers their first polls via `pollOffsetMs` (0 ms agent, 15000 ms system) so their ticks do not collide
 
 ## Invariants
 - `next_run_at` is always set when a task is active (not cancelled)

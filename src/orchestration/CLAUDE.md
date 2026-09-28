@@ -10,6 +10,7 @@ Runtime orchestration between the composition root and the domain modules: seria
 - **Guarantees**:
   - At most one drain loop runs per queue; concurrent `drain()` calls coalesce and the in-flight flag resets in a finally block
   - Per-event errors are logged and never abort a drain; handlers are fire-and-forget (`void`) and never throw into the scheduler tick — async failures are contained by an outer `.catch` or a full-body `try`/`catch`
+  - Post-impulse housekeeping failures are recorded through `traceError` with conversation id `subconscious-housekeeping` (subsystem `subconscious`; untyped errors wrapped as `HOUSEKEEPING_FAILED` first) in addition to console logging
   - Activity-aware routing order is fixed: sleep task → subconscious-impulse → subconscious-introspection → archivist-incremental → fallback to the system handler
   - Task registration is idempotent per owner+name and preserves the exact pre-start (review, impulse, introspection) versus post-start (archivist before activity) split
 - **Expects**: Fully constructed dependencies from the composition root (agents, `TraceStore`, `PredictionStore`, `InterestRegistry`, assemblers, continuation budget/judge, `ActivityManager`, schedulers, `PersistenceProvider`). Optional deps mirror the opt-in configurations and may be absent; factories validate required fields at the boundary.
@@ -24,6 +25,7 @@ Runtime orchestration between the composition root and the domain modules: seria
 - `ensureScheduledTask` replaced five verbatim copies of the query-or-schedule pattern (rule of three); call sites keep their exact log lines
 - Registration asymmetry is intentional: only the system scheduler's activity dispatch suppresses `SUPPRESS_DURING_SLEEP` tasks during sleep; the agent scheduler's dispatch queues them for the wake drain
 - The system handler's IIFE `.catch` (`system scheduler onDue error:`) is the only behavior change of the extraction — previously a trace-query or processEvent failure surfaced an unhandled rejection, which Bun treats as fatal
+- No drain-vs-drain lock: the external-event drain and the scheduler-event drain both dispatch into the same main agent, whose FIFO ingress serializes `processMessage` per conversation, so concurrent drains cannot interleave turns; a dedicated cross-drain lock was re-examined and deliberately not added
 
 ## Invariants
 - Handler registration completes before `scheduler.start()`; activity and archivist tasks register after start, archivist before activity

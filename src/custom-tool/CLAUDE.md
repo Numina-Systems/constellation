@@ -1,6 +1,6 @@
 # Custom tool
 
-Last verified: 2026-09-27
+Last verified: 2026-09-28
 
 ## Purpose
 
@@ -15,7 +15,7 @@ Creates, validates, persists, publishes, and executes owner-scoped custom tools 
   - Create/update/delete mutations serialize per manager, reserve names before publication, and publish validated executable definitions only after confirmed/reconciled commit. Every mutation has an operation receipt.
   - Confirmed rollback preserves the prior callable definition. Commit-unknown or post-commit publication failure quarantines the affected name and blocks dispatch until trusted `loadAll()` recovery. The code does not treat a thrown commit acknowledgement as proof of rollback.
   - `loadAll()` leaves malformed persisted rows intact, reports bounded quarantine reasons/counts, skips invalid rows, and continues loading valid tools. It skips built-in name conflicts without rewriting storage.
-  - Handlers inject `PARAMS`, resolve secrets through `SecretResolver`, and pass execution options to `CodeRuntime`; a `cancelled`/`outcome_unknown` runtime execution surfaces as typed `runtime_outcome`/`unresolved_call_ids` on the `ToolResult` (fail-closed uncertainty, not an ordinary error) so the agent can latch unresolved effects from any tool. Runtime unknown effects are not retried automatically.
+  - Handlers inject `PARAMS`, resolve only the stored secrets explicitly referenced in the tool's code (store keys word-boundary-matched against the code; the composition root may inject an equivalent `resolveSecretsForCode` override) — never the whole secret store — and pass execution options to `CodeRuntime`; a `cancelled`/`outcome_unknown` runtime execution surfaces as typed `runtime_outcome`/`unresolved_call_ids` on the `ToolResult` (fail-closed uncertainty, not an ordinary error) so the agent can latch unresolved effects from any tool. Runtime unknown effects are not retried automatically.
 - **Expects**: migrated `custom_tools` persistence, `ToolRegistry`, `CodeRuntime`, `SecretResolver`, and an owner.
 
 ## Dependencies

@@ -21,7 +21,7 @@ export function loadConfig(configPath?: string): AppConfig {
   const envKeyName = modelProvider ? providerEnvKeys[modelProvider] : undefined;
   const modelEnvKey = envKeyName ? process.env[envKeyName] : undefined;
 
-  if (modelEnvKey) {
+  if (modelEnvKey?.trim()) {
     modelObj["api_key"] = modelEnvKey;
     envOverrides["model"] = modelObj;
   }
@@ -31,15 +31,16 @@ export function loadConfig(configPath?: string): AppConfig {
     const summProvider = summObj["provider"] as string | undefined;
     const summEnvKeyName = summProvider ? providerEnvKeys[summProvider] : undefined;
     const summEnvKey = summEnvKeyName ? process.env[summEnvKeyName] : undefined;
-    if (summEnvKey && !summObj["api_key"]) {
+    if (summEnvKey?.trim()) {
       summObj["api_key"] = summEnvKey;
       envOverrides["summarization"] = summObj;
     }
   }
 
-  if (process.env["EMBEDDING_API_KEY"]) {
+  const embeddingEnvKey = process.env["EMBEDDING_API_KEY"];
+  if (embeddingEnvKey?.trim()) {
     const embeddingObj = (parsed["embedding"] as Record<string, unknown>) ?? {};
-    embeddingObj["api_key"] = process.env["EMBEDDING_API_KEY"] ?? embeddingObj["api_key"];
+    embeddingObj["api_key"] = embeddingEnvKey;
     envOverrides["embedding"] = embeddingObj;
   }
 
@@ -54,21 +55,24 @@ export function loadConfig(configPath?: string): AppConfig {
     envOverrides["bluesky"] = blueskyObj;
   }
 
-  if (parsed["web"] && (process.env["BRAVE_API_KEY"] || process.env["TAVILY_API_KEY"])) {
+  const braveEnvKey = process.env["BRAVE_API_KEY"];
+  const tavilyEnvKey = process.env["TAVILY_API_KEY"];
+  if (parsed["web"] && (braveEnvKey?.trim() || tavilyEnvKey?.trim())) {
     const webObj = parsed["web"] as Record<string, unknown>;
-    if (process.env["BRAVE_API_KEY"]) {
-      webObj["brave_api_key"] = process.env["BRAVE_API_KEY"];
+    if (braveEnvKey?.trim()) {
+      webObj["brave_api_key"] = braveEnvKey;
     }
-    if (process.env["TAVILY_API_KEY"]) {
-      webObj["tavily_api_key"] = process.env["TAVILY_API_KEY"];
+    if (tavilyEnvKey?.trim()) {
+      webObj["tavily_api_key"] = tavilyEnvKey;
     }
     envOverrides["web"] = webObj;
   }
 
-  if (parsed["email"] && (process.env["MAILGUN_API_KEY"] || process.env["MAILGUN_DOMAIN"])) {
+  const mailgunEnvKey = process.env["MAILGUN_API_KEY"];
+  if (parsed["email"] && (mailgunEnvKey?.trim() || process.env["MAILGUN_DOMAIN"])) {
     const emailObj = parsed["email"] as Record<string, unknown>;
-    if (process.env["MAILGUN_API_KEY"]) {
-      emailObj["mailgun_api_key"] = process.env["MAILGUN_API_KEY"];
+    if (mailgunEnvKey?.trim()) {
+      emailObj["mailgun_api_key"] = mailgunEnvKey;
     }
     if (process.env["MAILGUN_DOMAIN"]) {
       emailObj["mailgun_domain"] = process.env["MAILGUN_DOMAIN"];

@@ -1123,6 +1123,16 @@ describe('composition root wiring: structural verification (AC2.2)', () => {
     expect(subconsciousBlock).not.toContain('integrityLifecycle');
   });
 
+  it('staggers the two composition-root scheduler poll offsets', async () => {
+    const {readFileSync} = await import('fs');
+    const {dirname, join} = await import('path');
+    const {fileURLToPath} = await import('url');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'index.ts'), 'utf-8');
+
+    expect(source).toContain("createPostgresScheduler(persistence, AGENT_OWNER, {pollOffsetMs: 0})");
+    expect(source).toContain("createPostgresScheduler(persistence, 'system', {pollOffsetMs: 15000})");
+  });
+
   it('processEventQueue is called with single main agent for external events', () => {
     // Structural/smoke check: Verify the function is exported and designed for unified queue.
     // This is a thin assertion but confirms export exists in the composition root.

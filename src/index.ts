@@ -1486,8 +1486,8 @@ Report a brief summary of actions taken.`],
   }
 
   // Set up scheduler for periodic tasks
-  const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER);
-  const systemScheduler = createPostgresScheduler(persistence, 'system');
+  const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER, {pollOffsetMs: 0});
+  const systemScheduler = createPostgresScheduler(persistence, 'system', {pollOffsetMs: 15000});
 
   // Register scheduling tools
   const schedulingTools = createSchedulingTools({

@@ -16,6 +16,7 @@ import { createCacheDiagnostics, serializeTools } from './cache-diagnostics.ts';
 import { formatSkillsSection } from '../skill/context.ts';
 import { performRecall } from '../recall/index.js';
 import { isConstellationError, wrapError } from '@/errors/index.js';
+import { ModelError } from '@/errors/model.js';
 import { traceError } from '@/errors/trace.js';
 import { stripQuotedContent } from '@/loop-detection/strip-quotes.js';
 import { AgentError } from '@/errors/agent.js';
@@ -23,7 +24,7 @@ import { buildRequestBudget, resolveContextWindow } from '@/model/budget.ts';
 import { groupExchanges, shapeExchanges } from '@/model/exchange.ts';
 import type { Message as ModelMessage } from '@/model/types.ts';
 import type { Agent, AgentDependencies, ConversationMessage, ExternalEvent, ClassifiedProvider, CheckpointState } from './types.ts';
-import type { TextBlock, ToolUseBlock } from '../model/types.ts';
+import type { ModelResponse, TextBlock, ToolUseBlock } from '../model/types.ts';
 import type { RecallResult } from '../recall/index.js';
 import type { MemoryManager } from '../memory/manager.ts';
 
@@ -374,6 +375,21 @@ export function createAgent(
     let cachedRecallResult: RecallResult | null = null;
     let recallExecuted = false;
 
+    // Skills state — cache result across tool rounds
+    let skillsRetrieved = false;
+
+    // One recovery attempt per turn when the provider reports the request can
+    // never fit (context window or rate-limit input budget). Compaction is
+    // normally triggered by the context budget check above, but a rate-limit
+    // input cap below that threshold surfaces here first.
+    let overflowRecoveryAttempted = false;
+
+    // Per-turn flag: compose snapshot at most once per turn, only when the last
+    // message can carry the attachment. Provider changes that occur later in the
+    // turn (e.g., during tool rounds) are delivered next turn. Also prevents
+    // double-wrapping on overflow-recovery retry.
+    let snapshotComposed = false;
+
     while (roundCount < maxRounds) {
       roundCount++;
 
@@ -413,41 +429,23 @@ export function createAgent(
           }
         }
         deps.recallContextState.setResult(cachedRecallResult);
-        // Rebuild system prompt with recall context now set
-        systemPrompt = await buildSystemPrompt(deps.memory);
-        // Re-append diary after recall rebuilds system prompt (diary is session-static, not included in buildSystemPrompt)
-        if (deps.diarySection) {
-          systemPrompt += '\n\n' + deps.diarySection;
-        }
       } else if (recallExecuted && deps.recallContextState) {
         // Subsequent rounds: result already cached, just ensure state is set
         deps.recallContextState.setResult(cachedRecallResult);
       }
 
-      // Retrieve and append relevant skills
-      // KNOWN LIMITATION: Skills currently mutate systemPrompt directly rather than routing through
-      // the snapshot pipeline like other dynamic providers (recall, prediction, activity, etc).
-      // Future improvement: Create a SkillsContextState holder (similar to RecallContextState) that
-      // stores skill content and registers as a dynamic provider in classifiedProviders. This would
-      // allow skill injection to be cached and versioned in snapshots. Requires:
-      // 1. New SkillsContextState type with setContent/getContent methods
-      // 2. Creating the holder before agent loop (in index.ts composition root)
-      // 3. Passing it as AgentDependencies.skillsContextState
-      // 4. Calling setContent after getRelevant() here, then removing this direct mutation
-      // For now, this approach works but prevents skills from being routed through snapshot caching.
-      if (deps.skills) {
+      // Retrieve relevant skills once per turn; delivered via the snapshot pipeline
+      if (!skillsRetrieved && deps.skills && deps.skillsContextState) {
+        skillsRetrieved = true;
         try {
           const maxSkills = deps.config.max_skills_per_turn ?? 3;
           const threshold = deps.config.skill_threshold ?? 0.3;
           const relevantSkills = await deps.skills.getRelevant(userMessage, maxSkills, threshold);
-          const skillSection = formatSkillsSection(relevantSkills);
-          if (skillSection) {
-            systemPrompt += '\n\n' + skillSection;
-          }
+          deps.skillsContextState.setSection(formatSkillsSection(relevantSkills));
         } catch (error) {
+          deps.skillsContextState.setSection(undefined);
           const errorMsg = error instanceof Error ? error.message : String(error);
           console.warn(`failed to retrieve relevant skills: ${errorMsg}`);
-
           if (deps.traceRecorder) {
             const structured = isConstellationError(error)
               ? error
@@ -457,7 +455,7 @@ export function createAgent(
         }
       }
 
-      const builtContext = await buildMessagesWithCurrent(history, deps.memory, currentUserMessageId);
+      const builtContext = await buildMessagesWithCurrent(history, currentUserMessageId);
       const messages = builtContext.messages;
 
       // Validate and shape every provider-visible exchange. The current user is
@@ -482,15 +480,34 @@ export function createAgent(
         finalMessages = shaped.flatMap((exchange) => exchange.messages);
       }
 
-      // Compute snapshot — first round forces full, subsequent rounds detect delta/noop
-      const isFirstRound = roundCount === 1;
-      const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, isFirstRound);
+      // Refresh working memory holder before snapshot composition
+      if (deps.workingMemoryContextState) {
+        deps.workingMemoryContextState.setBlocks(await deps.memory.getWorkingBlocks());
+      }
 
-      // Build final user message with snapshot composition
+      // Compose snapshot onto the latest user message — at most once per turn,
+      // and only when the last message can carry the attachment. Provider hashes
+      // are consumed only here, so changes during tool rounds surface next turn.
       const lastMessage = finalMessages[finalMessages.length - 1];
-      if (lastMessage && lastMessage.role === 'user' && typeof lastMessage.content === 'string') {
+      if (
+        !snapshotComposed &&
+        lastMessage &&
+        lastMessage.role === 'user' &&
+        typeof lastMessage.content === 'string'
+      ) {
+        snapshotComposed = true;
+        const isFirstRound = roundCount === 1;
+        const snapshotResult = snapshotState.computeSnapshot(dynamicProviders, isFirstRound);
         const composedUserMessage = buildUserMessage(lastMessage.content, snapshotResult);
-        finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
+        if (composedUserMessage.content !== lastMessage.content) {
+          finalMessages = [...finalMessages.slice(0, -1), composedUserMessage];
+          const composedContent = composedUserMessage.content as string;
+          await updateMessageContent(currentUserMessageId, composedContent);
+          const historyEntry = history.find((m) => m.id === currentUserMessageId);
+          if (historyEntry) {
+            historyEntry.content = composedContent;
+          }
+        }
       }
 
       const finalGrouped = groupExchanges(finalMessages, finalMessages.length > 0 ? finalMessages[finalMessages.length - 1] ?? null : null);
@@ -530,6 +547,7 @@ export function createAgent(
             // provider inference; the compactor keeps its own timeout as the upper bound.
             const compactionResult = await deps.compactor.compress(history, id, {
               request: {signal: options?.signal, deadline: options?.deadline},
+              currentUserMessageId,
             });
             if (compactionResult.failed === true && compactionResult.failureCode === 'history_state_unknown') {
               // Commit truth is unknown or the durable replacement failed to publish.
@@ -683,7 +701,31 @@ export function createAgent(
         deadline: options?.deadline,
       };
 
-      const response = await deps.model.complete(modelRequest);
+      let response: ModelResponse;
+      try {
+        response = await deps.model.complete(modelRequest);
+      } catch (error) {
+        const compactor = deps.compactor;
+        if (
+          !compactor ||
+          overflowRecoveryAttempted ||
+          !(error instanceof ModelError) ||
+          error.code !== 'CONTEXT_OVERFLOW'
+        ) {
+          throw error;
+        }
+
+        overflowRecoveryAttempted = true;
+        console.warn('context overflow reported by model provider; scheduling durable compaction and retrying');
+
+        // Use the same admission path as requested/automatic compaction so overflow
+        // recovery gets its checkpoint, recovery latch, request lifetime, and durable
+        // archive/provenance publication semantics. No history is adopted here.
+        deferredCompactionPending = true;
+        compactionAdmittedAtBoundary = false;
+        roundCount--;
+        continue;
+      }
 
       // Post-response loop detection check
       if (deps.loopDetector) {
@@ -1312,6 +1354,17 @@ export function createAgent(
       return '';
     }
     return String(row['id']);
+  }
+
+  /**
+   * Update the content of an existing message.
+   * Used to persist composed user messages for byte-identical replay.
+   */
+  async function updateMessageContent(messageId: string, content: string): Promise<void> {
+    await deps.persistence.query('UPDATE messages SET content = $1 WHERE id = $2', [
+      content,
+      messageId,
+    ]);
   }
 
   /**

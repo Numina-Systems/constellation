@@ -33,7 +33,8 @@ function formatAttachment(content: string, mode: SnapshotMode): string {
  * returns a plain string message.
  *
  * If snapshot.mode is 'full' or 'delta' with non-null content,
- * returns a message with a content array: [attachment block, user message].
+ * returns a message with a single-string content: composed attachment + user text.
+ * This format is byte-identical and persistable without schema migration.
  *
  * @param text - The user's actual message text
  * @param snapshot - The snapshot result from the batch-anchored snapshot pipeline, or null
@@ -43,32 +44,32 @@ export function buildUserMessage(
   text: string,
   snapshot: SnapshotResult | null,
 ): Message {
-  // No snapshot, or noop, or no content: return plain string message
-  if (snapshot === null || snapshot.mode === 'noop' || snapshot.content === null) {
+  // No snapshot or no content: return plain string message
+  if (snapshot === null || snapshot.content === null) {
     return {
       role: 'user',
       content: text,
     };
   }
 
-  // Full or delta mode with content: build content array
-  if ((snapshot.mode === 'full' || snapshot.mode === 'delta') && snapshot.content !== null) {
-    const attachmentBlock = {
-      type: 'text' as const,
-      text: formatAttachment(snapshot.content, snapshot.mode),
-    };
+  // Exhaustive switch over snapshot mode with compile-time guarantees
+  switch (snapshot.mode) {
+    case 'noop':
+      return {
+        role: 'user',
+        content: text,
+      };
 
-    const userBlock = {
-      type: 'text' as const,
-      text: text,
-    };
+    case 'full':
+    case 'delta':
+      const composedContent = `${formatAttachment(snapshot.content, snapshot.mode)}\n\n${text}`;
+      return {
+        role: 'user',
+        content: composedContent,
+      };
 
-    return {
-      role: 'user',
-      content: [attachmentBlock, userBlock],
-    };
+    default:
+      const _exhaustive: never = snapshot.mode;
+      return _exhaustive;
   }
-
-  // Unreachable, but satisfy type system
-  throw new Error('Unreachable: snapshot mode/content combination not handled');
 }

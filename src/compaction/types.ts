@@ -122,6 +122,8 @@ export type CompactionRequestOptions = Readonly<{
 
 export type CompactionPreparationOptions = Readonly<{
   readonly request?: CompactionRequestOptions;
+  /** Active user message that must remain verbatim in the active projection. */
+  readonly currentUserMessageId?: string;
 }>;
 
 export type CompactorStatus = Readonly<{

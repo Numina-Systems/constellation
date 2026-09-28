@@ -6,6 +6,12 @@
  */
 
 import type { SkillDefinition } from './types.ts';
+import type { ContextProvider } from '@/agent/types.js';
+
+export type SkillsContextState = {
+  setSection(section: string | undefined): void;
+  getSection(): string | undefined;
+};
 
 /**
  * Format an array of skill definitions into a system prompt section.
@@ -26,4 +32,25 @@ export function formatSkillsSection(skills: ReadonlyArray<SkillDefinition>): str
   });
 
   return `## Active Skills\n\n${sections.join('\n\n---\n\n')}`;
+}
+
+/**
+ * Creates a context provider for per-turn skill sections.
+ * The provider returns undefined when no section is set, which signals
+ * the snapshot pipeline to omit the skills section entirely.
+ *
+ * @returns Context provider with setSection and getSection state methods
+ */
+export function createSkillsContextProvider(): ContextProvider & SkillsContextState {
+  let currentSection: string | undefined;
+
+  const provider = (() => currentSection) as ContextProvider & SkillsContextState;
+
+  provider.setSection = (section: string | undefined) => {
+    currentSection = section;
+  };
+
+  provider.getSection = () => currentSection;
+
+  return provider;
 }

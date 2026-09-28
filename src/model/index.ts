@@ -20,7 +20,12 @@ export type {
 } from "./types.js";
 
 export { ModelError, type ModelProvider } from "./types.js";
-export { createAnthropicAdapter } from "./anthropic.js";
+export {
+  createAnthropicAdapter,
+  buildAnthropicSystemParam,
+  applyCacheControlToLastBlock,
+  buildRequestParams,
+} from "./anthropic.js";
 export { createOpenAICompatAdapter } from "./openai-compat.js";
 export { createOllamaAdapter } from "./ollama.js";
 export { createOpenRouterAdapter } from "./openrouter.js";

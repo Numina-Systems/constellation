@@ -173,6 +173,8 @@ describe('Phase 3 fix-round lifecycle regressions', () => {
     const firstRequest = JSON.stringify(requests[0]);
     const secondRequest = JSON.stringify(requests[1]);
     expect(firstRequest).toContain('Dynamic Context');
-    expect(secondRequest).not.toContain('Dynamic Context');
+    // The composed input is persisted for byte-identical replay; failed compaction
+    // must not erase that attachment or publish a cache reset.
+    expect(secondRequest).toContain('Dynamic Context');
   });
 });

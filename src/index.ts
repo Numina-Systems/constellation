@@ -93,6 +93,8 @@ import { connectMcpServers, createMcpClient, createMcpInstructionsProvider, crea
 import type { McpClient } from '@/mcp';
 import type { McpToolRegistration } from '@/mcp/types.ts';
 import { createRecallContextProvider } from '@/recall/index.js';
+import { createSkillsContextProvider } from '@/skill/index.js';
+import { createWorkingMemoryContextProvider } from '@/memory/index.js';
 import { buildDiarySection } from '@/diary';
 import { createShellSession } from '@/shell/index';
 import { createShellExecuteTool } from '@/tool/builtin/shell-execute';
@@ -847,6 +849,12 @@ async function main(): Promise<void> {
   const recallContextProvider = createRecallContextProvider();
   const subconsciousRecallContextProvider = createRecallContextProvider();
 
+  // Create skills context provider
+  const skillsContextProvider = createSkillsContextProvider();
+
+  // Create working memory context provider
+  const workingMemoryContextProvider = createWorkingMemoryContextProvider();
+
   if (config.web) {
     const searchChain = createSearchChain(config.web);
     const fetcher = createFetcher({
@@ -1255,6 +1263,20 @@ async function main(): Promise<void> {
     classification: 'dynamic',
   });
 
+  // Skills context provider
+  classifiedProviders.push({
+    name: 'skills',
+    provider: skillsContextProvider,
+    classification: 'dynamic',
+  });
+
+  // Working memory context provider
+  classifiedProviders.push({
+    name: 'working-memory',
+    provider: workingMemoryContextProvider,
+    classification: 'dynamic',
+  });
+
   // Prediction context provider
   classifiedProviders.push({
     name: 'prediction',
@@ -1429,6 +1451,7 @@ async function main(): Promise<void> {
     ],
     classifiedProviders,
     skills: skillRegistry,
+    skillsContextState: skillsContextProvider,
     sourceInstructions: sourceInstructions.size > 0 ? sourceInstructions : undefined,
     recallContextState: config.agent.recall_enabled ? recallContextProvider : undefined,
     searchStore: searchStore,
@@ -1439,6 +1462,7 @@ async function main(): Promise<void> {
     integrityLifecycle,
     loopDetector,
     diarySection,
+    workingMemoryContextState: workingMemoryContextProvider,
   }, mainConversationId);
 
   // Create subconscious agent if enabled
@@ -1452,9 +1476,16 @@ async function main(): Promise<void> {
       ['subconscious:introspection', 'You are the subconscious mind reviewing your recent observations. Decide which are worth formalizing into tracked interests or curiosity threads, and write the rest into your digest for later reflection. Be selective — not every observation needs to become an interest.'],
     ]);
 
+    // Give the subconscious agent isolated mutable context holders so concurrent turns
+    // cannot overwrite the main agent's snapshot state.
+    const subconsciousSkillsContextProvider = createSkillsContextProvider();
+    const subconsciousWorkingMemoryContextProvider = createWorkingMemoryContextProvider();
+
     // Build classified providers for subconscious agent (subset of main agent)
     const subconsciousClassifiedProviders: Array<ClassifiedProvider> = [
       {name: 'recall', provider: subconsciousRecallContextProvider, classification: 'dynamic'},
+      {name: 'skills', provider: subconsciousSkillsContextProvider, classification: 'dynamic'},
+      {name: 'working-memory', provider: subconsciousWorkingMemoryContextProvider, classification: 'dynamic'},
       {name: 'prediction', provider: predictionContextProvider, classification: 'dynamic'},
       {name: 'introspection', provider: introspectionContextProvider, classification: 'dynamic'},
     ];
@@ -1482,6 +1513,8 @@ async function main(): Promise<void> {
       contextProviders: [...contextProviders, subconsciousRecallContextProvider, predictionContextProvider, introspectionContextProvider],
       classifiedProviders: subconsciousClassifiedProviders,
       skills: skillRegistry,
+      skillsContextState: subconsciousSkillsContextProvider,
+      workingMemoryContextState: subconsciousWorkingMemoryContextProvider,
       sourceInstructions: subconsciousSourceInstructions,
       recallContextState: config.agent.recall_enabled ? subconsciousRecallContextProvider : undefined,
       searchStore: searchStore,
@@ -1496,6 +1529,7 @@ async function main(): Promise<void> {
   let archivistAgent: Agent | null = null;
 
   if (archivistPipeline && config.archivist?.inner_conversation_id) {
+    const archivistWorkingMemoryContextProvider = createWorkingMemoryContextProvider();
     const archivistSourceInstructions = new Map<string, string>([
       ['sleep-task', `You are the archivist — a background knowledge maintenance agent.
 When you receive a sleep task event, run the full archivist pipeline to maintain knowledge health.
@@ -1515,7 +1549,10 @@ Report a brief summary of actions taken.`],
       owner: AGENT_OWNER,
       sourceInstructions: archivistSourceInstructions,
       contextProviders: [],
-      classifiedProviders: [],
+      classifiedProviders: [
+        {name: 'working-memory', provider: archivistWorkingMemoryContextProvider, classification: 'dynamic'},
+      ],
+      workingMemoryContextState: archivistWorkingMemoryContextProvider,
     }, config.archivist.inner_conversation_id);
 
     console.log('archivist sub-agent created');

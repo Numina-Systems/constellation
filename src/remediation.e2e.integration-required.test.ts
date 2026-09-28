@@ -98,6 +98,8 @@ async function runScenario(persistence: PersistenceProvider): Promise<{
 }> {
   const conversationId = `remediation-e2e-${crypto.randomUUID()}`;
   const historyStore = createConversationHistoryStore(persistence);
+  await historyStore.append({conversation_id: conversationId, role: 'user', content: 'older completed request', created_at: new Date(1)});
+  await historyStore.append({conversation_id: conversationId, role: 'assistant', content: 'older completed response', created_at: new Date(2)});
   const checkpointStore = createCheckpointStore(persistence);
   let firstCheckpoint: SessionCheckpointV2 | null = null;
   const checkpointFn: AgentDependencies['checkpointFn'] = async (trigger, state) => {

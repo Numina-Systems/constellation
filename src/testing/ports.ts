@@ -254,6 +254,12 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
     return [];
   }
 
+  if (/^SELECT\s+operation_id,\s*status,\s*details\s+FROM\s+operation_receipts\s+WHERE\s+operation_id\s*=\s*\$1/i.test(normalized)) {
+    const operationId = textParameter(params, 0);
+    return (rows.get('operation_receipts') ?? [])
+      .filter((row) => row['operation_id'] === operationId)
+      .map((row) => ({operation_id: row['operation_id'], status: row['status'], details: row['details']}));
+  }
   if (/^SELECT\s+details\s+FROM\s+operation_receipts\s+WHERE\s+operation_type\s*=\s*'agent_batch'/i.test(normalized)) {
     const conversationId = textParameter(params, 0);
     // Mirrors the production predicates: optional marker-kind filter and the
@@ -461,6 +467,15 @@ function applySql(rows: Map<string, Array<Row>>, sql: string, params: ReadonlyAr
       states.splice(index, 1, {...existing, revision});
     } else states.push({conversation_id: conversationId, revision});
     rows.set('conversation_history_state', states);
+    return [];
+  }
+  if (/^UPDATE messages SET content = \$1 WHERE id = \$2$/i.test(normalized)) {
+    const content = textParameter(params, 0);
+    const messageId = textParameter(params, 1);
+    const messages = rows.get('messages') ?? [];
+    const message = messages.find((row) => row['id'] === messageId);
+    if (message) messages.splice(messages.indexOf(message), 1, {...message, content});
+    rows.set('messages', messages);
     return [];
   }
   if (/^UPDATE conversation_history_state/i.test(normalized)) {

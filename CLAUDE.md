@@ -1,6 +1,6 @@
 # Constellation
 
-Last verified: 2026-05-17
+Last verified: 2026-07-03
 
 Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, and sandboxed code execution. Built on a Functional Core / Imperative Shell architecture with hexagonal port/adapter boundaries.
 
@@ -27,7 +27,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/errors/` -- Structured error hierarchy (ConstellationError base, subsystem errors, trace integration, utilities)
 - `src/config/` -- TOML config loading, Zod schemas
 - `src/persistence/` -- PostgreSQL adapter, migrations, MessageStore, transparent nested transactions (AsyncLocalStorage), checkpoint store
-- `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama, OpenRouter)
+- `src/model/` -- LLM provider port (Anthropic, OpenAI-compat, Ollama, OpenRouter); Anthropic adapter places ephemeral cache_control breakpoints for prompt caching
 - `src/embedding/` -- Embedding provider port (OpenAI, Ollama)
 - `src/memory/` -- Three-tier memory system (core/working/archival)
 - `src/search/` -- Hybrid search (semantic + keyword + RRF) across memory and conversations
@@ -38,7 +38,7 @@ Stateful AI agent daemon ("Machine Spirit") with persistent memory, tool use, an
 - `src/rate-limit/` -- Client-side token bucket rate limiter for model providers
 - `src/skill/` -- Embedding-based skill retrieval (YAML frontmatter parsing, change detection, semantic search)
 - `src/loop-detection/` -- Output loop circuit breaker (bigram-based Jaccard similarity over sliding window, configurable actions: warn/redirect/halt)
-- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, context providers, per-turn skill injection, per-turn trace recording, session checkpointing, output loop detection, checkpoint restore
+- `src/agent/` -- Agent loop, context building, compression, batch-anchored snapshots, cache-bust diagnostics, dynamic context delivery via snapshot pipeline (skills and working memory attached to the user message, not rebuilt into the system prompt), per-turn trace recording, session checkpointing, output loop detection, checkpoint restore
 - `src/compaction/` -- Context compression pipeline (summarize, archive, clip-archive)
 - `src/reflexion/` -- Prediction journaling, operation tracing, introspection tools, context provider
 - `src/recall/` -- Reflexive recall pipeline (query decomposition, multi-domain retrieval, context injection)

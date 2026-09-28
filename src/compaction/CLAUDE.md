@@ -1,6 +1,6 @@
 # Compaction
 
-Last verified: 2026-09-09
+Last verified: 2026-09-27
 
 ## Purpose
 
@@ -13,6 +13,7 @@ Prepares bounded summaries from complete conversation exchanges and publishes th
   - Durable compaction is read/prepare -> model summarize -> one history-store commit. A durable `historyStore` is required; no-store legacy destructive compaction is not an active path.
   - Empty, whitespace-only, and non-text-only summaries return typed `summary_empty` and cannot commit. Unfittable required context returns `unfittable` before that provider call. Recursive summaries use the same fit/deadline/retry contract.
   - Complete assistant tool-call/result exchanges remain intact and chronological. Projection carries bounded IDs, names, arguments, statuses, timestamps, omission markers, and provenance. Metadata spans use actual timestamp extrema.
+  - Durable preparation accepts `CompactionPreparationOptions` carrying `currentUserMessageId`; grouping marks that group as current, selection protects the current group and the entire following chronological suffix from summarization, and an absent mandatory current message fails closed as `history_stale_membership` with the intervention latch.
   - Initial and recursive work share one operation deadline. `compaction_timeout` defaults to 120000 ms and `compaction_max_retries` defaults to 2 (at most three attempts per unit). `max_chunk_tokens` is an optional soft payload cap.
   - Compaction commits archive blocks, summary, active membership, provenance, receipt, and revision atomically. Originals and recursive source archives remain retained; recursive replacement records supersession lineage.
   - Commit ambiguity returns `history_state_unknown`; stale membership/revision and intervention faults remain typed and can latch intervention-required state. No in-memory/cache publication occurs before durable success.

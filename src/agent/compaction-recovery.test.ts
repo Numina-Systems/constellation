@@ -1,8 +1,10 @@
 // pattern: Imperative Shell
 import {describe, expect, it} from 'bun:test';
+import {ModelError} from '@/errors/model.ts';
 import {createAgent} from './agent.ts';
 import {createIntegrityLifecycle} from './integrity-lifecycle.ts';
 import {createConversationHistoryStore} from '@/persistence/conversation-history-store.ts';
+import {createCompactor} from '@/compaction/compactor.ts';
 import {createInMemoryPersistence} from '@/testing/ports.ts';
 import type {AgentDependencies, ConversationMessage} from './types.ts';
 import type {ModelProvider, ModelRequest, ModelResponse} from '@/model/types.ts';
@@ -129,6 +131,121 @@ describe('Agent compaction ambiguity and cancellation propagation', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.request?.signal).toBe(controller.signal);
     expect(calls[0]?.request?.deadline).toBe(deadline);
+  });
+});
+
+describe('Overflow-triggered durable compaction', () => {
+  it('overflow ambiguity latches recovery and blocks later execution', async () => {
+    const persistence = createInMemoryPersistence();
+    const lifecycle = createIntegrityLifecycle(persistence, 'conv-overflow-ambiguous');
+    let modelCalls = 0;
+    const model: ModelProvider = {
+      complete: async () => {
+        modelCalls += 1;
+        throw new ModelError('CONTEXT_OVERFLOW', 'request is too large', false);
+      },
+      async *stream() {},
+    };
+    const compactor = recordingCompactor({
+      history: [], batchesCreated: 0, messagesCompressed: 0, tokensEstimateBefore: 10, tokensEstimateAfter: 10,
+      failed: true, failureCode: 'history_state_unknown', operationId: 'overflow-operation', recoveryNote: 'unknown commit',
+    });
+    const agent = createAgent(deps({conversationId: 'conv-overflow-ambiguous', persistence, integrityLifecycle: lifecycle, model, compactor, config: normalConfig}), 'conv-overflow-ambiguous');
+
+    await expect(agent.processMessage('hello')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    expect(modelCalls).toBe(1);
+    await expect(lifecycle.getRecoveryState()).resolves.toMatchObject({required: true});
+    await expect(agent.processMessage('blocked')).rejects.toMatchObject({code: 'RECOVERY_REQUIRED'});
+    expect(modelCalls).toBe(1);
+  });
+
+  it('overflow after multiple tool batches compacts only older history and retries with the current request and snapshot', async () => {
+    const persistence = createInMemoryPersistence();
+    const historyStore = createConversationHistoryStore(persistence);
+    const conversationId = 'conv-overflow-current-user';
+    await historyStore.append({id: 'old-user', conversation_id: conversationId, role: 'user', content: 'older request', created_at: new Date(1)});
+    await historyStore.append({id: 'old-assistant', conversation_id: conversationId, role: 'assistant', content: 'older response', created_at: new Date(2)});
+    const summaryRequests: Array<ModelRequest> = [];
+    const compactor = createCompactor({
+      model: {complete: async (request) => { summaryRequests.push(request); return text('older history summary'); }, async *stream() {}},
+      memory: memory(), persistence, historyStore,
+      config: {chunkSize: 2, keepRecent: 2, maxSummaryTokens: 128, clipFirst: 0, clipLast: 0, prompt: null, maxRetries: 0},
+      modelName: 'fake-summary',
+    });
+    const registry = createToolRegistry();
+    for (const name of ['first_tool', 'second_tool']) {
+      registry.register({definition: {name, description: name, parameters: []}, handler: async () => ({success: true, output: `${name} complete`})});
+    }
+    const providerRequests: Array<ModelRequest> = [];
+    const inputSentinel = 'Keep this exact request: user-input-17';
+    const snapshotSentinel = 'snapshot: provider-state-42';
+    let modelCalls = 0;
+    const model: ModelProvider = {
+      complete: async (request) => {
+        providerRequests.push(request);
+        modelCalls += 1;
+        if (modelCalls === 1) return toolUse({id: 'batch-one', name: 'first_tool'});
+        if (modelCalls === 2) return toolUse({id: 'batch-two', name: 'second_tool'});
+        if (modelCalls === 3) throw new ModelError('CONTEXT_OVERFLOW', 'request is too large', false);
+        return text('recovered after overflow');
+      },
+      async *stream() {},
+    };
+    const agent = createAgent(deps({
+      conversationId, persistence, historyStore, model, compactor, registry, config: normalConfig,
+      classifiedProviders: [{name: 'live-state', classification: 'dynamic', provider: () => snapshotSentinel}],
+    }), conversationId);
+
+    await expect(agent.processMessage(inputSentinel)).resolves.toBe('recovered after overflow');
+
+    const active = await historyStore.readActive(conversationId);
+    expect(modelCalls).toBe(4);
+    expect(summaryRequests.length).toBeGreaterThan(0);
+    expect(summaryRequests[0]?.messages.some((message) => typeof message.content === 'string' && message.content.includes('older request'))).toBe(true);
+    expect(active.messages.some((message) => message.id === 'old-user')).toBe(false);
+    const overflowMessages = providerRequests[2]?.messages ?? [];
+    const overflowCurrentUser = overflowMessages.find((message) => message.role === 'user' && typeof message.content === 'string' && message.content.includes(inputSentinel));
+    expect(overflowCurrentUser).toBeDefined();
+    expect(overflowCurrentUser?.content).toContain(snapshotSentinel);
+    const currentUser = active.messages.find((message) => message.role === 'user' && message.content.includes(inputSentinel));
+    if (typeof currentUser?.content !== 'string' || typeof overflowCurrentUser?.content !== 'string') {
+      throw new Error('expected persisted user content and overflow request content to be strings');
+    }
+    expect(currentUser.content).toBe(overflowCurrentUser.content);
+    const retryMessages = providerRequests[3]?.messages ?? [];
+    const retryCurrentUser = retryMessages.find((message) => message.role === 'user' && typeof message.content === 'string' && message.content.includes(inputSentinel));
+    expect(retryCurrentUser?.content).toContain(snapshotSentinel);
+    expect(retryCurrentUser?.content).toEqual(overflowCurrentUser?.content);
+    expect(retryMessages.some((message) => message.role === 'user' && typeof message.content === 'string' && message.content.includes('[Context Summary'))).toBe(true);
+  });
+
+  it('overflow compaction forwards turn lifetime and publishes committed archive provenance', async () => {
+    const calls: Array<CompactionPreparationOptions | undefined> = [];
+    const compactor = recordingCompactor({
+      history: [], batchesCreated: 1, messagesCompressed: 2, tokensEstimateBefore: 100, tokensEstimateAfter: 10,
+      archiveIds: ['archive-overflow'], provenanceRefs: ['provenance-overflow'], operationId: 'overflow-commit',
+    }, calls);
+    const checkpointFn: NonNullable<AgentDependencies['checkpointFn']> = async () => null;
+    let modelCalls = 0;
+    const model: ModelProvider = {
+      complete: async () => {
+        modelCalls += 1;
+        if (modelCalls === 1) throw new ModelError('CONTEXT_OVERFLOW', 'request is too large', false);
+        return text('recovered');
+      },
+      async *stream() {},
+    };
+    const agent = createAgent(deps({conversationId: 'conv-overflow-commit', model, compactor, checkpointFn, config: normalConfig}), 'conv-overflow-commit');
+    const controller = new AbortController();
+    const deadline = Date.now() + 60_000;
+
+    await expect(agent.processMessage('hello', {signal: controller.signal, deadline})).resolves.toBe('recovered');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.request?.signal).toBe(controller.signal);
+    expect(calls[0]?.request?.deadline).toBe(deadline);
+    expect(agent.getCheckpointState()?.activeArchiveIds).toEqual(['archive-overflow']);
+    expect(agent.getCheckpointState()?.provenanceRefs).toEqual(['provenance-overflow']);
   });
 });
 

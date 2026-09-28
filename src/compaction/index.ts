@@ -16,7 +16,6 @@ export { groupConversationExchanges, orderSelectedGroups, projectExchangeGroup, 
 export { DEFAULT_SCORING_CONFIG } from './types.js';
 export type { BuildSummarizationRequestOptions, BuildResummarizationRequestOptions } from './prompt.js';
 export { DEFAULT_SYSTEM_PROMPT, DEFAULT_DIRECTIVE, buildSummarizationRequest, buildResummarizationRequest } from './prompt.js';
-export { scoreMessage } from './scoring.js';
 export type { CreateCompactorOptions } from './compactor.js';
 export { createCompactor, chunkMessagesByTokenBudget, computeSummarizationOverhead } from './compactor.js';
 export type { DurableCompactorOptions } from './durable.js';

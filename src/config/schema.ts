@@ -2,6 +2,39 @@
 import { z } from "zod";
 import { Cron } from "croner";
 import { McpConfigSchema } from "@/mcp/schema.ts";
+import { DEFAULT_MIN_OUTPUT_RESERVE } from "@/rate-limit/types.ts";
+
+// A request reserving more output tokens than the per-minute budget can never
+// clear the bucket, so every request would be rejected at runtime; catch that
+// at load time instead. The rate limiter is only constructed when all three
+// limits are set (mirrors hasRateLimitConfig in src/rate-limit/context.ts), so
+// partial configurations are ignored rather than rejected.
+function refineRateLimitFeasibility(
+  data: {
+    requests_per_minute?: number;
+    input_tokens_per_minute?: number;
+    output_tokens_per_minute?: number;
+    min_output_reserve?: number;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (
+    data.requests_per_minute === undefined ||
+    data.input_tokens_per_minute === undefined ||
+    data.output_tokens_per_minute === undefined
+  ) {
+    return;
+  }
+
+  const reserve = data.min_output_reserve ?? DEFAULT_MIN_OUTPUT_RESERVE;
+  if (reserve > data.output_tokens_per_minute) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `min_output_reserve (${reserve}) must not exceed output_tokens_per_minute (${data.output_tokens_per_minute}); the rate limiter would reject every request`,
+      path: ["min_output_reserve"],
+    });
+  }
+}
 
 const AgentConfigSchema = z.object({
   max_tool_rounds: z.number().int().positive().default(20),
@@ -42,7 +75,7 @@ const ModelConfigSchema = z.object({
   openrouter: OpenRouterConfigSchema.optional(),
   context_window: z.number().int().positive().optional(),
   stream_usage: z.boolean().optional(),
-});
+}).superRefine(refineRateLimitFeasibility);
 
 const EmbeddingConfigSchema = z.object({
   provider: z.enum(["openai", "ollama"]),
@@ -108,7 +141,7 @@ const SummarizationConfigSchema = z.object({
   clip_last: z.number().int().nonnegative().default(2),
   prompt: z.string().optional(),
 
-  // Importance scoring weights
+  // Importance scoring weights retained for the durable compaction selector.
   role_weight_system: z.number().nonnegative().default(10.0),
   role_weight_user: z.number().nonnegative().default(5.0),
   role_weight_assistant: z.number().nonnegative().default(3.0),
@@ -117,14 +150,7 @@ const SummarizationConfigSchema = z.object({
   tool_call_bonus: z.number().nonnegative().default(4.0),
   keyword_bonus: z.number().nonnegative().default(1.5),
   important_keywords: z.array(z.string()).default([
-    "error",
-    "fail",
-    "bug",
-    "fix",
-    "decision",
-    "agreed",
-    "constraint",
-    "requirement",
+    "error", "fail", "bug", "fix", "decision", "agreed", "constraint", "requirement",
   ]),
   content_length_weight: z.number().nonnegative().default(1.0),
   compaction_timeout: z.number().int().positive().default(120000),
@@ -134,7 +160,7 @@ const SummarizationConfigSchema = z.object({
   cooldown_ms: z.number().int().nonnegative().default(60000),
   context_window: z.number().int().positive().optional(),
   safety_margin: z.number().int().nonnegative().optional(),
-});
+}).superRefine(refineRateLimitFeasibility);
 
 const WebConfigSchema = z.object({
   brave_api_key: z.string().optional(),

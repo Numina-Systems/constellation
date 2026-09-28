@@ -35,21 +35,27 @@ export function serializeTools(
   return JSON.stringify(sorted);
 }
 
+/**
+ * Computes hashes for the full message list.
+ * All messages (including the last) are hashed for bust detection.
+ * The previous request's full message list must be a byte-identical prefix
+ * of the current request's message list for the request to be cache-safe.
+ */
 function computeMessagePrefixState(
   messages: ReadonlyArray<unknown>,
 ): MessagePrefixState {
   if (messages.length === 0) {
     return {
       messageHashes: [],
-      prefixLength: 0,
+      messageCount: 0,
       totalSize: 0,
     };
   }
 
-  const prefixLength = messages.length - 1;
-  const prefixMessages = Array.from(messages).slice(0, prefixLength);
+  const messageCount = messages.length;
+  const allMessages = Array.from(messages);
 
-  const serializedMessages = prefixMessages.map(msg => JSON.stringify(msg));
+  const serializedMessages = allMessages.map(msg => JSON.stringify(msg));
 
   const messageHashes = serializedMessages.map(serialized =>
     BigInt(Bun.hash(serialized)),
@@ -61,7 +67,7 @@ function computeMessagePrefixState(
 
   return {
     messageHashes,
-    prefixLength,
+    messageCount,
     totalSize,
   };
 }
@@ -102,7 +108,7 @@ type DimensionSnapshot = {
 
 type MessagePrefixState = {
   readonly messageHashes: ReadonlyArray<bigint>;
-  readonly prefixLength: number;
+  readonly messageCount: number;
   readonly totalSize: number;
 };
 
@@ -192,20 +198,17 @@ export function createCacheDiagnostics(): CacheDiagnostics {
       }
 
       // Check message_prefix dimension
+      // Previous request's full message list must be a hash-prefix of current request's list.
       if (previousPrefixState) {
-        const overlapLength = Math.min(
-          previousPrefixState.prefixLength,
-          currentPrefixState.prefixLength,
-        );
-
         let prefixChanged = false;
 
-        // Check if prefix shrunk (messages deleted)
-        if (currentPrefixState.prefixLength < previousPrefixState.prefixLength) {
+        // Check if message list shrunk (deletion of previously-sent messages)
+        if (currentPrefixState.messageCount < previousPrefixState.messageCount) {
           prefixChanged = true;
         } else {
-          // Check if any overlapping message hashes differ (edited or reordered)
-          for (let i = 0; i < overlapLength; i++) {
+          // Check if any of the previous messages' hashes differ
+          // (indicates edit, reorder, or rewrite of a previously-sent message)
+          for (let i = 0; i < previousPrefixState.messageCount; i++) {
             if (
               previousPrefixState.messageHashes[i] !== currentPrefixState.messageHashes[i]
             ) {

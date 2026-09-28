@@ -222,8 +222,9 @@ export async function runDurableCompaction(
     const active = await options.historyStore.readActive(conversationId);
     if (active.revision < 0) throw new Error('invalid active history revision');
     const sourceMessages = await options.historyStore.enumerateCompactionSources(conversationId, Math.max(history.length, options.config.keepRecent + 1));
-    const grouped = groupConversationExchanges(sourceMessages);
-    if (grouped.error) {
+    const currentUserMessageId = preparation?.currentUserMessageId ?? null;
+    const grouped = groupConversationExchanges(sourceMessages, currentUserMessageId);
+    if (grouped.error || (currentUserMessageId !== null && !grouped.groups.some((group) => group.isCurrent))) {
       settleFailure('intervention');
       return failure(history, 'history_stale_membership', operationId);
     }

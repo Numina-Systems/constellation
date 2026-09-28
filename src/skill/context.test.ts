@@ -1,7 +1,7 @@
 // pattern: Functional Core
 
 import { describe, it, expect } from 'bun:test';
-import { formatSkillsSection } from './context.ts';
+import { formatSkillsSection, createSkillsContextProvider } from './context.ts';
 import { createTestSkill, createTestSkillWithCompanions } from './test-helpers.ts';
 import type { SkillRegistry } from './types.ts';
 
@@ -235,6 +235,61 @@ describe('Skill injection pipeline', () => {
 
       expect(result).toBe(basePrompt);
       expect(result).not.toContain('## Active Skills');
+    });
+  });
+});
+
+describe('createSkillsContextProvider', () => {
+  describe('provider returns undefined when unset', () => {
+    it('should return undefined before any setSection call', () => {
+      const provider = createSkillsContextProvider();
+      const result = provider();
+
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('provider returns section string when set', () => {
+    it('should return the exact string set by setSection', () => {
+      const provider = createSkillsContextProvider();
+      const testSection = '## Active Skills\n\n### test-skill\n\nThis is a test skill.';
+
+      provider.setSection(testSection);
+      const result = provider();
+
+      expect(result).toBe(testSection);
+    });
+  });
+
+  describe('provider clears when set to undefined', () => {
+    it('should return undefined after setSection is called with undefined', () => {
+      const provider = createSkillsContextProvider();
+      const testSection = '## Active Skills\n\n### test-skill\n\nContent.';
+
+      provider.setSection(testSection);
+      expect(provider()).toBe(testSection);
+
+      provider.setSection(undefined);
+      expect(provider()).toBeUndefined();
+    });
+  });
+
+  describe('SkillsContextState getter contract', () => {
+    it('should support getSection() method', () => {
+      const provider = createSkillsContextProvider();
+      const testSection = '## Active Skills\n\n### skill\n\nBody';
+
+      provider.setSection(testSection);
+      const retrieved = provider.getSection();
+
+      expect(retrieved).toBe(testSection);
+    });
+
+    it('should return undefined from getSection when no section is set', () => {
+      const provider = createSkillsContextProvider();
+      const retrieved = provider.getSection();
+
+      expect(retrieved).toBeUndefined();
     });
   });
 });

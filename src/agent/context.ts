@@ -25,34 +25,22 @@ export async function buildSystemPrompt(
 
 /**
  * Convert persisted conversation messages to model-ready Message format.
- * Prepends working memory blocks as context.
  * Includes tool results as user-role messages with ToolResultBlock content,
  * and system summaries as user-role messages.
+ * Working memory blocks are delivered via the snapshot pipeline, not here.
  */
 export async function buildMessages(
   history: ReadonlyArray<ConversationMessage>,
-  memory: MemoryManager,
 ): Promise<Array<Message>> {
-  return (await buildMessagesWithCurrent(history, memory)).messages;
+  return (await buildMessagesWithCurrent(history)).messages;
 }
 
 export async function buildMessagesWithCurrent(
   history: ReadonlyArray<ConversationMessage>,
-  memory: MemoryManager,
   currentMessageId?: string,
 ): Promise<{readonly messages: Array<Message>; readonly currentMessage: Message | null}> {
   const messages: Array<Message> = [];
   let currentMessage: Message | null = null;
-
-  // Add working memory blocks as context message if available
-  const workingBlocks = await memory.getWorkingBlocks();
-  if (workingBlocks.length > 0) {
-    const workingContext = workingBlocks.map((block) => `## ${block.label}\n${block.content}`).join('\n\n');
-    messages.push({
-      role: 'user',
-      content: `[Working Memory Context]\n${workingContext}`,
-    });
-  }
 
   // Convert persisted messages to model format
   for (const msg of history) {

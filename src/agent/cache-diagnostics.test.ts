@@ -1036,7 +1036,7 @@ describe('cache-diagnostics edge cases', () => {
     expect(events[0]?.turn).toBe(99);
   });
 
-  test('message prefix size calculation includes all messages except last', () => {
+  test('message prefix size calculation includes all messages (full-list hashing)', () => {
     const flags: SuppressionFlags = {};
     const msg1 = {role: 'user', content: 'a'};
     const msg2 = {role: 'assistant', content: 'b'};
@@ -1050,7 +1050,7 @@ describe('cache-diagnostics edge cases', () => {
       flags,
     });
 
-    // Modify msg1 (in prefix)
+    // Modify msg1 (in full list)
     const msg1mod = {role: 'user', content: 'aa'};
     const events = diagnostics.checkForCacheBust({
       systemPrompt: '',
@@ -1061,8 +1061,8 @@ describe('cache-diagnostics edge cases', () => {
     });
 
     expect(events.length).toBe(1);
-    // Previous prefix (excluding msg3): msg1, msg2 → total serialized size
-    // Current prefix (excluding msg3): msg1mod, msg2 → total serialized size
+    // Previous full list: msg1, msg2, msg3 → total serialized size
+    // Current full list: msg1mod, msg2, msg3 → total serialized size
     expect(events[0]?.previousSize).toBeGreaterThan(0);
     expect(events[0]?.currentSize).toBeGreaterThan(0);
   });
@@ -1240,13 +1240,109 @@ describe('cache-bust-detection.AC4: Trace Recording', () => {
   });
 });
 
-describe('cache-bust-detection.AC5: Config Gating', () => {
-  // AC5.1 (zero overhead when cache_diagnostics: false) is verified by the
-  // integration test in agent.test.ts, which confirms that tool hash computation
-  // does not run when cacheDiagnostics is null. Unit tests cannot verify the
-  // absence of computation, so we rely on the agent integration test for this AC.
+describe('cache-bust-detection.AC5: Last-Message Rewrite Detection', () => {
+  let diagnostics = createCacheDiagnostics();
 
-  describe('AC5.2 — Enabled config works correctly', () => {
+  beforeEach(() => {
+    diagnostics = createCacheDiagnostics();
+  });
+
+  describe('AC5.1 — Rewrite of previously-last message detected', () => {
+    test('cache-friendliness.AC5.1: rewrite of the previously-last message produces a message_prefix event', () => {
+      const flags: SuppressionFlags = {};
+      const msg1 = {role: 'user', content: 'hello'};
+      const msg2 = {role: 'assistant', content: 'hi'}; // This was last in call 1
+      const msg2Modified = {role: 'assistant', content: 'hello there'}; // Rewrite of msg2
+      const msg3 = {role: 'user', content: 'how are you'};
+
+      // Call 1: record baseline with msg1, msg2
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
+
+      // Call 2: msg2 is rewritten (as msg2Modified) and msg3 is appended
+      // The previously-last message (msg2) differs, so event should fire
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2Modified, msg3],
+        turn: 2,
+        flags,
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0]?.dimension).toBe('message_prefix');
+    });
+  });
+
+  describe('AC5.2 — Append-only growth produces no event', () => {
+    test('cache-friendliness.AC5.2: append-only growth produces no message_prefix event', () => {
+      const flags: SuppressionFlags = {};
+      const msg1 = {role: 'user', content: 'hello'};
+      const msg2 = {role: 'assistant', content: 'hi'};
+      const msg3 = {role: 'user', content: 'how are you'};
+
+      // Call 1: record baseline with msg1, msg2
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags,
+      });
+
+      // Call 2: msg1 and msg2 are byte-identical, msg3 is appended (new last message)
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2, msg3],
+        turn: 2,
+        flags,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+});
+
+describe('cache-bust-detection.AC5: Suppression and Config Gating', () => {
+  describe('AC5.3 — Suppression when compactionOccurred', () => {
+    test('cache-friendliness.AC5.3: last-message rewrite is suppressed when compactionOccurred', () => {
+      const diagnostics = createCacheDiagnostics();
+      const flags1: SuppressionFlags = {};
+      const msg1 = {role: 'user', content: 'hello'};
+      const msg2 = {role: 'assistant', content: 'hi'};
+      const msg2Modified = {role: 'assistant', content: 'hello there'};
+      const msg3 = {role: 'user', content: 'how are you'};
+
+      // Call 1: record baseline
+      diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2],
+        turn: 1,
+        flags: flags1,
+      });
+
+      // Call 2: msg2 is rewritten, but compactionOccurred is true
+      const flags2: SuppressionFlags = {compactionOccurred: true};
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: '',
+        tools: [],
+        messages: [msg1, msg2Modified, msg3],
+        turn: 2,
+        flags: flags2,
+      });
+
+      expect(events.length).toBe(0);
+    });
+  });
+
+  describe('Config Gating', () => {
     test('diagnostics instance created when enabled returns functional object', () => {
       const diagnostics = createCacheDiagnostics();
       expect(diagnostics).toBeDefined();

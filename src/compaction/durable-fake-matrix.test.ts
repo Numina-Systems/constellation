@@ -59,6 +59,18 @@ async function activeSourceIds(historyStore: ReturnType<typeof createConversatio
 }
 
 describe('Phase 4 durable compactor fake-level matrices', () => {
+  it('missing mandatory current user fails closed without summarizing or committing', async () => {
+    const setupResult = await setup();
+    const before = await activeSourceIds(setupResult.historyStore, setupResult.conversationId);
+
+    const result = await setupResult.compactor.compress([], setupResult.conversationId, {currentUserMessageId: 'missing-current-user'});
+
+    expect(result.failed).toBe(true);
+    expect(result.failureCode).toBe('history_stale_membership');
+    expect(setupResult.calls).toHaveLength(0);
+    expect(await activeSourceIds(setupResult.historyStore, setupResult.conversationId)).toEqual(before);
+  });
+
   it('summary_empty_output_single_cycle_matrix', async () => {
     for (const empty of ['', '   ', response('') as ModelResponse, {content: [{type: 'tool_use', id: 'x', name: 'noop', input: {}}], stop_reason: 'end_turn', usage: {input_tokens: 1, output_tokens: 1}} as ModelResponse]) {
       const setupResult = await setup({responses: Array.from({length: 4}, () => empty instanceof Error ? empty : (typeof empty === 'string' ? response(empty) : empty))});

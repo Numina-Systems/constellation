@@ -86,4 +86,32 @@ describe('Archivist prune transaction', () => {
     expect([...blocks.keys()].sort()).toEqual(['empty-a', 'empty-b']);
     expect(state.content).toBe('');
   });
+
+  it('reports zero pruned blocks when full-mode prune transaction rolls back', async () => {
+    const blocks = new Map<string, MemoryBlock>([['empty', block('empty', '')]]);
+    const memoryStore = {
+      async getBlocksByTier(owner: string, tier: MemoryBlock['tier']) {
+        return [...blocks.values()].filter(item => item.owner === owner && item.tier === tier);
+      },
+      async deleteForMaintenance() { throw new Error('injected full-mode rollback'); },
+    } as unknown as MemoryStoreWithMaintenance;
+    const memoryManager = {
+      async write() { return {applied: false as const, error: 'unused'}; },
+    } as unknown as MemoryManager;
+    const persistence = {
+      async withTransaction<T>(operation: () => Promise<T>): Promise<T> { return operation(); },
+    } as unknown as PersistenceProvider;
+    const pipeline = createArchivistPipeline({
+      memoryStore, memoryManager, embedding: null, summarizationModel: null, persistence,
+      owner: OWNER, modelName: 'unused', dedupThreshold: 0.9, crossrefThreshold: 0.8, tokenBudget: 1000,
+    });
+    const originalWarn = console.warn;
+    console.warn = mock(() => {});
+    try {
+      const result = await pipeline.runFull();
+      expect(result.pruned).toBe(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
 });

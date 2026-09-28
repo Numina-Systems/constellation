@@ -276,7 +276,6 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
     let pruneResult: Awaited<ReturnType<typeof prune>>;
     try {
       pruneResult = prune(filteredBlocks);
-      pruned = pruneResult.prunedIds.length;
 
       // Delete all pruned blocks as one atomic batch.
       await persistence.withTransaction(async () => {
@@ -284,6 +283,7 @@ export function createArchivistPipeline(deps: ArchivistPipelineDeps): ArchivistP
           await memoryStore.deleteForMaintenance(owner, id, maintenanceConstraints);
         }
       });
+      pruned = pruneResult.prunedIds.length;
       for (const id of pruneResult.prunedIds) currentHashes.delete(id);
     } catch (error) {
       console.warn('Prune stage failed, continuing:', error);

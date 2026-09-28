@@ -11,8 +11,8 @@
  */
 
 import { describe, it, expect, mock } from 'bun:test';
-import { createShutdownHandler, buildReviewEvent, buildAgentScheduledEvent } from '@/index';
-import { processEventQueue } from '@/orchestration';
+import { createShutdownHandler } from '@/index';
+import { processEventQueue, buildReviewEvent, buildAgentScheduledEvent } from '@/orchestration';
 import { createToolRegistry } from '@/tool/registry';
 import { connectMcpServers, createMcpToolProvider, publishMcpRegistrations } from '@/mcp';
 import type { McpClient, McpPromptResult, McpToolInfo } from '@/mcp';

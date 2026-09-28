@@ -9,6 +9,8 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import type { ExecutionOptions } from '@/contracts/execution.ts';
 import type { ToolResult } from '@/tool/types.ts';
+import {traceError} from '@/errors/trace.js';
+import type {TraceRecorder} from '@/reflexion/types.js';
 import type { McpServerConfig } from './schema.ts';
 import { collectMcpPages } from './discovery-bounds.ts';
 import {
@@ -36,6 +38,10 @@ type TransportOptions =
 
 type JsonRecord = Record<string, unknown>;
 export type McpClientConstructionOptions = Readonly<{
+  /** Optional operation recorder; lifecycle errors use a synthetic conversation ID, `mcp-lifecycle:<serverName>`. */
+  readonly traceRecorder?: TraceRecorder;
+  /** Stable owner used for lifecycle traces. */
+  readonly traceOwner?: string;
   readonly clientFactory?: () => Client;
   readonly transportFactory?: (config: McpServerConfig, processEnv: Readonly<Record<string, string | undefined>>) => Transport;
   readonly reconnect?: Readonly<{readonly maxAttempts?: number; readonly initialDelayMs?: number; readonly maxDelayMs?: number; readonly sleep?: (delayMs: number) => Promise<void>}>;
@@ -86,6 +92,11 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
   const maxDelayMs = reconnect.maxDelayMs ?? 4_000;
   const sleep = reconnect.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
 
+  function recordLifecycleFailure(error: McpDiscoveryError): void {
+    if (!constructionOptions.traceRecorder) return;
+    traceError(error, constructionOptions.traceRecorder, constructionOptions.traceOwner ?? 'spirit', `mcp-lifecycle:${serverName}`);
+  }
+
   function getRequestOptions(options: McpDiscoveryOptions | ExecutionOptions = {}): RequestOptions {
     const now = 'now' in options ? (options.now ?? (() => Date.now())) : (() => Date.now());
     const deadline = options.deadline ?? now() + MCP_DEFAULT_DISCOVERY_TIMEOUT_MS;
@@ -119,14 +130,18 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
       if (sdkClient !== client || intentionallyDisconnected) return;
       connected = false;
       sdkClient = null;
-      console.error('[mcp] transport error', {server: serverName, event: 'transport_error', code: 'mcp_discovery_transport_error', subsystem: 'mcp', context: {event: 'onerror'}, message: safeErrorMessage(error), success: false});
+      const lifecycleError = new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} transport error`, {server: serverName, event: 'onerror'}, {cause: error instanceof Error ? error : undefined});
+      recordLifecycleFailure(lifecycleError);
+      console.error('[mcp] transport error', {server: serverName, event: 'transport_error', code: lifecycleError.code, subsystem: 'mcp', context: lifecycleError.context, message: safeErrorMessage(error), success: false});
       scheduleReconnect();
     };
     client.onclose = () => {
       if (sdkClient !== client || intentionallyDisconnected) return;
       connected = false;
       sdkClient = null;
-      console.error('[mcp] transport closed', {server: serverName, event: 'transport_closed', code: 'mcp_discovery_transport_error', subsystem: 'mcp', context: {event: 'onclose'}, success: false});
+      const lifecycleError = new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} transport closed`, {server: serverName, event: 'onclose'});
+      recordLifecycleFailure(lifecycleError);
+      console.error('[mcp] transport closed', {server: serverName, event: 'transport_closed', code: lifecycleError.code, subsystem: 'mcp', context: lifecycleError.context, success: false});
       scheduleReconnect();
     };
     try {
@@ -166,6 +181,7 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
       connected = false;
       sdkClient = null;
       reconnectError = new McpDiscoveryError('mcp_reconnect_exhausted', `MCP ${serverName} reconnection attempts exhausted`, {server: serverName, attempts: maxAttempts}, {cause: lastError instanceof Error ? lastError : undefined, suggestion: 'check server availability and reconnect the MCP client'});
+      recordLifecycleFailure(reconnectError);
       console.error('[mcp] reconnect exhausted', {server: serverName, code: reconnectError.code, attempts: maxAttempts, suggestion: 'check server availability and reconnect the MCP client'});
     })().finally(() => { reconnectTask = null; });
   }

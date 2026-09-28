@@ -187,9 +187,12 @@ describe('createMcpClient reconnection', () => {
     const originalError = console.error;
     console.error = (...values: Array<unknown>) => { errors.push(values); };
     const transports: Array<MockMcpTransport> = [];
+    const recordedTraces: Array<Record<string, unknown>> = [];
     let clientsCreated = 0;
     const delays: Array<number> = [];
     const client = createMcpClient('offline-server', {transport: 'http', url: 'http://loopback.test/mcp'}, {
+      traceRecorder: {record: async (trace) => { recordedTraces.push(trace as unknown as Record<string, unknown>); }},
+      traceOwner: 'trace-owner',
       clientFactory: () => {
         clientsCreated += 1;
         const sdkClient = new Client({name: `offline-${clientsCreated}`, version: '1'});
@@ -214,6 +217,7 @@ describe('createMcpClient reconnection', () => {
       expect(new (await import('./types.ts')).McpDiscoveryError('mcp_reconnect_exhausted', 'offline')).toBeInstanceOf(ConstellationError);
       expect(delays).toEqual([5, 10]);
       expect(errors.some((values) => values[0] === '[mcp] transport closed' && (values[1] as Record<string, unknown>)['code'] === 'mcp_discovery_transport_error' && (values[1] as Record<string, unknown>)['success'] === false)).toBe(true);
+      expect(recordedTraces.some((trace) => trace['owner'] === 'trace-owner' && trace['conversationId'] === 'mcp-lifecycle:offline-server' && trace['toolName'] === 'mcp' && trace['success'] === false)).toBe(true);
       expect(errors.some((values) => values[0] === '[mcp] reconnect exhausted' && (values[1] as Record<string, unknown>)['code'] === 'mcp_reconnect_exhausted')).toBe(true);
       expect(clientsCreated).toBe(3);
     } finally {

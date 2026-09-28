@@ -1123,6 +1123,15 @@ describe('composition root wiring: structural verification (AC2.2)', () => {
     expect(subconsciousBlock).not.toContain('integrityLifecycle');
   });
 
+  it('passes the shared trace recorder and owner into MCP client construction', async () => {
+    const {readFileSync} = await import('fs');
+    const {dirname, join} = await import('path');
+    const {fileURLToPath} = await import('url');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'index.ts'), 'utf-8');
+
+    expect(source).toContain('createMcpClient(serverName, serverConfig, {traceRecorder, traceOwner: AGENT_OWNER})');
+  });
+
   it('staggers the two composition-root scheduler poll offsets', async () => {
     const {readFileSync} = await import('fs');
     const {dirname, join} = await import('path');

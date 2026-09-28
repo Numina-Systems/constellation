@@ -867,7 +867,7 @@ async function main(): Promise<void> {
   if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
     const configuredClients: Array<McpClient> = Object.entries(config.mcp.servers).map(([serverName, rawServerConfig]) => {
       const serverConfig = resolveServerConfigEnv(rawServerConfig, process.env);
-      return createMcpClient(serverName, serverConfig);
+      return createMcpClient(serverName, serverConfig, {traceRecorder, traceOwner: AGENT_OWNER});
     });
     console.log(`[mcp] connecting to ${configuredClients.length} server(s)...`);
 

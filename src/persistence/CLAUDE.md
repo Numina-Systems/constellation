@@ -1,6 +1,6 @@
 # Persistence
 
-Last verified: 2026-09-27
+Last verified: 2026-09-29
 
 ## Purpose
 
@@ -22,7 +22,7 @@ Provides PostgreSQL ports and adapters for migrations, owner-scoped data, revisi
 ## Dependencies
 
 - **Uses**: `pg`, `pgvector`, config, agent/history types, and contract outcomes.
-- **Used by**: memory, agent, compaction, search, skills, reflexion, scheduling, activity, custom tools, and composition root.
+- **Used by**: memory, agent, compaction, search, skills, reflexion, scheduling, activity, custom tools, the Bluesky event store (`src/extensions/bluesky/postgres-event-store.ts`), and composition root.
 - **Boundary**: domain modules use `PersistenceProvider`; no direct `pg` imports outside adapters.
 
 ## Invariants
@@ -39,3 +39,4 @@ Provides PostgreSQL ports and adapters for migrations, owner-scoped data, revisi
 - `checkpoint-store.ts`, `message-store.ts` -- checkpoint and active-message access.
 - `migrations/016_conversation_history.sql`, `migrations/017_scope_history_summary_fk.sql` -- history schema additions.
 - `migrations/018_agent_batch_conversation_idx.sql` -- additive, repeat-safe conversation-scoped index on operation receipts.
+- `migrations/019_bluesky_events.sql` -- additive, repeat-safe owner-scoped table of observed Bluesky posts; consumed by the Bluesky extension's event store, not a persistence-domain store.

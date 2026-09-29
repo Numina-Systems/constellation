@@ -943,7 +943,7 @@ async function main(): Promise<void> {
   if (config.bluesky?.enabled) {
     try {
       bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
-      // Persist accepted and own posts for ambient context; survives compaction.
+      // Stored events let the provider rebuild this context after compaction.
       blueskyEventStore = createPostgresBlueskyEventStore(persistence);
       blueskySource = createBlueskySource(config.bluesky, bskyAgent, {
         owner: AGENT_OWNER,
@@ -963,9 +963,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Ambient Bluesky activity section for the main agent's snapshot attachment.
-  // Inner agents (subconscious/archivist) build their own provider subsets, so
-  // this registration stays main-agent-only by construction.
+  // Inner agents use separate provider lists. Attach Bluesky context only to the main agent.
   const blueskyAgentDid = config.bluesky.did;
   const blueskyAgentHandle = config.bluesky.handle;
   if (blueskyConnected && blueskyEventStore && blueskyAgentDid && blueskyAgentHandle && config.bluesky.context_enabled) {
@@ -1160,9 +1158,7 @@ async function main(): Promise<void> {
     });
   }
 
-  // Bluesky ambient context provider: recent posts section. Registered only on
-  // the classified list — the snapshot pipeline builds its provider map solely
-  // from classifiedProviders.
+  // Snapshot routing ignores providers that are not in this classified list.
   if (blueskyContextProvider) {
     classifiedProviders.push({
       name: 'bluesky-activity',

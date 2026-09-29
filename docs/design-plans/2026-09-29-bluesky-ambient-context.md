@@ -18,8 +18,10 @@ snapshot attachment. The section is independent of event processing and
 unaffected by conversation compaction.
 
 - Migration: `src/persistence/migrations/019_bluesky_events.sql` (append-only,
-  repeat-safe). `uri` is the primary key; idempotent ingestion via
-  `ON CONFLICT (uri) DO NOTHING` absorbs Jetstream redelivery after reconnect.
+  repeat-safe). The primary key is `(owner, uri)`; idempotent ingestion via
+  `ON CONFLICT (owner, uri) DO NOTHING` absorbs Jetstream redelivery after
+  reconnect without one owner's ingest swallowing another owner's record of
+  the same post (review-driven refinement of the original `uri`-only key).
 - Port: `BlueskyEventStore` in `src/extensions/bluesky/types.ts`; adapter
   `createPostgresBlueskyEventStore` (`postgres-event-store.ts`) over
   `PersistenceProvider`, parameterized SQL, single statements.

@@ -173,6 +173,13 @@ export function createBlueskySource(
   agent: BskyAgent,
   deps?: { owner: string; eventStore: BlueskyEventStore },
 ): BlueskyDataSource {
+  // A store without an owner would silently persist owner='' rows; fail loudly
+  // at the composition root instead (the connect failure path disables bluesky
+  // without blocking the REPL).
+  if (deps?.eventStore && !deps.owner) {
+    throw new Error("bluesky event store requires a non-empty owner");
+  }
+
   let subscription: JetstreamSubscription | null = null;
   let subscriptionIterator: AsyncIterator<unknown> | null = null;
   let messageHandler: ((message: IncomingMessage) => void) | null = null;

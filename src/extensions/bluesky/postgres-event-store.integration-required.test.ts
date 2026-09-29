@@ -81,6 +81,19 @@ describe('bluesky event store real PostgreSQL integration (required)', () => {
     expect(events[0]!.replyParentUri).toBe('at://did:plc:agent/app.bsky.feed.post/parent');
   });
 
+  it('record_idempotency_is_owner_scoped_for_the_same_uri', async () => {
+    const store = createPostgresBlueskyEventStore(requirePersistence());
+    const event = makeEvent({uri: 'at://did:plc:a/app.bsky.feed.post/shared'});
+
+    await store.record(event);
+    // Another owner observing the same post must not be swallowed by the
+    // first owner's insert.
+    await store.record({...event, owner: 'other-agent'});
+
+    expect(await store.getRecentEvents('integration-agent', 10)).toHaveLength(1);
+    expect(await store.getRecentEvents('other-agent', 10)).toHaveLength(1);
+  });
+
   it('getRecent_events_respects_limit', async () => {
     const store = createPostgresBlueskyEventStore(requirePersistence());
 

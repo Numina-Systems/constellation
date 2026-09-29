@@ -31,7 +31,7 @@ export function createPostgresBlueskyEventStore(persistence: PersistenceProvider
       await persistence.query(
         `INSERT INTO bluesky_events (uri, owner, author_did, content, reply_parent_uri, created_at, indexed_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW())
-         ON CONFLICT (uri) DO NOTHING`,
+         ON CONFLICT (owner, uri) DO NOTHING`,
         [event.uri, event.owner, event.authorDid, event.content, event.replyParentUri, event.createdAt],
       );
     },

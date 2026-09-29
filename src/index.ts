@@ -966,13 +966,15 @@ async function main(): Promise<void> {
   // Ambient Bluesky activity section for the main agent's snapshot attachment.
   // Inner agents (subconscious/archivist) build their own provider subsets, so
   // this registration stays main-agent-only by construction.
-  if (blueskyConnected && blueskyEventStore && config.bluesky.context_enabled) {
+  const blueskyAgentDid = config.bluesky.did;
+  const blueskyAgentHandle = config.bluesky.handle;
+  if (blueskyConnected && blueskyEventStore && blueskyAgentDid && blueskyAgentHandle && config.bluesky.context_enabled) {
     const connectedAgent = bskyAgent;
     blueskyContextProvider = createBlueskyContextProvider({
       store: blueskyEventStore,
       owner: AGENT_OWNER,
-      agentDid: config.bluesky.did!,
-      agentHandle: config.bluesky.handle!,
+      agentDid: blueskyAgentDid,
+      agentHandle: blueskyAgentHandle,
       limit: config.bluesky.context_limit,
       retentionDays: config.bluesky.context_retention_days,
       resolveHandles: connectedAgent

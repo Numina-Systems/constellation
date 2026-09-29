@@ -557,6 +557,29 @@ describe("handleCommitEvent", () => {
       expect(recorded).toHaveLength(0);
       expect(dispatched).toHaveLength(0);
     });
+
+    it("records and dispatches a schedule_dids-only event through the full handler", async () => {
+      const { store, recorded } = createFakeStore();
+      const dispatched: Array<IncomingMessage> = [];
+      const deps = {
+        watchedDids: new Set<string>(),
+        scheduleDids: new Set(["did:plc:scheduler"]),
+        agentDid: AGENT_DID,
+        owner: OWNER,
+        eventStore: store,
+        dispatch: (message: IncomingMessage) => {
+          dispatched.push(message);
+        },
+      };
+
+      handleCommitEvent(makeCommitEvent({ did: "did:plc:scheduler", text: "schedule request" }), deps);
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!.authorDid).toBe("did:plc:scheduler");
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]!.content).toBe("schedule request");
+    });
   });
 
   describe("bluesky-events.AC3: own posts are recorded but not dispatched", () => {
@@ -638,6 +661,27 @@ describe("handleCommitEvent", () => {
 
       expect(recorded).toHaveLength(0);
       expect(dispatched).toHaveLength(0);
+    });
+
+    it("rejects an event store without an owner at factory time", () => {
+      const { store } = createFakeStore();
+      const mockAgent = { login: mock(async () => ({})) } as unknown as BskyAgent;
+      const config: BlueskyConfig = {
+        enabled: true,
+        handle: "test.bsky.social",
+        app_password: "test-password",
+        did: AGENT_DID,
+        watched_dids: [],
+        schedule_dids: [],
+        jetstream_url: "wss://jetstream2.us-east.bsky.network/subscribe",
+        context_enabled: true,
+        context_limit: 10,
+        context_retention_days: 30,
+      };
+
+      expect(() =>
+        createBlueskySource(config, mockAgent, { owner: "", eventStore: store }),
+      ).toThrow("non-empty owner");
     });
   });
 });

@@ -1,8 +1,10 @@
 import { describe, it, expect, mock } from "bun:test";
-import { shouldAcceptEvent, createBlueskySource } from "./source.ts";
+import { shouldAcceptEvent, createBlueskySource, handleCommitEvent } from "./source.ts";
 import type { CommitEvent } from "@atcute/jetstream";
 import type { BskyAgent } from "@atproto/api";
 import type { BlueskyConfig } from "@/config/schema.ts";
+import type { IncomingMessage } from "../data-source.ts";
+import type { BlueskyEventRecord, BlueskyEventStore } from "./types.ts";
 
 describe("shouldAcceptEvent", () => {
   describe("bsky-datasource.AC1.2: Accept posts from DIDs in watched_dids", () => {
@@ -352,6 +354,9 @@ describe("shouldAcceptEvent", () => {
         watched_dids: [],
         schedule_dids: [],
         jetstream_url: "wss://jetstream2.us-east.bsky.network/subscribe",
+        context_enabled: true,
+        context_limit: 10,
+        context_retention_days: 30,
       };
 
       const source = createBlueskySource(config, mockAgent);
@@ -384,6 +389,9 @@ describe("shouldAcceptEvent", () => {
         watched_dids: [],
         schedule_dids: [],
         jetstream_url: "wss://jetstream2.us-east.bsky.network/subscribe",
+        context_enabled: true,
+        context_limit: 10,
+        context_retention_days: 30,
       };
 
       const source = createBlueskySource(config, mockAgent);
@@ -393,6 +401,243 @@ describe("shouldAcceptEvent", () => {
         "No active session or refresh token",
       );
       expect(() => source.getPdsUrl()).toThrow("No PDS URL available");
+    });
+  });
+});
+
+describe("handleCommitEvent", () => {
+  const AGENT_DID = "did:plc:agent";
+  const OWNER = "test-owner";
+
+  function createFakeStore(overrides?: { failRecord?: boolean }): {
+    store: BlueskyEventStore;
+    recorded: Array<BlueskyEventRecord>;
+  } {
+    const recorded: Array<BlueskyEventRecord> = [];
+    const store: BlueskyEventStore = {
+      async record(event) {
+        if (overrides?.failRecord) throw new Error("store unavailable");
+        recorded.push(event);
+      },
+      async getRecentEvents() {
+        return [];
+      },
+      async pruneEventsBefore() {
+        return 0;
+      },
+    };
+    return { store, recorded };
+  }
+
+  function makeCommitEvent(overrides: {
+    did: string;
+    timeUs?: number;
+    text?: string;
+    replyParentUri?: string;
+    operation?: "create" | "delete" | "update";
+  }): CommitEvent {
+    const record: Record<string, unknown> = { text: overrides.text ?? "post text" };
+    if (overrides.replyParentUri) {
+      record["reply"] = {
+        parent: { uri: overrides.replyParentUri, cid: "bafy-parent" },
+        root: { uri: overrides.replyParentUri, cid: "bafy-root" },
+      };
+    }
+    return {
+      kind: "commit",
+      did: overrides.did,
+      time_us: overrides.timeUs ?? 1_000_000,
+      commit: {
+        operation: overrides.operation ?? "create",
+        rev: "3",
+        collection: "app.bsky.feed.post",
+        rkey: "rkey123",
+        ...(overrides.operation === "delete" ? {} : { cid: "bafy123", record }),
+      },
+    } as CommitEvent;
+  }
+
+  function makeDeps(overrides?: {
+    watchedDids?: ReadonlySet<string>;
+    store?: BlueskyEventStore;
+  }): {
+    deps: Parameters<typeof handleCommitEvent>[1];
+    dispatched: Array<IncomingMessage>;
+  } {
+    const dispatched: Array<IncomingMessage> = [];
+    const deps = {
+      watchedDids: overrides?.watchedDids ?? new Set(["did:plc:friend1"]),
+      scheduleDids: new Set<string>(),
+      agentDid: AGENT_DID,
+      owner: OWNER,
+      ...(overrides?.store ? { eventStore: overrides.store } : {}),
+      dispatch: (message: IncomingMessage) => {
+        dispatched.push(message);
+      },
+    };
+    return { deps, dispatched };
+  }
+
+  describe("bluesky-events.AC2: accepted events are recorded and dispatched", () => {
+    it("records a watched event with uri/author/content/reply fields and dispatches it", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({ store });
+
+      const event = makeCommitEvent({
+        did: "did:plc:friend1",
+        timeUs: 1_759_070_000_000, // µs
+        text: "hello world",
+        replyParentUri: `at://${AGENT_DID}/app.bsky.feed.post/parent`,
+      });
+
+      handleCommitEvent(event, deps);
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!.uri).toBe("at://did:plc:friend1/app.bsky.feed.post/rkey123");
+      expect(recorded[0]!.authorDid).toBe("did:plc:friend1");
+      expect(recorded[0]!.owner).toBe(OWNER);
+      expect(recorded[0]!.content).toBe("hello world");
+      expect(recorded[0]!.replyParentUri).toBe(`at://${AGENT_DID}/app.bsky.feed.post/parent`);
+      expect(recorded[0]!.createdAt.getTime()).toBe(1_759_070_000);
+
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]!.content).toBe("hello world");
+    });
+
+    it("falls back to arrival time when time_us is absent or zero", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps } = makeDeps({ store });
+      const before = Date.now();
+
+      handleCommitEvent(makeCommitEvent({ did: "did:plc:friend1", timeUs: 0 }), deps);
+      await Bun.sleep(0);
+
+      const after = Date.now();
+      expect(recorded[0]!.createdAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(recorded[0]!.createdAt.getTime()).toBeLessThanOrEqual(after);
+    });
+
+    it("logs a warning and still dispatches when the store fails", async () => {
+      const { store } = createFakeStore({ failRecord: true });
+      const { deps, dispatched } = makeDeps({ store });
+
+      const warnings: Array<unknown> = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: Array<unknown>) => {
+        warnings.push(args[0]);
+      };
+      try {
+        handleCommitEvent(makeCommitEvent({ did: "did:plc:friend1" }), deps);
+        await Bun.sleep(0);
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      expect(dispatched).toHaveLength(1);
+      expect(warnings.some((warning) => String(warning).includes("[bluesky] event store record failed"))).toBe(true);
+    });
+
+    it("dispatches unchanged when no event store is configured", () => {
+      const { deps, dispatched } = makeDeps();
+
+      handleCommitEvent(makeCommitEvent({ did: "did:plc:friend1", text: "no store" }), deps);
+
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]!.content).toBe("no store");
+    });
+
+    it("does not record or dispatch events rejected by shouldAcceptEvent", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({ store });
+
+      handleCommitEvent(makeCommitEvent({ did: "did:plc:stranger" }), deps);
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(0);
+      expect(dispatched).toHaveLength(0);
+    });
+  });
+
+  describe("bluesky-events.AC3: own posts are recorded but not dispatched", () => {
+    it("records an own post without dispatching it", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({ store });
+
+      handleCommitEvent(makeCommitEvent({ did: AGENT_DID, text: "my own post" }), deps);
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!.authorDid).toBe(AGENT_DID);
+      expect(dispatched).toHaveLength(0);
+    });
+
+    it("records and dispatches an own post when the agent watches its own DID", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({
+        store,
+        watchedDids: new Set(["did:plc:friend1", AGENT_DID]),
+      });
+
+      handleCommitEvent(makeCommitEvent({ did: AGENT_DID, text: "self-watched post" }), deps);
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(1);
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]!.content).toBe("self-watched post");
+    });
+
+    it("records an own self-thread reply without dispatching it (loop prevention)", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({ store });
+
+      // Own post replying to the agent's own post: accepted by today's reply
+      // rule and dispatched; under the new rule it is record-only.
+      handleCommitEvent(
+        makeCommitEvent({
+          did: AGENT_DID,
+          text: "self-thread reply",
+          replyParentUri: `at://${AGENT_DID}/app.bsky.feed.post/earlier`,
+        }),
+        deps,
+      );
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!.replyParentUri).toBe(`at://${AGENT_DID}/app.bsky.feed.post/earlier`);
+      expect(dispatched).toHaveLength(0);
+    });
+
+    it("ignores own-post delete commits entirely: no record, no dispatch, no throw", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({ store });
+
+      expect(() => {
+        handleCommitEvent(
+          makeCommitEvent({ did: AGENT_DID, operation: "delete" }),
+          deps,
+        );
+      }).not.toThrow();
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(0);
+      expect(dispatched).toHaveLength(0);
+    });
+
+    it("ignores own-post update commits entirely", async () => {
+      const { store, recorded } = createFakeStore();
+      const { deps, dispatched } = makeDeps({ store });
+
+      expect(() => {
+        handleCommitEvent(
+          makeCommitEvent({ did: AGENT_DID, operation: "update", text: "edited" }),
+          deps,
+        );
+      }).not.toThrow();
+      await Bun.sleep(0);
+
+      expect(recorded).toHaveLength(0);
+      expect(dispatched).toHaveLength(0);
     });
   });
 });

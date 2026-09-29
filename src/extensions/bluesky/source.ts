@@ -5,7 +5,7 @@ import { JetstreamSubscription } from "@atcute/jetstream";
 import type { CommitEvent } from "@atcute/jetstream";
 import type { IncomingMessage } from "../data-source.ts";
 import type { BlueskyConfig } from "@/config/schema.ts";
-import type { BlueskyDataSource, BlueskyPostMetadata } from "./types.ts";
+import type { BlueskyDataSource, BlueskyPostMetadata, BlueskyEventStore } from "./types.ts";
 
 type EventRecord = {
   text?: string;
@@ -17,9 +17,9 @@ type EventRecord = {
 
 export function shouldAcceptEvent(
   event: CommitEvent,
-  watchedDids: Set<string>,
+  watchedDids: ReadonlySet<string>,
   agentDid: string,
-  scheduleDids?: Set<string>,
+  scheduleDids?: ReadonlySet<string>,
 ): boolean {
   const commit = event.commit;
 
@@ -51,11 +51,127 @@ export function shouldAcceptEvent(
   return false;
 }
 
+export type HandleCommitEventDeps = {
+  readonly watchedDids: ReadonlySet<string>;
+  readonly scheduleDids?: ReadonlySet<string>;
+  readonly agentDid: string;
+  readonly owner: string;
+  readonly eventStore?: BlueskyEventStore;
+  readonly dispatch: (message: IncomingMessage) => void;
+};
+
+/**
+ * Per-event accept/record/dispatch decision for one Jetstream commit event.
+ * Own posts take the record-only branch first and it is terminal for them:
+ * it alone decides record and dispatch, so the accepted-event path below can
+ * never double-record an own post or dispatch a self-thread reply back into
+ * the agent. Non-create own commits (delete/update) carry no usable record
+ * payload and are ignored entirely — building a message from one would throw
+ * inside the subscription loop and permanently kill ingestion.
+ */
+// pattern: Functional Core
+export function handleCommitEvent(event: CommitEvent, deps: HandleCommitEventDeps): void {
+  if (event.did === deps.agentDid) {
+    const commit = event.commit;
+    if (commit.operation !== "create") {
+      return;
+    }
+
+    recordEvent(event, deps);
+
+    // Loop prevention: an own post replying to the agent's own post must not
+    // re-enter the agent as a fresh incoming message. Dispatch only when the
+    // agent explicitly watches its own DID, preserving existing semantics
+    // for that configuration.
+    if (deps.watchedDids.has(deps.agentDid)) {
+      deps.dispatch(toIncomingMessage(event));
+    }
+    return;
+  }
+
+  if (!shouldAcceptEvent(event, deps.watchedDids, deps.agentDid, deps.scheduleDids)) {
+    return;
+  }
+
+  // Redundant defensive check: shouldAcceptEvent already verifies create.
+  // Guards message construction if that filter logic ever changes.
+  if (event.commit.operation !== "create") {
+    return;
+  }
+
+  const message = toIncomingMessage(event);
+  recordEvent(event, deps);
+  deps.dispatch(message);
+}
+
+function toIncomingMessage(commitEvent: CommitEvent): IncomingMessage {
+  const commit = commitEvent.commit;
+  if (commit.operation !== "create") {
+    throw new Error("cannot build an incoming message from a non-create commit");
+  }
+
+  const record = commit.record as EventRecord;
+
+  const replyTo =
+    record.reply?.parent?.uri && record.reply?.root?.uri
+      ? {
+          parent_uri: record.reply.parent.uri,
+          parent_cid: record.reply.parent.cid,
+          root_uri: record.reply.root.uri,
+          root_cid: record.reply.root.cid,
+        }
+      : undefined;
+
+  const metadata: BlueskyPostMetadata = {
+    platform: "bluesky",
+    did: commitEvent.did,
+    handle: commitEvent.did,
+    uri: `at://${commitEvent.did}/app.bsky.feed.post/${commit.rkey}`,
+    cid: commit.cid,
+    rkey: commit.rkey,
+    ...(replyTo && { reply_to: replyTo }),
+  };
+
+  return {
+    source: "bluesky",
+    content: record.text || "",
+    metadata,
+    timestamp: new Date(),
+  };
+}
+
+/** Fire-and-forget persistence; a slow or failing store must never stall the loop or block dispatch. */
+function recordEvent(event: CommitEvent, deps: Pick<HandleCommitEventDeps, "owner" | "eventStore">): void {
+  const store = deps.eventStore;
+  if (!store) return;
+
+  const commit = event.commit;
+  if (commit.operation !== "create") return;
+
+  const record = commit.record as EventRecord;
+  const createdAt =
+    event.time_us && event.time_us > 0 ? new Date(event.time_us / 1000) : new Date();
+
+  store
+    .record({
+      uri: `at://${event.did}/app.bsky.feed.post/${commit.rkey}`,
+      owner: deps.owner,
+      authorDid: event.did,
+      content: record.text ?? "",
+      replyParentUri: record.reply?.parent?.uri ?? null,
+      createdAt,
+    })
+    .catch((error: unknown) => {
+      console.warn("[bluesky] event store record failed:", error);
+    });
+}
+
 const DEFAULT_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 export function createBlueskySource(
   config: BlueskyConfig,
   agent: BskyAgent,
+  deps?: { owner: string; eventStore: BlueskyEventStore },
 ): BlueskyDataSource {
   let subscription: JetstreamSubscription | null = null;
   let subscriptionIterator: AsyncIterator<unknown> | null = null;
@@ -63,6 +179,8 @@ export function createBlueskySource(
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   const watchedDids = new Set(config.watched_dids);
   const scheduleDids = new Set(config.schedule_dids);
+  const owner = deps?.owner ?? "";
+  const eventStore = deps?.eventStore;
 
   async function refreshSession(): Promise<void> {
     try {
@@ -114,50 +232,14 @@ export function createBlueskySource(
             }
 
             const commitEvent = event as CommitEvent;
-            if (!shouldAcceptEvent(commitEvent, watchedDids, agentDid, scheduleDids)) {
-              continue;
-            }
-
-            const commit = commitEvent.commit;
-
-            // Redundant check: shouldAcceptEvent already verifies commit.operation === "create".
-            // Kept as defensive programming—if shouldAcceptEvent logic changes, this guards
-            // the message construction below. Cost is negligible (one comparison per event).
-            if (commit.operation !== "create") {
-              continue;
-            }
-
-            const record = commit.record as EventRecord;
-            const rkey = commit.rkey;
-
-            const replyTo =
-              record.reply?.parent?.uri && record.reply?.root?.uri
-                ? {
-                    parent_uri: record.reply.parent.uri,
-                    parent_cid: record.reply.parent.cid,
-                    root_uri: record.reply.root.uri,
-                    root_cid: record.reply.root.cid,
-                  }
-                : undefined;
-
-            const metadata: BlueskyPostMetadata = {
-              platform: "bluesky",
-              did: commitEvent.did,
-              handle: commitEvent.did,
-              uri: `at://${commitEvent.did}/app.bsky.feed.post/${rkey}`,
-              cid: commit.cid,
-              rkey,
-              ...(replyTo && { reply_to: replyTo }),
-            };
-
-            const message: IncomingMessage = {
-              source: "bluesky",
-              content: record.text || "",
-              metadata,
-              timestamp: new Date(),
-            };
-
-            messageHandler(message);
+            handleCommitEvent(commitEvent, {
+              watchedDids,
+              scheduleDids,
+              agentDid,
+              owner,
+              eventStore,
+              dispatch: messageHandler,
+            });
           }
         } catch (error) {
           if (

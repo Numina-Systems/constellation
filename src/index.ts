@@ -97,7 +97,8 @@ import { type RestorationDependencies, type RestorationResult } from '@/agent/ch
 import { createCheckpointTool } from '@/tool/builtin/checkpoint.ts';
 import { createLoopDetector } from '@/loop-detection/index.js';
 import type { LoopDetectionConfig } from '@/loop-detection/types.js';
-import { createPostgresCustomToolStore, createCustomToolManager } from '@/custom-tool';
+import { createPostgresCustomToolStore } from '@/custom-tool';
+import { createCustomToolManager, resolveReferencedSecrets } from '@/custom-tool/manager.js';
 import { createCustomToolTools } from '@/tool/builtin/custom-tools';
 import { createIngestor } from '@/ingest';
 import { createIngestTool } from '@/tool/builtin/ingest';
@@ -811,6 +812,7 @@ async function main(): Promise<void> {
     registry,
     runtime,
     secretResolver,
+    resolveSecretsForCode: (code) => resolveReferencedSecrets(secretResolver, code),
     owner: AGENT_OWNER,
   });
 
@@ -867,7 +869,7 @@ async function main(): Promise<void> {
   if (config.mcp?.enabled && Object.keys(config.mcp.servers).length > 0) {
     const configuredClients: Array<McpClient> = Object.entries(config.mcp.servers).map(([serverName, rawServerConfig]) => {
       const serverConfig = resolveServerConfigEnv(rawServerConfig, process.env);
-      return createMcpClient(serverName, serverConfig);
+      return createMcpClient(serverName, serverConfig, {traceRecorder, traceOwner: AGENT_OWNER});
     });
     console.log(`[mcp] connecting to ${configuredClients.length} server(s)...`);
 
@@ -953,29 +955,12 @@ async function main(): Promise<void> {
     }
   }
 
-  // Cached secrets with 60-second TTL to reduce DB round-trips
-  let cachedSecrets: Record<string, string> | null = null;
-  let secretsCacheExpiry = 0;
-  const SECRET_CACHE_TTL_MS = 60000; // 60 seconds
-
-  // Getter reads fresh tokens from the DataSource at execution time.
+  // Getter reads only secrets referenced by the code being executed and fresh tokens from the DataSource.
   // Shared by both REPL and Bluesky agents so either can post to Bluesky.
   // Returns undefined when bluesky is not connected, so the sandbox
   // simply won't have BSKY_* constants available.
-  const getExecutionContext = async (): Promise<ExecutionContext> => {
-    // Return cached secrets if still valid
-    const now = Date.now();
-    let secrets: Record<string, string>;
-    if (cachedSecrets && now < secretsCacheExpiry) {
-      secrets = cachedSecrets;
-    } else {
-      // Fetch and cache secrets
-      const allKeys = await secretResolver.listKeys();
-      secrets = await secretResolver.resolve(allKeys);
-      cachedSecrets = secrets;
-      secretsCacheExpiry = now + SECRET_CACHE_TTL_MS;
-    }
-
+  const getExecutionContext = async (code: string): Promise<ExecutionContext> => {
+    const secrets = await resolveReferencedSecrets(secretResolver, code);
     const context: ExecutionContext = { secrets };
 
     if (blueskyConnected && blueskySource) {
@@ -1343,6 +1328,14 @@ async function main(): Promise<void> {
     // cannot overwrite the main agent's snapshot state.
     const subconsciousSkillsContextProvider = createSkillsContextProvider();
     const subconsciousWorkingMemoryContextProvider = createWorkingMemoryContextProvider();
+    const subconsciousLoopDetector = loopDetectionConfig.enabled
+      ? createLoopDetector({
+          config: loopDetectionConfig,
+          traceRecorder,
+          owner: AGENT_OWNER,
+          conversationId: config.subconscious.inner_conversation_id,
+        })
+      : undefined;
 
     // Build classified providers for subconscious agent (subset of main agent)
     const subconsciousClassifiedProviders: Array<ClassifiedProvider> = [
@@ -1383,6 +1376,7 @@ async function main(): Promise<void> {
       searchStore: searchStore,
       summarizationModel: summarizationModel,
       summarizationModelName: config.summarization?.name,
+      loopDetector: subconsciousLoopDetector,
     }, config.subconscious.inner_conversation_id);
 
     console.log(`subconscious agent enabled (conversation: ${config.subconscious.inner_conversation_id})`);
@@ -1477,8 +1471,8 @@ Report a brief summary of actions taken.`],
   }
 
   // Set up scheduler for periodic tasks
-  const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER);
-  const systemScheduler = createPostgresScheduler(persistence, 'system');
+  const agentScheduler = createPostgresScheduler(persistence, AGENT_OWNER, {pollOffsetMs: 0});
+  const systemScheduler = createPostgresScheduler(persistence, 'system', {pollOffsetMs: 15000});
 
   // Register scheduling tools
   const schedulingTools = createSchedulingTools({

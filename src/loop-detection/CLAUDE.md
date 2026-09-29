@@ -1,6 +1,6 @@
 # Loop Detection
 
-Last verified: 2026-05-16
+Last verified: 2026-09-28
 
 Circuit breaker that detects when the agent produces repetitive output, indicating a stuck loop.
 
@@ -20,7 +20,7 @@ Identifies consecutive similar responses using token bigram Jaccard similarity o
 ## Dependencies
 
 - **Uses:** Nothing external (pure module, zero imports outside this domain)
-- **Used by:** `src/agent/` (post-response check in agent loop), `src/config/` (schema defines `loop_detection` config section)
+- **Used by:** `src/agent/` (post-response check in agent loop), `src/config/` (schema defines `loop_detection` config section). The composition root constructs one detector instance per conversation: the main conversation and, when the subconscious system is enabled, a separate instance bound to the subconscious inner conversation id — the module itself stays conversation-agnostic.
 - **Config:** `[loop_detection]` section in config.toml (enabled, window_size, similarity_threshold, consecutive_trigger, action)
 
 ## Key Decisions

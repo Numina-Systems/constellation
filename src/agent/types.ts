@@ -97,7 +97,7 @@ export type AgentDependencies = {
   persistence: PersistenceProvider;
   config: AgentConfig;
   embedding?: EmbeddingProvider;
-  getExecutionContext?: () => Promise<ExecutionContext> | ExecutionContext;
+  getExecutionContext?: (code: string) => Promise<ExecutionContext> | ExecutionContext;
   compactor?: Compactor;
   traceRecorder?: TraceRecorder;
   owner?: string;

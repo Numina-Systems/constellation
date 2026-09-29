@@ -14,7 +14,7 @@ import type {
   StopReason,
 } from "./types.js";
 import { ModelError, type StreamEvent } from "./types.js";
-import { callWithRetry } from "./retry.js";
+import { callWithRetry, isRetryableModelError } from "./retry.js";
 import { composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import { normalizeOllamaUsage } from "./usage.js";
 
@@ -195,11 +195,11 @@ export function buildOllamaRequest(
 export function normalizeStopReason(
   response: OllamaChatResponse
 ): StopReason {
-  if (response.message.tool_calls && response.message.tool_calls.length > 0) {
-    return "tool_use";
-  }
   if (response.done_reason === "length") {
     return "max_tokens";
+  }
+  if (response.message.tool_calls && response.message.tool_calls.length > 0) {
+    return "tool_use";
   }
   return "end_turn";
 }
@@ -260,24 +260,6 @@ export function classifyHttpError(status: number, body: string): ModelError {
     false,
     { provider: "ollama", status }
   );
-}
-
-export function isRetryableOllamaError(error: unknown): boolean {
-  if (error instanceof ModelError) {
-    return error.retryable;
-  }
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    if (
-      message.includes("econnrefused") ||
-      message.includes("fetch failed") ||
-      message.includes("network") ||
-      message.includes("timeout")
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 export async function* parseNDJSON(
@@ -506,7 +488,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             throw error;
           }
         },
-        isRetryableOllamaError,
+        isRetryableModelError,
         undefined,
         { signal: cancellation.signal, deadline: request.deadline }
       ).finally(() => cancellation.dispose());
@@ -552,7 +534,7 @@ export function createOllamaAdapter(config: ModelConfig): ModelProvider {
             throw error;
           }
         },
-        isRetryableOllamaError,
+        isRetryableModelError,
         undefined,
         { signal: cancellation.signal, deadline: cancellation.deadline }
       );

@@ -197,6 +197,25 @@ describe('cache-bust-detection.AC1: Dimension Snapshotting', () => {
       expect(events[0]?.dimension).toBe('message_prefix');
     });
 
+    test('skillsChanged suppresses message-prefix-only cache busts', () => {
+      const flags: SuppressionFlags = {skillsChanged: true};
+      diagnostics.checkForCacheBust({
+        systemPrompt: 'stable prompt',
+        tools: [],
+        messages: [{role: 'user', content: '[Dynamic Context]\n\n## skills\n\nold'}],
+        turn: 1,
+        flags: {},
+      });
+      const events = diagnostics.checkForCacheBust({
+        systemPrompt: 'stable prompt',
+        tools: [],
+        messages: [{role: 'user', content: '[Dynamic Context]\n\n## skills\n\nnew'}],
+        turn: 2,
+        flags,
+      });
+      expect(events).toEqual([]);
+    });
+
     test('appending a new message does NOT produce event', () => {
       const flags: SuppressionFlags = {};
       const msg1 = {role: 'user', content: 'hello'};

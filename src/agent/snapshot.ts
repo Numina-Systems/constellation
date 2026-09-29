@@ -16,6 +16,7 @@ export type SnapshotResult = {
   readonly content: string | null;
   readonly hashes: ReadonlyMap<string, bigint>;
   readonly changedProviders: ReadonlyArray<string>;
+  readonly removedProviders?: ReadonlyArray<string>;
 };
 
 export type SnapshotState = {
@@ -88,6 +89,7 @@ export function createSnapshotState(): SnapshotState {
             content: null,
             hashes: newHashes,
             changedProviders: [],
+            removedProviders: [],
           };
         }
 
@@ -96,12 +98,15 @@ export function createSnapshotState(): SnapshotState {
           content: formatSnapshotContent(contentSections),
           hashes: newHashes,
           changedProviders: contentSections.map(s => s.name),
+          removedProviders: [],
         };
       }
 
       // SUBSEQUENT call: compare hashes
       const changedSections: Array<{name: string; content: string}> = [];
       const changedProviderNames: Array<string> = [];
+      const removedProviderNames = Array.from(previousHashes.keys()).filter(name => !newHashes.has(name));
+      changedProviderNames.push(...removedProviderNames);
 
       for (const {name, output, hash} of providerResults) {
         const previousHash = previousHashes.get(name);
@@ -126,6 +131,7 @@ export function createSnapshotState(): SnapshotState {
           content: null,
           hashes: newHashes,
           changedProviders: [],
+          removedProviders: [],
         };
       }
 
@@ -135,6 +141,7 @@ export function createSnapshotState(): SnapshotState {
         content: changedSections.length > 0 ? formatSnapshotContent(changedSections) : null,
         hashes: newHashes,
         changedProviders: changedProviderNames,
+        removedProviders: removedProviderNames,
       };
     },
 

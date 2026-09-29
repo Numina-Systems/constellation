@@ -1,16 +1,76 @@
 // pattern: Imperative Shell
 
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import { gfm } from "@truto/turndown-plugin-gfm";
 import type { FetchResult, FetchCacheEntry } from "./types.ts";
 
-export function createFetcher(config: {
-  readonly fetch_timeout: number;
-  readonly max_fetch_size: number;
-  readonly cache_ttl: number;
-}): (url: string, offset?: number) => Promise<FetchResult> {
+export class WebFetchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WebFetchError";
+  }
+}
+
+type ResolvedAddress = Readonly<{ address: string; family: number }>;
+type FetcherConfig = Readonly<{
+  fetch_timeout: number;
+  max_fetch_size: number;
+  cache_ttl: number;
+  fetchFn?: typeof fetch;
+  resolveHost?: (hostname: string) => Promise<ReadonlyArray<ResolvedAddress>>;
+}>;
+
+function isBlockedAddress(address: string): boolean {
+  const normalized = address.toLowerCase().replace(/^::ffff:/, "");
+  const family = isIP(normalized);
+  if (family === 4) {
+    const octets = normalized.split(".").map(Number);
+    const first = octets[0] ?? 0;
+    const second = octets[1] ?? 0;
+    return first === 0 || first === 10 || first === 127 ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) || first >= 224;
+  }
+  if (family !== 6) return true;
+  return normalized === "::1" || normalized === "::" ||
+    normalized.startsWith("fc") || normalized.startsWith("fd") ||
+    /^fe[89ab]/.test(normalized);
+}
+
+async function resolvePublicHost(hostname: string): Promise<ReadonlyArray<ResolvedAddress>> {
+  if (isIP(hostname)) return [{ address: hostname, family: isIP(hostname) }];
+  const results = await lookup(hostname, { all: true, verbatim: true });
+  return results.map(({address, family}) => ({address, family}));
+}
+
+async function validateUrl(url: string, resolveHost: (hostname: string) => Promise<ReadonlyArray<ResolvedAddress>>): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new WebFetchError("Invalid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new WebFetchError("Only http and https URLs are allowed");
+  }
+  const hostname = parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const addresses = isIP(hostname)
+    ? [{address: hostname, family: isIP(hostname)}]
+    : await resolveHost(hostname);
+  if (addresses.length === 0 || addresses.some(({address}) => isBlockedAddress(address))) {
+    throw new WebFetchError("Requests to private or reserved addresses are not allowed");
+  }
+  return parsed;
+}
+
+export function createFetcher(config: FetcherConfig): (url: string, offset?: number) => Promise<FetchResult> {
   const cache = new Map<string, FetchCacheEntry>();
 
   const turndown = new TurndownService({
@@ -39,12 +99,28 @@ export function createFetcher(config: {
     // Step 2: HTTP GET with timeout and content-type check
     let title = "";
     let extractedHtml = "";
-    let isTruncated = false;
 
     try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(config.fetch_timeout),
-      });
+      let currentUrl = url;
+      let response: Response | null = null;
+      // One absolute budget across every redirect hop so a redirect chain
+      // cannot multiply the per-request timeout.
+      const fetchDeadline = Date.now() + config.fetch_timeout;
+      for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+        const parsedUrl = await validateUrl(currentUrl, config.resolveHost ?? resolvePublicHost);
+        const remainingMs = fetchDeadline - Date.now();
+        if (remainingMs <= 0) throw new WebFetchError("Fetch deadline exceeded while following redirects");
+        response = await (config.fetchFn ?? fetch)(parsedUrl, {
+          signal: AbortSignal.timeout(remainingMs),
+          redirect: "manual",
+        });
+        if (response.status < 300 || response.status >= 400) break;
+        if (redirectCount === 5) throw new WebFetchError("Redirect limit exceeded");
+        const location = response.headers.get("location");
+        if (!location) throw new WebFetchError("Redirect response is missing Location");
+        currentUrl = new URL(location, parsedUrl).toString();
+      }
+      if (response === null) throw new WebFetchError("Failed to fetch URL");
 
       // Check content-type
       const contentType = response.headers.get("content-type");
@@ -53,12 +129,8 @@ export function createFetcher(config: {
         throw new Error(`Invalid content type: ${ctString}`);
       }
 
-      // Step 3: Read body with truncation check
-      let html = await response.text();
-      if (html.length > config.max_fetch_size) {
-        html = html.slice(0, config.max_fetch_size);
-        isTruncated = true;
-      }
+      // Step 3: Read only up to the configured body limit.
+      const html = await readBodyWithinLimit(response, config.max_fetch_size);
 
       // Step 4: Readability extraction
       try {
@@ -84,10 +156,7 @@ export function createFetcher(config: {
     }
 
     // Step 5: Turndown conversion
-    let markdown = turndown.turndown(extractedHtml);
-    if (isTruncated) {
-      markdown += "\n\n[Content truncated due to size limit]";
-    }
+    const markdown = turndown.turndown(extractedHtml);
 
     // Step 6: Cache store
     const entry: FetchCacheEntry = {
@@ -101,6 +170,35 @@ export function createFetcher(config: {
     // Step 7: Paginate
     return paginateMarkdown(url, title, markdown, offset);
   };
+}
+
+async function readBodyWithinLimit(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Array<Uint8Array> = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new WebFetchError("Response body exceeds the configured size limit");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    try { await reader.cancel(); } catch { /* Stream may already be closed. */ }
+    throw error;
+  }
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function paginateMarkdown(

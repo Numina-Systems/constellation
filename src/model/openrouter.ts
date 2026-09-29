@@ -9,7 +9,7 @@ import type {
   StreamEvent,
 } from "./types.js";
 import { ModelError } from "./types.js";
-import { callWithRetry } from "./retry.js";
+import { callWithRetry, isRetryableModelError } from "./retry.js";
 import { buildCancellationRequestOptions, composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import type { ServerRateLimitSync } from "../rate-limit/types.js";
 import {
@@ -20,22 +20,6 @@ import {
   normalizeStopReason,
   normalizeUsage,
 } from "./openai-shared.js";
-
-function isRetryableError(error: unknown): boolean {
-  if (error instanceof OpenAI.RateLimitError) {
-    return true;
-  }
-  if (error instanceof OpenAI.APIConnectionTimeoutError) {
-    return true;
-  }
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    if (message.includes("timeout") || message.includes("econnrefused")) {
-      return true;
-    }
-  }
-  return false;
-}
 
 function classifyError(error: unknown): never {
   if (error instanceof OpenAI.AuthenticationError) {
@@ -132,10 +116,11 @@ export function createOpenRouterAdapter(
   // in concurrent complete/stream calls
   const responseHeadersByCallId = new Map<symbol, Headers>();
 
-  const customFetch = async (
-    input: string | URL | Request,
-    init?: RequestInit
-  ): Promise<Response> => {
+  const createClient = (callId: symbol): OpenAI => {
+    const customFetch = async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ): Promise<Response> => {
     // Inject attribution headers into the request
     const headers = new Headers(init?.headers);
     if (config.openrouter?.referer) {
@@ -147,23 +132,17 @@ export function createOpenRouterAdapter(
 
     const response = await fetch(input, { ...init, headers });
 
-    // Store response headers keyed by call id - this will be retrieved
-    // immediately after the API call completes within the same callId scope
-    if (currentCallId) {
-      responseHeadersByCallId.set(currentCallId, response.headers);
-    }
+    responseHeadersByCallId.set(callId, response.headers);
 
     return response;
+    };
+
+    return new OpenAI({
+      apiKey,
+      baseURL: config.base_url ?? "https://openrouter.ai/api/v1",
+      fetch: customFetch,
+    });
   };
-
-  // Current call ID - set at the start of complete/stream, used in customFetch
-  let currentCallId: symbol | null = null;
-
-  const client = new OpenAI({
-    apiKey,
-    baseURL: config.base_url ?? "https://openrouter.ai/api/v1",
-    fetch: customFetch,
-  });
 
   function extractAndLogHeaders(
     model: string,
@@ -203,19 +182,24 @@ export function createOpenRouterAdapter(
     async complete(request: ModelRequest): Promise<ModelResponse> {
       const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
       const callId = Symbol("complete");
-      currentCallId = callId;
+      const client = createClient(callId);
 
       try {
         const response = await callWithRetry(async () => {
           try {
             const body = buildRequestBody(request, config, false);
 
-            return await client.chat.completions.create(
+            const response = await client.chat.completions.create(
               body as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
               ...(request.timeout != null || request.signal != null || request.deadline != null
                 ? [buildCancellationRequestOptions(cancellation)]
                 : []),
             );
+            if (!Array.isArray(response.choices) || response.choices.length === 0 || !response.choices[0]) {
+              const raw = JSON.stringify(response).slice(0, 500);
+              throw new ModelError("INVALID_RESPONSE", `no choices in response (model=${request.model}): ${raw}`, true, { provider: "openrouter" });
+            }
+            return response;
           } catch (error) {
             if (isOpenAIUserAbort(error)) {
               const timedOut = isTimeoutCancellation(cancellation.signal, request.deadline);
@@ -223,19 +207,9 @@ export function createOpenRouterAdapter(
             }
             classifyError(error);
           }
-        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: request.deadline });
+        }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: request.deadline });
 
-        const choice = response.choices?.[0];
-        if (!choice) {
-          const raw = JSON.stringify(response).slice(0, 500);
-          throw new ModelError(
-            "INVALID_RESPONSE",
-            `no choices in response (model=${request.model}): ${raw}`,
-            true,
-            { provider: "openrouter" }
-          );
-        }
-
+        const choice = response.choices[0]!;
         const usage = normalizeUsage(response.usage) ?? { input_tokens: 0, output_tokens: 0 };
         // OpenRouter extends the OpenAI message type with reasoning_content field.
         // The OpenAI SDK types don't include this field, so we cast through unknown
@@ -259,14 +233,15 @@ export function createOpenRouterAdapter(
           reasoning_content: reasoningContent ?? null,
         };
       } finally {
-        currentCallId = null;
+        responseHeadersByCallId.delete(callId);
+        cancellation.dispose();
       }
     },
 
     async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
       const cancellation = composeCancellation({ signal: request.signal, deadline: request.deadline, timeout: request.timeout });
       const callId = Symbol("stream");
-      currentCallId = callId;
+      const client = createClient(callId);
 
       let activeStream: { readonly controller: AbortController } | null = null;
       try {
@@ -287,7 +262,7 @@ export function createOpenRouterAdapter(
             }
             classifyError(error);
           }
-        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
+        }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
         activeStream = stream;
 
         // Log cost from initial response headers (captured by custom fetch)
@@ -295,7 +270,7 @@ export function createOpenRouterAdapter(
 
         let messageId = "";
         let finalUsage = null as ReturnType<typeof normalizeUsage>;
-        let finalStopReason: ReturnType<typeof normalizeStopReason> = "end_turn";
+        let finalStopReason: ReturnType<typeof normalizeStopReason> = "incomplete";
         // TODO: toolCallMap is overloaded for text block tracking — introduce separate textBlockStarted flag (fix in both openrouter.ts and openai-compat.ts)
         const toolCallMap = new Map<number, { name: string; arguments: string }>();
 
@@ -409,7 +384,6 @@ export function createOpenRouterAdapter(
       } finally {
         activeStream?.controller.abort();
         cancellation.dispose();
-        currentCallId = null;
       }
     },
   };

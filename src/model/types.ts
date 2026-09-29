@@ -54,7 +54,7 @@ export type ModelRequest = {
   stream_usage?: boolean;
 };
 
-export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";
+export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "incomplete";
 
 export type UsageStats = {
   input_tokens: number;

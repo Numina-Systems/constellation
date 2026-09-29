@@ -2,10 +2,21 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createOpenAICompatAdapter, normalizeMessages } from "./openai-compat.js";
+import { normalizeStopReason } from "./openai-shared.js";
 import { ModelError } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
 import type { Message } from "./types.js";
 import type OpenAI from "openai";
+
+describe("normalizeStopReason", () => {
+  it("maps null and content_filter finish reasons to incomplete", () => {
+    expect(normalizeStopReason(null)).toBe("incomplete");
+    expect(normalizeStopReason("content_filter")).toBe("incomplete");
+    expect(normalizeStopReason("stop")).toBe("end_turn");
+    expect(normalizeStopReason("length")).toBe("max_tokens");
+    expect(normalizeStopReason("tool_calls")).toBe("tool_use");
+  });
+});
 
 describe("createOpenAICompatAdapter", () => {
   describe("initialization", () => {

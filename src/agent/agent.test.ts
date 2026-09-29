@@ -283,6 +283,28 @@ describe('Agent loop', () => {
     };
   });
 
+  it('rejects an unsupported model stop reason instead of silently succeeding', async () => {
+    let providerCalls = 0;
+    const unsupportedResponse = {
+      content: [{type: 'text' as const, text: 'not terminal'}],
+      stop_reason: 'unrecognized_reason' as ModelResponse['stop_reason'],
+      usage: {input_tokens: 100, output_tokens: 10},
+    };
+    const model: ModelProvider = {
+      async complete() {
+        providerCalls += 1;
+        return unsupportedResponse;
+      },
+      async *stream() {
+        yield {type: 'message_start' as const, message: {id: 'msg', usage: {input_tokens: 0, output_tokens: 0}}};
+      },
+    };
+    const agent = createAgent(createAgentDependencies({model}));
+
+    await expect(agent.processMessage('Hello')).rejects.toThrow(/unsupported model stop reason/);
+    expect(providerCalls).toBe(1);
+  });
+
   it('AC1.1: processes a message and returns response text', async () => {
     const modelResponse: ModelResponse = {
       content: [{ type: 'text', text: 'Hello, this is the assistant response' }],
@@ -711,6 +733,60 @@ describe('Agent loop', () => {
 
     expect(codeExecuted).toBe(true);
     expect(response).toBe('Code ran successfully');
+  });
+
+  it('passes the executed code to getExecutionContext so secret resolution is scoped to referenced keys', async () => {
+    const receivedCode: Array<string> = [];
+
+    const mockRuntime: CodeRuntime = {
+      async execute(_code: string, _toolStubs: string) {
+        return {
+          success: true,
+          output: 'Code executed',
+          error: null,
+          tool_calls_made: 0,
+          duration_ms: 5,
+        };
+      },
+    };
+
+    const toolUseResponse: ModelResponse = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'code-scope-1',
+          name: 'execute_code',
+          input: { code: 'console.log(API_TOKEN)' },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const finalResponse: ModelResponse = {
+      content: [{ type: 'text', text: 'Code ran successfully' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+
+    const mockModel = createMockModelProvider([toolUseResponse, finalResponse]);
+    const deps: AgentDependencies = {
+      model: mockModel,
+      memory: mockMemory,
+      registry: mockRegistry,
+      runtime: mockRuntime,
+      persistence: mockPersistence,
+      config,
+      getExecutionContext: (code: string) => {
+        receivedCode.push(code);
+        return { secrets: {} };
+      },
+    };
+
+    const agent = createAgent(deps);
+    await agent.processMessage('Execute some code');
+
+    expect(receivedCode).toEqual(['console.log(API_TOKEN)']);
   });
 
   it('returns text response on max_tokens stop reason', async () => {
@@ -2284,8 +2360,9 @@ describe('recall system prompt stability', () => {
     expect(buildSystemPromptCalls.count).toBe(1);
   });
 
-  it('cache-friendliness.AC2.1 (unit): system prompt is byte-identical across turns when skills are unchanged', async () => {
-    // Create a mock skill registry that returns the same skills both times
+  it('cache-friendliness.AC2.1 (unit): system prompt stays stable when skill sets change without cache warnings', async () => {
+    let skillLookupCount = 0;
+    // Create a mock skill registry that returns different skills on successive turns.
     const skillDefinition: SkillDefinition = {
       id: 'skill-1',
       metadata: {
@@ -2300,6 +2377,12 @@ describe('recall system prompt stability', () => {
       contentHash: 'abc123',
     };
 
+    const secondSkillDefinition: SkillDefinition = {
+      ...skillDefinition,
+      id: 'skill-2',
+      metadata: {...skillDefinition.metadata, name: 'Second Skill'},
+      contentHash: 'def456',
+    };
     const fakeSkillRegistry: SkillRegistry = {
       async load() {},
       getAll() {
@@ -2312,8 +2395,8 @@ describe('recall system prompt stability', () => {
         return [];
       },
       async getRelevant(_context: string, _limit?: number, _threshold?: number) {
-        // Return the same skill both times
-        return [skillDefinition];
+        skillLookupCount += 1;
+        return skillLookupCount === 1 ? [skillDefinition] : [secondSkillDefinition];
       },
       async createAgentSkill() {
         return skillDefinition;
@@ -2365,22 +2448,24 @@ describe('recall system prompt stability', () => {
     };
 
     const agent = createAgent(deps);
+    const warnings: Array<string> = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: Array<unknown>) => warnings.push(args.map(String).join(' '));
+    try {
+      await agent.processMessage('Hello');
+      const firstSystemPrompt = tracker.requests[0]?.system ?? '';
+      tracker.requests = [];
+      await agent.processMessage('Hello again');
+      const secondSystemPrompt = tracker.requests[0]?.system ?? '';
 
-    // First message
-    await agent.processMessage('Hello');
-    const firstSystemPrompt = tracker.requests[0]?.system ?? '';
-
-    // Reset tracker for second message
-    tracker.requests = [];
-
-    // Second message (skills unchanged)
-    await agent.processMessage('Hello again');
-    const secondSystemPrompt = tracker.requests[0]?.system ?? '';
-
-    // System prompt should be byte-identical (no skills section in system prompt)
-    expect(firstSystemPrompt).toBe(secondSystemPrompt);
-    // Verify skills section is NOT in system prompt
-    expect(firstSystemPrompt).not.toMatch(/## Active Skills/);
+      expect(firstSystemPrompt).toBe(secondSystemPrompt);
+      expect(firstSystemPrompt).not.toMatch(/## Active Skills/);
+      const secondUserMessage = tracker.requests[0]?.messages.at(-1);
+      expect(secondUserMessage?.content).toContain('[Dynamic Context — Updated Sections]');
+      expect(warnings.filter(message => message.includes('cache bust detected'))).toEqual([]);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it('cache-friendliness.AC2.2 (unit): skill content appears in dynamic context attachment', async () => {
@@ -2844,6 +2929,7 @@ describe('cache-friendliness.AC3: Working memory via snapshot pipeline', () => {
     expect(turn2LastMsg).toBeDefined();
     expect(typeof turn2LastMsg!.content).toBe('string');
     const turn2ContentStr = String(turn2LastMsg!.content);
+    expect(turn2ContentStr).toContain('[Dynamic Context — Updated Sections]');
     expect(turn2ContentStr).toContain('## working-memory');
     expect(turn2ContentStr).toContain('Updated state');
   });

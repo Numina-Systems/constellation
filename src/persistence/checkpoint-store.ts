@@ -4,6 +4,7 @@
 import type {PersistenceProvider, QueryFunction} from './types.ts';
 import type {SessionCheckpoint} from '@/agent/checkpoint-types.ts';
 import {deserializeCheckpoint} from '@/agent/checkpoint-serializer.ts';
+import {ConstellationError, PersistenceError, isConstellationError} from '@/errors/index.js';
 
  type CheckpointRow = {readonly checkpoint_data: unknown};
 
@@ -43,8 +44,14 @@ export function createCheckpointStore(persistence: PersistenceProvider): Checkpo
     try {
       await saveWithQuery(persistence.query, checkpoint);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`failed to save checkpoint ${checkpoint.id} for conversation ${checkpoint.conversationId}: ${message}`);
+      if (isConstellationError(error)) throw error;
+      const cause = error instanceof Error ? error : new Error(String(error));
+      throw new PersistenceError(
+        'QUERY_FAILED',
+        'failed to save checkpoint',
+        {operation: 'checkpoint.save', checkpointId: checkpoint.id, conversationId: checkpoint.conversationId},
+        {cause, suggestion: 'check database availability and checkpoint schema'},
+      );
     }
   }
 
@@ -61,7 +68,7 @@ export function createCheckpointStore(persistence: PersistenceProvider): Checkpo
   }
 
   async function prune(conversationId: string, retainCount: number): Promise<number> {
-    if (!Number.isInteger(retainCount) || retainCount < 1) throw new Error('checkpoint retention must be a positive integer');
+    if (!Number.isInteger(retainCount) || retainCount < 1) throw new ConstellationError('checkpoint retention must be a positive integer', 'INVALID_CHECKPOINT_RETENTION', 'persistence', {retainCount}, {suggestion: 'use a positive integer retention count'});
     return pruneWithQuery(persistence.query, conversationId, retainCount);
   }
 
@@ -74,7 +81,7 @@ export async function saveAndPruneCheckpoint(
   checkpoint: SessionCheckpoint,
   retainCount: number,
 ): Promise<number> {
-  if (!Number.isInteger(retainCount) || retainCount < 1) throw new Error('checkpoint retention must be a positive integer');
+  if (!Number.isInteger(retainCount) || retainCount < 1) throw new ConstellationError('checkpoint retention must be a positive integer', 'INVALID_CHECKPOINT_RETENTION', 'persistence', {retainCount}, {suggestion: 'use a positive integer retention count'});
   return persistence.withTransaction(async (query) => {
     await saveWithQuery(query, checkpoint);
     return pruneWithQuery(query, checkpoint.conversationId, retainCount);

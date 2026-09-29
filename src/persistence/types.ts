@@ -23,6 +23,7 @@ export type TransactionReconciler<TResult> = (
 
 export type PersistenceProviderOptions = {
   readonly transactionFaults?: PostgresTransactionFaults;
+  readonly poolFactory?: (connectionString: string) => import('pg').Pool;
 };
 
 export type PostgresTransactionFaults = {

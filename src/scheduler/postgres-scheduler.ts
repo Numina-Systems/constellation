@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { PersistenceProvider } from '../persistence/types.ts';
 import type { Scheduler, ScheduledTask } from '../extensions/scheduler.ts';
 import type { SchedulerRow } from './types.ts';
+import {ConstellationError, isConstellationError} from '@/errors/index.js';
 
 export type PostgresScheduler = Scheduler & {
   start(): void;
@@ -20,12 +21,24 @@ function parseScheduledTask(row: SchedulerRow): ScheduledTask {
   };
 }
 
+export type PostgresSchedulerOptions = Readonly<{
+  /** Delay before the first poll; defaults to immediate polling. */
+  readonly pollOffsetMs?: number;
+  /** Poll cadence; defaults to 60 seconds. */
+  readonly pollIntervalMs?: number;
+}>;
+
 export function createPostgresScheduler(
   persistence: PersistenceProvider,
   owner: string,
+  options: PostgresSchedulerOptions = {},
 ): PostgresScheduler {
-  let handler: ((task: ScheduledTask) => void) | null = null;
+  let handler: ((task: ScheduledTask) => void | Promise<void>) | null = null;
   let intervalId: ReturnType<typeof setInterval> | null = null;
+  let initialTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  const pollOffsetMs = Math.max(0, options.pollOffsetMs ?? 0);
+  const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? 60000);
+  const inFlightTaskIds = new Set<string>();
 
   async function tick(): Promise<void> {
     try {
@@ -37,11 +50,13 @@ export function createPostgresScheduler(
       );
 
       for (const row of rows) {
+        if (inFlightTaskIds.has(row.id)) continue;
+        inFlightTaskIds.add(row.id);
         try {
           const task = parseScheduledTask(row);
 
           if (handler) {
-            handler(task);
+            await handler(task);
           }
 
           const nextRun = new Cron(row.schedule).nextRun();
@@ -62,8 +77,12 @@ export function createPostgresScheduler(
         } catch (error) {
           console.warn(
             `[scheduler] Error processing task ${row.id}:`,
-            error instanceof Error ? error.message : error,
+            isConstellationError(error)
+              ? {code: error.code, subsystem: error.subsystem, context: error.context, message: error.message}
+              : error instanceof Error ? error.message : error,
           );
+        } finally {
+          inFlightTaskIds.delete(row.id);
         }
       }
     } catch (error) {
@@ -82,12 +101,22 @@ export function createPostgresScheduler(
       try {
         nextRun = new Cron(task.schedule).nextRun();
       } catch (error) {
-        throw new Error(`Invalid cron expression: ${task.schedule}`);
+        throw new ConstellationError(
+          'invalid cron expression',
+          'INVALID_CRON_EXPRESSION',
+          'scheduler',
+          {schedule: task.schedule},
+          {cause: error instanceof Error ? error : undefined, suggestion: 'provide a valid cron expression'},
+        );
       }
 
       if (nextRun === null) {
-        throw new Error(
-          `Invalid cron expression or no future occurrence: ${task.schedule}`,
+        throw new ConstellationError(
+          'cron expression has no future occurrence',
+          'INVALID_CRON_EXPRESSION',
+          'scheduler',
+          {schedule: task.schedule},
+          {suggestion: 'provide a cron expression with a future occurrence'},
         );
       }
 
@@ -114,16 +143,23 @@ export function createPostgresScheduler(
     },
 
     start(): void {
-      void tick();
-
-      if (intervalId === null) {
+      if (intervalId !== null || initialTimeoutId !== null) return;
+      const beginPolling = (): void => {
+        initialTimeoutId = null;
+        void tick();
         intervalId = setInterval(() => {
           void tick();
-        }, 60000);
-      }
+        }, pollIntervalMs);
+      };
+      if (pollOffsetMs === 0) beginPolling();
+      else initialTimeoutId = setTimeout(beginPolling, pollOffsetMs);
     },
 
     stop(): void {
+      if (initialTimeoutId !== null) {
+        clearTimeout(initialTimeoutId);
+        initialTimeoutId = null;
+      }
       if (intervalId !== null) {
         clearInterval(intervalId);
         intervalId = null;

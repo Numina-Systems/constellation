@@ -1,6 +1,7 @@
 // pattern: Functional Core
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { isRetryableModelError } from "./retry.js";
 import {
   normalizeToolDefinitions,
   normalizeMessages,
@@ -8,7 +9,7 @@ import {
   normalizeResponse,
   normalizeStopReason,
   classifyHttpError,
-  isRetryableOllamaError,
+
   createOllamaAdapter,
   parseNDJSON,
   mapChunksToStreamEvents,
@@ -784,6 +785,16 @@ describe("normalizeStopReason", () => {
     expect(result).toBe("end_turn");
   });
 
+  it("does not report tool_use when a tool call is truncated by done_reason length", () => {
+    const response = {
+      model: "llama3.2",
+      message: {role: "assistant" as const, content: "", tool_calls: [{type: "function" as const, function: {name: "unfinished", arguments: {}}}]},
+      done: true,
+      done_reason: "length" as const,
+    };
+    expect(normalizeStopReason(response)).toBe("max_tokens");
+  });
+
   it("should return max_tokens when done_reason is length", () => {
     const response = {
       model: "llama3.2",
@@ -948,47 +959,47 @@ describe("classifyHttpError - client errors", () => {
 });
 
 // ollama-adapter.AC5.4: Network errors are retryable
-describe("isRetryableOllamaError", () => {
+describe("shared retry classifier for Ollama errors", () => {
   it("should return true for ECONNREFUSED error", () => {
     const error = new Error("ECONNREFUSED");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return true for fetch failed error", () => {
     const error = new Error("fetch failed");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return true for network error", () => {
     const error = new Error("network error");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return true for timeout error", () => {
     const error = new Error("timeout");
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 
   it("should return false for non-network error", () => {
     const error = new Error("some other error");
 
-    expect(isRetryableOllamaError(error)).toBe(false);
+    expect(isRetryableModelError(error)).toBe(false);
   });
 
   it("should return false for non-retryable ModelError", () => {
     const error = new ModelError("INVALID_RESPONSE", "not retryable", false);
 
-    expect(isRetryableOllamaError(error)).toBe(false);
+    expect(isRetryableModelError(error)).toBe(false);
   });
 
   it("should return true for retryable ModelError", () => {
     const error = new ModelError("RATE_LIMITED", "retryable", true);
 
-    expect(isRetryableOllamaError(error)).toBe(true);
+    expect(isRetryableModelError(error)).toBe(true);
   });
 });
 

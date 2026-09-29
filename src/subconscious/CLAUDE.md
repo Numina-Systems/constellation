@@ -33,7 +33,7 @@ Autonomous curiosity system that gives the agent an inner life of interests, cur
 - **Boundary**: Domain types and impulse builders are Functional Core. Registry adapter, impulse assembler, and context provider are Imperative Shell.
 
 ## Key Decisions
-- Separate conversation: Subconscious runs on its own conversation ID to isolate inner exploration from user-facing dialogue
+- Separate conversation: Subconscious runs on its own conversation ID to isolate inner exploration from user-facing dialogue. The subconscious agent gets its own loop detector instance bound to the inner conversation id (`createLoopDetector` with `conversationId: config.subconscious.inner_conversation_id`), so inner repetition is detected independently of the main conversation; the main agent's `checkpointFn`/`integrityLifecycle` are deliberately not wired into it, keeping the checkpoint/integrity lifecycle main-conversation-bound
 - Engagement decay with half-life: Interests naturally fade unless actively engaged, preventing unbounded interest accumulation
 - Three impulse types: Regular impulses (periodic exploration), morning agenda (daily planning), wrap-up (daily reflection) -- morning/wrap-up tied to activity wake/sleep transitions
 - Introspection loop: Periodic review of recent subconscious conversation, formalizes noteworthy observations into interests/curiosity threads, maintains rolling digest of unformalised thoughts via `introspection-digest` memory label

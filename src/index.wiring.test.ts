@@ -1107,6 +1107,41 @@ describe('composition root wiring: structural verification (AC2.2)', () => {
     expect(blueskyAgentCreation.test(indexSource)).toBe(false);
   });
 
+  it('wires an independent loop detector into both main and subconscious agents when enabled', async () => {
+    const {readFileSync} = await import('fs');
+    const {dirname, join} = await import('path');
+    const {fileURLToPath} = await import('url');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'index.ts'), 'utf-8');
+    const mainAgentBlock = source.match(/const agent = createProductionAgent\(([\s\S]*?)\}, mainConversationId\)/)?.[1] ?? '';
+    const subconsciousBlock = source.match(/subconsciousAgent = createProductionAgent\(([\s\S]*?)\}, config\.subconscious\.inner_conversation_id\)/)?.[1] ?? '';
+
+    expect(mainAgentBlock).toContain('loopDetector,');
+    expect(source).toContain('const subconsciousLoopDetector = loopDetectionConfig.enabled');
+    expect(source).toContain('conversationId: config.subconscious.inner_conversation_id');
+    expect(subconsciousBlock).toContain('loopDetector: subconsciousLoopDetector,');
+    expect(subconsciousBlock).not.toContain('checkpointFn');
+    expect(subconsciousBlock).not.toContain('integrityLifecycle');
+  });
+
+  it('passes the shared trace recorder and owner into MCP client construction', async () => {
+    const {readFileSync} = await import('fs');
+    const {dirname, join} = await import('path');
+    const {fileURLToPath} = await import('url');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'index.ts'), 'utf-8');
+
+    expect(source).toContain('createMcpClient(serverName, serverConfig, {traceRecorder, traceOwner: AGENT_OWNER})');
+  });
+
+  it('staggers the two composition-root scheduler poll offsets', async () => {
+    const {readFileSync} = await import('fs');
+    const {dirname, join} = await import('path');
+    const {fileURLToPath} = await import('url');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'index.ts'), 'utf-8');
+
+    expect(source).toContain("createPostgresScheduler(persistence, AGENT_OWNER, {pollOffsetMs: 0})");
+    expect(source).toContain("createPostgresScheduler(persistence, 'system', {pollOffsetMs: 15000})");
+  });
+
   it('processEventQueue is called with single main agent for external events', () => {
     // Structural/smoke check: Verify the function is exported and designed for unified queue.
     // This is a thin assertion but confirms export exists in the composition root.

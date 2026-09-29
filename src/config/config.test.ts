@@ -47,8 +47,13 @@ describe("loadConfig env var overrides", () => {
   afterEach(() => {
     delete process.env["BLUESKY_HANDLE"];
     delete process.env["BLUESKY_APP_PASSWORD"];
+    delete process.env["DATABASE_URL"];
     delete process.env["ANTHROPIC_API_KEY"];
     delete process.env["OPENAI_COMPAT_API_KEY"];
+    delete process.env["OPENROUTER_API_KEY"];
+    delete process.env["EMBEDDING_API_KEY"];
+    delete process.env["BRAVE_API_KEY"];
+    delete process.env["TAVILY_API_KEY"];
     delete process.env["MAILGUN_API_KEY"];
     delete process.env["MAILGUN_DOMAIN"];
     try {
@@ -292,6 +297,157 @@ allowed_recipients = ["user@example.com"]
 
       expect(config.email?.mailgun_api_key).toBe("env-key");
       expect(config.email?.mailgun_domain).toBe("env.domain.com");
+    });
+    it("env API keys override TOML for every configured API-key section", () => {
+      const tomlContent = `
+[model]
+provider = "openai-compat"
+name = "kimi-k2.5"
+base_url = "https://api.moonshot.ai/v1"
+api_key = "model-toml-key"
+
+[summarization]
+provider = "anthropic"
+name = "claude-test"
+api_key = "summary-toml-key"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+api_key = "embedding-toml-key"
+
+[web]
+brave_api_key = "brave-toml-key"
+tavily_api_key = "tavily-toml-key"
+
+[email]
+mailgun_api_key = "mailgun-toml-key"
+mailgun_domain = "toml.example.com"
+from_address = "noreply@example.com"
+allowed_recipients = ["user@example.com"]
+
+[database]
+url = "postgresql://localhost/test"
+`;
+      writeFileSync(tempPath, tomlContent);
+      process.env["OPENAI_COMPAT_API_KEY"] = "model-env-key";
+      process.env["ANTHROPIC_API_KEY"] = "summary-env-key";
+      process.env["EMBEDDING_API_KEY"] = "embedding-env-key";
+      process.env["BRAVE_API_KEY"] = "brave-env-key";
+      process.env["TAVILY_API_KEY"] = "tavily-env-key";
+      process.env["MAILGUN_API_KEY"] = "mailgun-env-key";
+
+      const config = loadConfig(tempPath);
+
+      expect(config.model.api_key).toBe("model-env-key");
+      expect(config.summarization?.api_key).toBe("summary-env-key");
+      expect(config.embedding.api_key).toBe("embedding-env-key");
+      expect(config.web?.brave_api_key).toBe("brave-env-key");
+      expect(config.web?.tavily_api_key).toBe("tavily-env-key");
+      expect(config.email?.mailgun_api_key).toBe("mailgun-env-key");
+      expect(config.email?.mailgun_domain).toBe("toml.example.com");
+    });
+
+    it("uses TOML API keys when matching environment variables are absent", () => {
+      const tomlContent = `
+[model]
+provider = "openai-compat"
+name = "kimi-k2.5"
+base_url = "https://api.moonshot.ai/v1"
+api_key = "model-toml-key"
+
+[summarization]
+provider = "anthropic"
+name = "claude-test"
+api_key = "summary-toml-key"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+api_key = "embedding-toml-key"
+
+[database]
+url = "postgresql://localhost/test"
+`;
+      writeFileSync(tempPath, tomlContent);
+
+      const config = loadConfig(tempPath);
+
+      expect(config.model.api_key).toBe("model-toml-key");
+      expect(config.summarization?.api_key).toBe("summary-toml-key");
+      expect(config.embedding.api_key).toBe("embedding-toml-key");
+    });
+
+    it("treats empty and whitespace-only API-key environment values as unset", () => {
+      const tomlContent = `
+[model]
+provider = "openai-compat"
+name = "kimi-k2.5"
+base_url = "https://api.moonshot.ai/v1"
+api_key = "model-toml-key"
+
+[summarization]
+provider = "anthropic"
+name = "claude-test"
+api_key = "summary-toml-key"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+api_key = "embedding-toml-key"
+
+[web]
+brave_api_key = "brave-toml-key"
+tavily_api_key = "tavily-toml-key"
+
+[email]
+mailgun_api_key = "mailgun-toml-key"
+mailgun_domain = "toml.example.com"
+from_address = "noreply@example.com"
+allowed_recipients = ["user@example.com"]
+
+[database]
+url = "postgresql://localhost/test"
+`;
+      writeFileSync(tempPath, tomlContent);
+      process.env["OPENAI_COMPAT_API_KEY"] = "   ";
+      process.env["ANTHROPIC_API_KEY"] = "";
+      process.env["EMBEDDING_API_KEY"] = "   ";
+      process.env["BRAVE_API_KEY"] = "";
+      process.env["TAVILY_API_KEY"] = "  ";
+      process.env["MAILGUN_API_KEY"] = " ";
+
+      const config = loadConfig(tempPath);
+
+      expect(config.model.api_key).toBe("model-toml-key");
+      expect(config.summarization?.api_key).toBe("summary-toml-key");
+      expect(config.embedding.api_key).toBe("embedding-toml-key");
+      expect(config.web?.brave_api_key).toBe("brave-toml-key");
+      expect(config.web?.tavily_api_key).toBe("tavily-toml-key");
+      expect(config.email?.mailgun_api_key).toBe("mailgun-toml-key");
+      expect(config.email?.mailgun_domain).toBe("toml.example.com");
+    });
+
+    it("does not change non-API environment override behavior", () => {
+      const tomlContent = `
+[model]
+provider = "anthropic"
+name = "claude-test"
+
+[embedding]
+provider = "openai"
+model = "text-embedding-3-small"
+
+[database]
+url = "postgresql://localhost/toml"
+`;
+      writeFileSync(tempPath, tomlContent);
+      process.env["DATABASE_URL"] = "postgresql://localhost/environment";
+
+      const config = loadConfig(tempPath);
+
+      expect(config.database.url).toBe("postgresql://localhost/environment");
+      expect(config.model.api_key).toBeUndefined();
     });
   });
 });

@@ -8,8 +8,9 @@ function isDimensionSuppressed(
 
   switch (dimension) {
     case 'system_prompt':
-    case 'message_prefix':
       return flags.compactionOccurred === true;
+    case 'message_prefix':
+      return flags.compactionOccurred === true || flags.skillsChanged === true;
     case 'tool_definitions':
       return flags.toolsChanged === true;
     case 'beta_headers':
@@ -98,6 +99,7 @@ export type CacheBustEvent = {
 export type SuppressionFlags = {
   readonly compactionOccurred?: boolean;
   readonly toolsChanged?: boolean;
+  readonly skillsChanged?: boolean;
   readonly isFirstTurn?: boolean;
 };
 

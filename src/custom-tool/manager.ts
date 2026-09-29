@@ -11,6 +11,7 @@ export type CustomToolManagerDeps = Readonly<{
   readonly registry: ToolRegistry;
   readonly runtime: CodeRuntime;
   readonly secretResolver: SecretResolver;
+  readonly resolveSecretsForCode?: (code: string) => Promise<Record<string, string>>;
   readonly owner: string;
 }>;
 
@@ -24,8 +25,14 @@ export type CustomToolManager = Readonly<{
 
 type MutationValue = CustomToolDefinition | boolean | null;
 
+export async function resolveReferencedSecrets(secretResolver: SecretResolver, code: string): Promise<Record<string, string>> {
+  const keys = await secretResolver.listKeys();
+  const referencedKeys = keys.filter(key => new RegExp(`(^|[^A-Za-z0-9_$])${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}($|[^A-Za-z0-9_$])`).test(code));
+  return secretResolver.resolve(referencedKeys);
+}
+
 export function createCustomToolManager(deps: CustomToolManagerDeps): CustomToolManager {
-  const {store, registry, runtime, secretResolver, owner} = deps;
+  const {store, registry, runtime, secretResolver, resolveSecretsForCode, owner} = deps;
   const definitionCache = new Map<string, CustomToolDefinition>();
   let tail: Promise<unknown> = Promise.resolve();
 
@@ -41,8 +48,9 @@ export function createCustomToolManager(deps: CustomToolManagerDeps): CustomTool
       if (!cached) return {success: false, output: '', error: `custom tool is unavailable: ${definition.name}`};
       const paramsBlock = `const PARAMS = ${JSON.stringify(params)} as const;`;
       const wrappedCode = `${paramsBlock}\n${cached.code}`;
-      const keys = await secretResolver.listKeys();
-      const secrets = await secretResolver.resolve(keys);
+      const secrets = resolveSecretsForCode
+        ? await resolveSecretsForCode(cached.code)
+        : await resolveReferencedSecrets(secretResolver, cached.code);
       const result = await runtime.execute(wrappedCode, registry.generateStubs(), {secrets, ...options});
       if (result.outcome === 'cancelled' || result.outcome === 'outcome_unknown') {
         // Typed runtime outcomes must survive dispatch: an unresolved host effect

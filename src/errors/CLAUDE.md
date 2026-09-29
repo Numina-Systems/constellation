@@ -1,13 +1,13 @@
 # Errors
 
-Last verified: 2026-05-17
+Last verified: 2026-09-28
 
 ## Purpose
 Provides a structured error hierarchy so all subsystems throw typed, traceable errors with consistent shape. Enables structured logging, trace recording, and actionable error messages.
 
 ## Contracts
-- **Exposes**: `ConstellationError` (base class), subsystem errors (`MemoryError`, `ModelError`, `PersistenceError`, `AgentError`, `ConfigError`, `ShellError`, `SecretsError`), `isConstellationError(e)`, `wrapError(e, code, subsystem, context)`, `traceError(recorder, error, operation)`, `sanitizeQuery(sql)`
-- **Guarantees**: All subsystem errors extend `ConstellationError` and carry `code` (string enum per subsystem), `subsystem` (identifier), `context` (serializable metadata), and optional `suggestion`. `toJSON()` safely serializes context (skipping unserializable values). `toDisplayString()` produces `[subsystem:code] message` format. `traceError()` records errors as operation traces fire-and-forget.
+- **Exposes**: `ConstellationError` (base class), subsystem errors (`MemoryError`, `ModelError`, `PersistenceError`, `AgentError`, `ConfigError`, `ShellError`, `SecretsError`), `isConstellationError(e)`, `wrapError(e, code, subsystem, context)`, `traceError(error, recorder, owner, conversationId)`, `sanitizeQuery(sql)`
+- **Guarantees**: All subsystem errors extend `ConstellationError` and carry `code` (string enum per subsystem), `subsystem` (identifier), `context` (serializable metadata), and optional `suggestion`. `toJSON()` safely serializes context (skipping unserializable values). `toDisplayString()` produces `[subsystem:code] message` format. `traceError(error, recorder, owner, conversationId)` records errors as operation traces fire-and-forget, attributing the entry to the given owner/conversation and to `error.subsystem` as the tool name.
 - **Expects**: Subsystem modules import their error class from here and throw it. Catch blocks use `traceError()` when a `TraceRecorder` is available. Domain `types.ts` files re-export error types for backward compatibility.
 
 ## Dependencies

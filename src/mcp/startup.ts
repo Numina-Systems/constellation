@@ -2,7 +2,10 @@
 
 import type { ContextProvider } from '@/agent/types.ts';
 import type { Tool, ToolDefinition, ToolRegistry } from '@/tool/types.ts';
-import type { McpClient, McpDiscoveryOptions, McpToolRegistration } from './types.ts';
+import {McpDiscoveryError, type McpClient, type McpDiscoveryOptions, type McpToolRegistration} from './types.ts';
+
+export const MCP_SERVER_STARTUP_TIMEOUT_MS = 15_000;
+export const MCP_DISCONNECT_SETTLE_TIMEOUT_MS = 3_000;
 
 export type McpStartupFailure = Readonly<{readonly name: string; readonly error: string}>;
 export type McpStartupResult = Readonly<{
@@ -22,19 +25,56 @@ export function formatMcpStartupSummary(connected: ReadonlyArray<string>, failed
 }
 
 /** Connects configured clients independently and always continues after one server fails. */
+export type McpStartupOptions = Readonly<{
+  readonly discovery?: McpDiscoveryOptions;
+  readonly serverTimeoutMs?: number;
+  readonly disconnectSettleTimeoutMs?: number;
+}>;
+
 export async function connectMcpServers(
   clients: ReadonlyArray<McpClient>,
-  options?: McpDiscoveryOptions,
+  startupOptions: McpStartupOptions = {},
 ): Promise<McpStartupResult> {
+  const options = startupOptions.discovery;
+  const startupTimeoutMs = startupOptions.serverTimeoutMs ?? MCP_SERVER_STARTUP_TIMEOUT_MS;
+  const disconnectSettleMs = startupOptions.disconnectSettleTimeoutMs ?? MCP_DISCONNECT_SETTLE_TIMEOUT_MS;
   const connected: Array<McpClient> = [];
   const failed: Array<McpStartupFailure> = [];
   for (const client of clients) {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
-      await client.connect(options);
+      await Promise.race([
+        client.connect(options),
+        new Promise<never>((_resolve, reject) => {
+          timeoutId = setTimeout(() => reject(new McpDiscoveryError(
+            'mcp_startup_timeout',
+            `MCP ${client.serverName} startup timed out`,
+            {server: client.serverName, timeoutMs: startupTimeoutMs},
+            {suggestion: 'check server availability and startup configuration'},
+          )), Math.max(1, startupTimeoutMs));
+        }),
+      ]);
       connected.push(client);
     } catch (error) {
-      await client.disconnect().catch(() => undefined);
-      failed.push({name: client.serverName, error: safeFailure(error)});
+      // Bounded settle: a transport whose close() hangs must not stall the
+      // sequential startup loop; the disconnect continues in the background.
+      await new Promise<void>((resolve) => {
+        const settleTimer = setTimeout(resolve, Math.max(1, disconnectSettleMs));
+        client.disconnect().catch(() => undefined).finally(() => {
+          clearTimeout(settleTimer);
+          resolve();
+        });
+      });
+      const failure = safeFailure(error);
+      failed.push({name: client.serverName, error: failure});
+      console.error('[mcp] startup server skipped', {
+        server: client.serverName,
+        code: error instanceof McpDiscoveryError ? error.code : 'mcp_discovery_transport_error',
+        error: failure,
+        success: false,
+      });
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
     }
   }
   return {connected, failed, summary: formatMcpStartupSummary(connected.map((client) => client.serverName), failed)};
@@ -46,7 +86,7 @@ export function publishMcpRegistrations(registry: ToolRegistry, registrations: R
   const existingNames = new Set(registry.getDefinitions().map((definition) => definition.name));
   for (const registration of registrations) {
     const name = registration.definition.name;
-    if (names.has(name) || existingNames.has(name)) throw new Error(`MCP registration collision before publication: ${name}`);
+    if (names.has(name) || existingNames.has(name)) throw new McpDiscoveryError('mcp_registration_collision', `MCP registration collision before publication: ${name}`, {name}, {suggestion: 'use unique MCP tool names'});
     names.add(name);
   }
   const reserved: Array<string> = [];

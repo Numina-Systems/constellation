@@ -23,25 +23,9 @@ import type {
   ToolDefinition,
 } from "./types.js";
 import { ModelError } from "./types.js";
-import { callWithRetry } from "./retry.js";
+import { callWithRetry, isRetryableModelError } from "./retry.js";
 import { buildCancellationRequestOptions, composeCancellation, isTimeoutCancellation } from "./cancellation.js";
 import { normalizeAnthropicUsage } from "./usage.js";
-
-function isRetryableError(error: unknown): boolean {
-  if (error instanceof Anthropic.APIUserAbortError) {
-    return false;
-  }
-  if (error instanceof Anthropic.RateLimitError) {
-    return true;
-  }
-  if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    return true;
-  }
-  if (error instanceof Error && error.message.includes("timeout")) {
-    return true;
-  }
-  return false;
-}
 
 export function buildAnthropicSystemParam(
   requestSystem: string | undefined,
@@ -161,7 +145,7 @@ function normalizeContentBlocks(
   });
 }
 
-function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" {
+export function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "incomplete" {
   switch (reason) {
     case "end_turn":
       return "end_turn";
@@ -172,7 +156,7 @@ function normalizeStopReasonAnthropicToCommon(reason: string): "end_turn" | "too
     case "stop_sequence":
       return "stop_sequence";
     default:
-      return "end_turn";
+      return "incomplete";
   }
 }
 
@@ -296,11 +280,11 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-      }, isRetryableError, undefined, { signal: cancellation.signal, deadline: request.deadline });
+      }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: request.deadline });
 
         return {
           content: normalizeContentBlocks(response.content),
-          stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "end_turn"),
+          stop_reason: normalizeStopReasonAnthropicToCommon(response.stop_reason ?? "incomplete"),
           usage: normalizeAnthropicUsage(response.usage) ?? { input_tokens: 0, output_tokens: 0 },
         };
       } finally {
@@ -368,7 +352,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
           }
           throw error;
         }
-        }, isRetryableError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
+        }, isRetryableModelError, undefined, { signal: cancellation.signal, deadline: cancellation.deadline });
         activeStream = stream;
 
       let messageStartUsage: ReturnType<typeof normalizeAnthropicUsage> = null;
@@ -430,7 +414,7 @@ export function createAnthropicAdapter(config: ModelConfig): ModelProvider {
             type: "message_stop",
             message: {
               // SDK types stop_reason as string; we map to normalized StopReason type via function
-              stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "end_turn"),
+              stop_reason: normalizeStopReasonAnthropicToCommon(event.delta.stop_reason ?? "incomplete"),
               ...(finalUsage ? { usage: finalUsage } : {}),
             },
           };

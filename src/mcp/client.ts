@@ -9,6 +9,8 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import type { ExecutionOptions } from '@/contracts/execution.ts';
 import type { ToolResult } from '@/tool/types.ts';
+import {traceError} from '@/errors/trace.js';
+import type {TraceRecorder} from '@/reflexion/types.js';
 import type { McpServerConfig } from './schema.ts';
 import { collectMcpPages } from './discovery-bounds.ts';
 import {
@@ -36,8 +38,13 @@ type TransportOptions =
 
 type JsonRecord = Record<string, unknown>;
 export type McpClientConstructionOptions = Readonly<{
+  /** Optional operation recorder; lifecycle errors use a synthetic conversation ID, `mcp-lifecycle:<serverName>`. */
+  readonly traceRecorder?: TraceRecorder;
+  /** Stable owner used for lifecycle traces. */
+  readonly traceOwner?: string;
   readonly clientFactory?: () => Client;
   readonly transportFactory?: (config: McpServerConfig, processEnv: Readonly<Record<string, string | undefined>>) => Transport;
+  readonly reconnect?: Readonly<{readonly maxAttempts?: number; readonly initialDelayMs?: number; readonly maxDelayMs?: number; readonly sleep?: (delayMs: number) => Promise<void>}>;
 }>;
 
 export function buildTransportOptions(config: McpServerConfig, processEnv: Readonly<Record<string, string | undefined>>): TransportOptions {
@@ -76,6 +83,19 @@ export function mapMcpToolResult(content: ReadonlyArray<unknown>, isError: boole
 export function createMcpClient(serverName: string, config: McpServerConfig, constructionOptions: McpClientConstructionOptions = {}): McpClient {
   let sdkClient: Client | null = null;
   let connected = false;
+  let intentionallyDisconnected = false;
+  let reconnectTask: Promise<void> | null = null;
+  let reconnectError: McpDiscoveryError | null = null;
+  const reconnect = constructionOptions.reconnect ?? {};
+  const maxAttempts = reconnect.maxAttempts ?? 5;
+  const initialDelayMs = reconnect.initialDelayMs ?? 250;
+  const maxDelayMs = reconnect.maxDelayMs ?? 4_000;
+  const sleep = reconnect.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+
+  function recordLifecycleFailure(error: McpDiscoveryError): void {
+    if (!constructionOptions.traceRecorder) return;
+    traceError(error, constructionOptions.traceRecorder, constructionOptions.traceOwner ?? 'spirit', `mcp-lifecycle:${serverName}`);
+  }
 
   function getRequestOptions(options: McpDiscoveryOptions | ExecutionOptions = {}): RequestOptions {
     const now = 'now' in options ? (options.now ?? (() => Date.now())) : (() => Date.now());
@@ -87,38 +107,104 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
   }
 
   function requireClient(): Client {
-    if (!sdkClient || !connected) throw new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} is not connected`, {server: serverName});
+    if (!sdkClient || !connected) throw reconnectError ?? new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} is not connected`, {server: serverName});
     return sdkClient;
+  }
+
+  function createSdkClient(): Client {
+    return constructionOptions.clientFactory?.() ?? new Client({name: 'constellation', version: '1.0.0'});
+  }
+
+  function createTransport(): Transport {
+    const transportOptions = buildTransportOptions(config, process.env);
+    return constructionOptions.transportFactory?.(config, process.env) ?? (transportOptions.type === 'stdio'
+      ? new StdioClientTransport({command: transportOptions.command, args: [...transportOptions.args], env: Object.fromEntries(Object.entries(transportOptions.env).filter((entry): entry is [string, string] => entry[1] !== undefined))})
+      : new StreamableHTTPClientTransport(transportOptions.url));
+  }
+
+  async function connectOnce(options?: McpDiscoveryOptions, isReconnect = false): Promise<void> {
+    const client = createSdkClient();
+    const transport = createTransport();
+    sdkClient = client;
+    client.onerror = (error) => {
+      if (sdkClient !== client || intentionallyDisconnected) return;
+      connected = false;
+      sdkClient = null;
+      const lifecycleError = new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} transport error`, {server: serverName, event: 'onerror'}, {cause: error instanceof Error ? error : undefined});
+      recordLifecycleFailure(lifecycleError);
+      console.error('[mcp] transport error', {server: serverName, event: 'transport_error', code: lifecycleError.code, subsystem: 'mcp', context: lifecycleError.context, message: safeErrorMessage(error), success: false});
+      scheduleReconnect();
+    };
+    client.onclose = () => {
+      if (sdkClient !== client || intentionallyDisconnected) return;
+      connected = false;
+      sdkClient = null;
+      const lifecycleError = new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} transport closed`, {server: serverName, event: 'onclose'});
+      recordLifecycleFailure(lifecycleError);
+      console.error('[mcp] transport closed', {server: serverName, event: 'transport_closed', code: lifecycleError.code, subsystem: 'mcp', context: lifecycleError.context, success: false});
+      scheduleReconnect();
+    };
+    try {
+      await client.connect(transport, getRequestOptions(options));
+      if (intentionallyDisconnected) {
+        if (sdkClient === client) sdkClient = null;
+        connected = false;
+        await client.close().catch(() => undefined);
+        return;
+      }
+      sdkClient = client;
+      connected = true;
+      reconnectError = null;
+    } catch (error) {
+      if (sdkClient === client) sdkClient = null;
+      connected = false;
+      await Promise.resolve(client.close()).catch(() => undefined);
+      if (!isReconnect && error instanceof McpDiscoveryError) throw error;
+      throw new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} connection failed`, {server: serverName}, {cause: error instanceof Error ? error : undefined});
+    }
+  }
+
+  function scheduleReconnect(): void {
+    if (reconnectTask !== null || intentionallyDisconnected) return;
+    reconnectTask = (async () => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= maxAttempts && !intentionallyDisconnected; attempt += 1) {
+        const delayMs = Math.min(initialDelayMs * (2 ** (attempt - 1)), maxDelayMs);
+        await sleep(delayMs);
+        if (intentionallyDisconnected) return;
+        try {
+          await connectOnce(undefined, true);
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (intentionallyDisconnected) return;
+      connected = false;
+      sdkClient = null;
+      reconnectError = new McpDiscoveryError('mcp_reconnect_exhausted', `MCP ${serverName} reconnection attempts exhausted`, {server: serverName, attempts: maxAttempts}, {cause: lastError instanceof Error ? lastError : undefined, suggestion: 'check server availability and reconnect the MCP client'});
+      recordLifecycleFailure(reconnectError);
+      console.error('[mcp] reconnect exhausted', {server: serverName, code: reconnectError.code, attempts: maxAttempts, suggestion: 'check server availability and reconnect the MCP client'});
+    })().finally(() => { reconnectTask = null; });
   }
 
   return {
     serverName,
     async connect(options?: McpDiscoveryOptions): Promise<void> {
-      sdkClient = constructionOptions.clientFactory?.() ?? new Client({name: 'constellation', version: '1.0.0'});
-      const transportOptions = buildTransportOptions(config, process.env);
-      const transport = constructionOptions.transportFactory?.(config, process.env) ?? (transportOptions.type === 'stdio'
-        ? new StdioClientTransport({command: transportOptions.command, args: [...transportOptions.args], env: Object.fromEntries(Object.entries(transportOptions.env).filter((entry): entry is [string, string] => entry[1] !== undefined))})
-        : new StreamableHTTPClientTransport(transportOptions.url));
-      sdkClient.onerror = () => { console.error(`[mcp:${serverName}] MCP protocol error`); };
-      sdkClient.onclose = () => { connected = false; };
-      try {
-        await sdkClient.connect(transport, getRequestOptions(options));
-        connected = true;
-      } catch (error) {
-        connected = false;
-        await Promise.resolve(sdkClient.close()).catch(() => undefined);
-        sdkClient = null;
-        if (error instanceof McpDiscoveryError) throw error;
-        throw new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} connection failed`, {server: serverName});
-      }
+      intentionallyDisconnected = false;
+      reconnectError = null;
+      if (reconnectTask !== null) await reconnectTask;
+      await connectOnce(options);
     },
     async disconnect(): Promise<void> {
-      if (sdkClient !== null) {
-        const client = sdkClient;
-        sdkClient = null;
-        connected = false;
-        await client.close().catch(() => undefined);
-      }
+      intentionallyDisconnected = true;
+      const pendingReconnect = reconnectTask;
+      if (pendingReconnect !== null) await pendingReconnect;
+      const client = sdkClient;
+      sdkClient = null;
+      connected = false;
+      reconnectError = null;
+      if (client !== null) await client.close().catch(() => undefined);
     },
     async listTools(options?: McpDiscoveryOptions): Promise<Array<McpToolInfo>> {
       if (!connected) return [];
@@ -129,7 +215,10 @@ export function createMcpClient(serverName: string, config: McpServerConfig, con
       }, options);
     },
     async callTool(name: string, args: Record<string, unknown>, options?: ExecutionOptions): Promise<ToolResult> {
-      if (!connected) return {success: false, output: '', error: `[mcp:${serverName}] not connected`};
+      if (!connected) {
+        const error = reconnectError ?? new McpDiscoveryError('mcp_discovery_transport_error', `MCP ${serverName} is not connected`, {server: serverName});
+        return {success: false, output: '', error: `[${error.code}] ${error.message}`};
+      }
       try {
         const executionOptions = options ?? {};
         const requestOptions = getRequestOptions(executionOptions);

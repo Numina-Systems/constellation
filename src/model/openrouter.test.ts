@@ -2,9 +2,17 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { createOpenRouterAdapter } from "./openrouter.js";
+import { normalizeStopReason } from "./openai-shared.js";
 import { ModelError } from "./types.js";
 import type { ModelConfig } from "../config/schema.js";
 import type { StreamEvent } from "./types.js";
+
+describe("OpenRouter finish reason normalization", () => {
+  it("maps null and content_filter finish reasons to incomplete", () => {
+    expect(normalizeStopReason(null)).toBe("incomplete");
+    expect(normalizeStopReason("content_filter")).toBe("incomplete");
+  });
+});
 
 describe("createOpenRouterAdapter", () => {
   let mockServerUrl = "";
@@ -37,24 +45,26 @@ describe("createOpenRouterAdapter", () => {
 
         // Use the global response type, then reset to text
         let responseType = nextResponseType;
-        nextResponseType = "text";
+        if (responseType !== "no_choices") nextResponseType = "text";
 
         // Build response based on type
         let responseBody: unknown = {};
+        const requestModel = (body as {model?: string} | null)?.model ?? "gpt-4";
+        const isConcurrentA = requestModel === "concurrent-a";
         let responseHeaders: Record<string, string> = {
-          "x-openrouter-cost": "0.00123",
-          "x-ratelimit-limit": "1000",
-          "x-ratelimit-remaining": "999",
-          "x-ratelimit-reset": "1678886400000",
+          "x-openrouter-cost": isConcurrentA ? "0.111" : requestModel === "concurrent-b" ? "0.222" : "0.00123",
+          "x-ratelimit-limit": isConcurrentA ? "111" : requestModel === "concurrent-b" ? "222" : "1000",
+          "x-ratelimit-remaining": isConcurrentA ? "11" : requestModel === "concurrent-b" ? "22" : "999",
+          "x-ratelimit-reset": isConcurrentA ? "1111" : requestModel === "concurrent-b" ? "2222" : "1678886400000",
           "content-type": "application/json",
         };
 
-        if (responseType === "text") {
+        if (responseType === "text" || requestModel === "concurrent-a" || requestModel === "concurrent-b") {
           responseBody = {
             id: "msg-1",
             object: "chat.completion",
             created: 1678886400,
-            model: "gpt-4",
+            model: requestModel,
             choices: [
               {
                 index: 0,
@@ -482,6 +492,29 @@ describe("createOpenRouterAdapter", () => {
   });
 
   describe("complete method", () => {
+    it("keeps concurrent cost and rate-limit headers with each request", async () => {
+      const updates: Array<{limit: number; remaining: number; resetAt: number}> = [];
+      const adapter = createOpenRouterAdapter({
+        provider: "openrouter", name: "gpt-4", api_key: "test-key", base_url: mockServerUrl + "/v1",
+      }, update => { updates.push(update); });
+      const originalInfo = console.info;
+      const logs: Array<string> = [];
+      console.info = (...args: Array<unknown>) => { logs.push(args.join(" ")); };
+      try {
+        const [a, b] = await Promise.all([
+          adapter.complete({model: "concurrent-a", max_tokens: 5, messages: [{role: "user", content: "A"}]}),
+          adapter.complete({model: "concurrent-b", max_tokens: 5, messages: [{role: "user", content: "B"}]}),
+        ]);
+        expect(a.stop_reason).toBe("end_turn");
+        expect(b.stop_reason).toBe("end_turn");
+      } finally {
+        console.info = originalInfo;
+      }
+      expect(logs).toContain("[openrouter] cost=$0.111 model=concurrent-a tokens=10/5");
+      expect(logs).toContain("[openrouter] cost=$0.222 model=concurrent-b tokens=10/5");
+      expect(updates).toContainEqual({limit: 111, remaining: 11, resetAt: 1111});
+      expect(updates).toContainEqual({limit: 222, remaining: 22, resetAt: 2222});
+    });
     it("AC2.1: should normalize text response with correct content blocks, stop reason, and usage", async () => {
       const config: ModelConfig = {
         provider: "openrouter",
@@ -1120,7 +1153,7 @@ describe("createOpenRouterAdapter", () => {
   });
 
   describe("malformed response handling", () => {
-    it("should throw descriptive error when response has no choices property", async () => {
+    it("should retry and throw descriptive error when response has no choices property", async () => {
       nextResponseType = "no_choices";
 
       const config: ModelConfig = {
@@ -1131,7 +1164,6 @@ describe("createOpenRouterAdapter", () => {
       };
 
       const adapter = createOpenRouterAdapter(config);
-
       await expect(
         adapter.complete({
           model: "gpt-4",

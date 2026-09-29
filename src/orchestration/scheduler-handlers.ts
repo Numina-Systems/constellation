@@ -1,6 +1,7 @@
 // pattern: Imperative Shell
 
 import { shouldSkipReview } from '@/reflexion';
+import { isConstellationError, traceError, wrapError } from '@/errors/index.js';
 import { runContinuationLoop } from '@/subconscious';
 import {
   createActivityDispatch,
@@ -191,9 +192,11 @@ export function createSleepTaskHandler(deps: Readonly<SchedulerHandlerDeps>): Sc
  * Build the post-impulse housekeeping routine: engagement decay plus the
  * active-interest cap. Errors are logged, never propagated.
  */
+const HOUSEKEEPING_CONVERSATION_ID = 'subconscious-housekeeping';
+
 export function createPostImpulseHousekeeping(deps: Readonly<SchedulerHandlerDeps>): () => Promise<void> {
-  assertRequiredDeps(deps, ['owner', 'interestRegistry', 'engagementHalfLifeDays', 'maxActiveInterests']);
-  const { interestRegistry, owner, engagementHalfLifeDays, maxActiveInterests } = deps;
+  assertRequiredDeps(deps, ['owner', 'traceStore', 'interestRegistry', 'engagementHalfLifeDays', 'maxActiveInterests']);
+  const { interestRegistry, owner, traceStore, engagementHalfLifeDays, maxActiveInterests } = deps;
 
   return async function runPostImpulseHousekeeping(): Promise<void> {
     try {
@@ -205,6 +208,10 @@ export function createPostImpulseHousekeeping(deps: Readonly<SchedulerHandlerDep
         console.log(`[subconscious] ${dormanted.length} interest(s) transitioned to dormant (cap: ${maxActiveInterests})`);
       }
     } catch (error) {
+      const structured = isConstellationError(error)
+        ? error
+        : wrapError(error, 'HOUSEKEEPING_FAILED', 'subconscious', {operation: 'post_impulse_housekeeping'});
+      traceError(structured, traceStore, owner, HOUSEKEEPING_CONVERSATION_ID);
       console.error('[subconscious] housekeeping error:', error);
     }
   };

@@ -1,6 +1,7 @@
-// Type definitions only — no runtime behaviour
+// pattern: Functional Core
 
 import type { ToolHandler, ToolResult } from '@/tool/types.ts';
+import {ConstellationError} from '@/errors/index.js';
 import type { ExecutionOptions } from '@/contracts/execution.ts';
 
 export const MCP_DEFAULT_DISCOVERY_TIMEOUT_MS = 30_000;
@@ -28,18 +29,19 @@ export type McpDiscoveryCode =
   | 'mcp_discovery_invalid_schema'
   | 'mcp_discovery_name_collision'
   | 'mcp_discovery_duplicate_tool'
-  | 'mcp_discovery_transport_error';
+  | 'mcp_discovery_transport_error'
+  | 'mcp_reconnect_exhausted'
+  | 'mcp_registration_collision'
+  | 'mcp_startup_timeout';
 
 export type McpDiscoveryDetails = Readonly<Record<string, string | number | boolean>>;
 
-export class McpDiscoveryError extends Error {
-  readonly code: McpDiscoveryCode;
+export class McpDiscoveryError extends ConstellationError {
   readonly details: McpDiscoveryDetails;
 
-  constructor(code: McpDiscoveryCode, message: string, details: McpDiscoveryDetails = {}, options?: ErrorOptions) {
-    super(message, options);
+  constructor(code: McpDiscoveryCode, message: string, details: McpDiscoveryDetails = {}, options?: ErrorOptions & {readonly suggestion?: string}) {
+    super(message, code, 'mcp', details, {cause: options?.cause instanceof Error ? options.cause : undefined, suggestion: options?.suggestion});
     this.name = 'McpDiscoveryError';
-    this.code = code;
     this.details = details;
   }
 }

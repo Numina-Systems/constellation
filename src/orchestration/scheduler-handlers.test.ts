@@ -540,7 +540,7 @@ describe('createPostImpulseHousekeeping', () => {
     expect(harness.interestRegistry.enforceActiveInterestCap).toHaveBeenCalledWith('test-owner', 10);
   });
 
-  it('logs housekeeping errors without propagating them', async () => {
+  it('traces housekeeping errors without propagating them', async () => {
     const harness = createHarness();
     const interestRegistry = createMockInterestRegistry({
       applyEngagementDecay: mock(async () => {
@@ -552,6 +552,15 @@ describe('createPostImpulseHousekeeping', () => {
     await expect(housekeeping()).resolves.toBeUndefined();
 
     expect(quietError).toHaveBeenCalledWith('[subconscious] housekeeping error:', expect.any(Error));
+    await Promise.resolve();
+    const recordedTrace = (harness.traceStore.record as ReturnType<typeof mock>).mock.calls[0]?.[0];
+    expect(recordedTrace).toMatchObject({
+      owner: 'test-owner',
+      conversationId: 'subconscious-housekeeping',
+      toolName: 'subconscious',
+      input: {errorCode: 'HOUSEKEEPING_FAILED', subsystem: 'subconscious', context: {operation: 'post_impulse_housekeeping'}},
+      success: false,
+    });
   });
 
   it('throws at the boundary when required numeric deps are missing', () => {

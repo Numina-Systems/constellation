@@ -162,6 +162,82 @@ describe("BlueskyConfigSchema", () => {
       expect(result.bluesky.enabled).toBe(false);
     });
   });
+
+  describe("bluesky-context.AC6: [bluesky] context_* fields", () => {
+    const baseConfig = {
+      agent: {},
+      model: { provider: "anthropic", name: "claude-3-5-sonnet-20241022" },
+      embedding: { provider: "openai", model: "text-embedding-3-small" },
+      database: { url: "postgresql://localhost/test" },
+      runtime: {},
+      bluesky: {
+        enabled: true,
+        handle: "spirit.bsky.social",
+        app_password: "xxxx-xxxx-xxxx-xxxx",
+        did: "did:plc:example",
+      },
+    };
+
+    it("defaults context_enabled, context_limit, and context_retention_days when absent", () => {
+      const result = AppConfigSchema.parse(baseConfig);
+
+      expect(result.bluesky.context_enabled).toBe(true);
+      expect(result.bluesky.context_limit).toBe(10);
+      expect(result.bluesky.context_retention_days).toBe(30);
+    });
+
+    it("accepts explicit in-bound values", () => {
+      const result = AppConfigSchema.parse({
+        ...baseConfig,
+        bluesky: {
+          ...baseConfig.bluesky,
+          context_enabled: false,
+          context_limit: 50,
+          context_retention_days: 3650,
+        },
+      });
+
+      expect(result.bluesky.context_enabled).toBe(false);
+      expect(result.bluesky.context_limit).toBe(50);
+      expect(result.bluesky.context_retention_days).toBe(3650);
+    });
+
+    it("rejects out-of-bound context_limit values", () => {
+      expect(() =>
+        AppConfigSchema.parse({
+          ...baseConfig,
+          bluesky: { ...baseConfig.bluesky, context_limit: 0 },
+        }),
+      ).toThrow();
+      expect(() =>
+        AppConfigSchema.parse({
+          ...baseConfig,
+          bluesky: { ...baseConfig.bluesky, context_limit: 51 },
+        }),
+      ).toThrow();
+      expect(() =>
+        AppConfigSchema.parse({
+          ...baseConfig,
+          bluesky: { ...baseConfig.bluesky, context_limit: 2.5 },
+        }),
+      ).toThrow();
+    });
+
+    it("rejects out-of-bound context_retention_days values", () => {
+      expect(() =>
+        AppConfigSchema.parse({
+          ...baseConfig,
+          bluesky: { ...baseConfig.bluesky, context_retention_days: 0 },
+        }),
+      ).toThrow();
+      expect(() =>
+        AppConfigSchema.parse({
+          ...baseConfig,
+          bluesky: { ...baseConfig.bluesky, context_retention_days: 3651 },
+        }),
+      ).toThrow();
+    });
+  });
 });
 
 describe("SummarizationConfigSchema", () => {

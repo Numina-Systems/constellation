@@ -110,6 +110,9 @@ const BlueskyConfigSchema = z
     watched_dids: z.array(z.string()).default([]),
     schedule_dids: z.array(z.string()).default([]),
     jetstream_url: z.string().url().default("wss://jetstream2.us-east.bsky.network/subscribe"),
+    context_enabled: z.boolean().default(true),
+    context_limit: z.number().int().min(1).max(50).default(10),
+    context_retention_days: z.number().int().min(1).max(3650).default(30),
   })
   .superRefine((data, ctx) => {
     if (data.enabled) {

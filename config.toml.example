@@ -88,6 +88,13 @@ did = "did:plc:example"
 watched_dids = ["did:plc:friend1", "did:plc:friend2"]
 schedule_dids = ["did:plc:scheduler1"]
 jetstream_url = "wss://jetstream2.us-east.bsky.network/subscribe"
+# Ambient context: surface recent posts (incoming and own) as a bluesky-activity
+# section in each turn. Only meaningful when enabled = true.
+context_enabled = true
+# Number of newest posts shown in the section (1-50).
+context_limit = 10
+# Days to keep persisted posts before pruning (1-3650).
+context_retention_days = 30
 
 # Skill retrieval system. Skills are SKILL.md files with YAML frontmatter,
 # loaded from builtin and agent directories, retrieved per-turn via embedding similarity.

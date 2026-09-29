@@ -24,7 +24,7 @@ import { createCompactContextTool } from '@/tool/builtin/compaction';
 import { createPostgresSecretStore, createSecretResolver } from '@/secrets';
 import { createSecretTools } from '@/tool/builtin/secrets';
 import { createDenoExecutor } from '@/runtime/executor';
-import { createBlueskySource, seedBlueskyTemplates } from '@/extensions/bluesky';
+import { createBlueskySource, seedBlueskyTemplates, createPostgresBlueskyEventStore, createBlueskyContextProvider } from '@/extensions/bluesky';
 import { createCompactor } from '@/compaction';
 import { createWebTools } from '@/tool/builtin/web';
 import { createSearchChain, createFetcher } from '@/web';
@@ -70,7 +70,7 @@ import type { MemoryManager } from '@/memory/manager';
 import type { SkillRegistry } from '@/skill/types';
 import type { CompactionConfig } from '@/compaction/types';
 import type { Agent } from '@/agent/types';
-import type { BlueskyDataSource } from '@/extensions/bluesky';
+import type { BlueskyDataSource, BlueskyEventStore } from '@/extensions/bluesky';
 import type { ExecutionContext } from '@/runtime/types';
 import type { PersistenceProvider } from '@/persistence/types';
 import type { MemoryStore } from '@/memory/store';
@@ -936,11 +936,19 @@ async function main(): Promise<void> {
   // Set up Bluesky DataSource early so both REPL and Bluesky agents can share credentials
   let blueskySource: BlueskyDataSource | null = null;
   let blueskyConnected = false;
+  let bskyAgent: BskyAgent | null = null;
+  let blueskyEventStore: BlueskyEventStore | null = null;
+  let blueskyContextProvider: ContextProvider | undefined;
 
   if (config.bluesky?.enabled) {
     try {
-      const bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
-      blueskySource = createBlueskySource(config.bluesky, bskyAgent);
+      bskyAgent = new BskyAgent({ service: 'https://bsky.social' });
+      // Persist accepted and own posts for ambient context; survives compaction.
+      blueskyEventStore = createPostgresBlueskyEventStore(persistence);
+      blueskySource = createBlueskySource(config.bluesky, bskyAgent, {
+        owner: AGENT_OWNER,
+        eventStore: blueskyEventStore,
+      });
       await blueskySource.connect();
       blueskySource.startSessionRefresh();
       blueskyConnected = true;
@@ -950,7 +958,38 @@ async function main(): Promise<void> {
       console.error(`bluesky datasource failed to connect: ${errorMsg}`);
       console.error('continuing without bluesky integration');
       blueskySource = null;
+      bskyAgent = null;
+      blueskyEventStore = null;
     }
+  }
+
+  // Ambient Bluesky activity section for the main agent's snapshot attachment.
+  // Inner agents (subconscious/archivist) build their own provider subsets, so
+  // this registration stays main-agent-only by construction.
+  if (blueskyConnected && blueskyEventStore && config.bluesky.context_enabled) {
+    const connectedAgent = bskyAgent;
+    blueskyContextProvider = createBlueskyContextProvider({
+      store: blueskyEventStore,
+      owner: AGENT_OWNER,
+      agentDid: config.bluesky.did!,
+      agentHandle: config.bluesky.handle!,
+      limit: config.bluesky.context_limit,
+      retentionDays: config.bluesky.context_retention_days,
+      resolveHandles: connectedAgent
+        ? async (dids) => {
+            const handles = new Map<string, string>();
+            for (let i = 0; i < dids.length; i += 25) {
+              const response = await connectedAgent.app.bsky.actor.getProfiles({
+                actors: [...dids.slice(i, i + 25)],
+              });
+              for (const profile of response.data.profiles) {
+                handles.set(profile.did, profile.handle);
+              }
+            }
+            return handles;
+          }
+        : undefined,
+    });
   }
 
   // Cached secrets with 60-second TTL to reduce DB round-trips
@@ -1115,6 +1154,17 @@ async function main(): Promise<void> {
     classifiedProviders.push({
       name: 'activity',
       provider: activityContextProvider,
+      classification: 'dynamic',
+    });
+  }
+
+  // Bluesky ambient context provider: recent posts section. Registered only on
+  // the classified list — the snapshot pipeline builds its provider map solely
+  // from classifiedProviders.
+  if (blueskyContextProvider) {
+    classifiedProviders.push({
+      name: 'bluesky-activity',
+      provider: blueskyContextProvider,
       classification: 'dynamic',
     });
   }
